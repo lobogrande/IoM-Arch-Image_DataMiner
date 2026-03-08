@@ -11,20 +11,19 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 TEMPLATE_DIR = "templates"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
-
-# Toggle for visual verification boxes
-SHOW_HUD = True 
+SHOW_HUD = True # Set to False for pure, unmarked images
 
 # Analysis ROIs (Y, X, H, W)
 HEADER_ROI = (56, 100, 16, 35)    
 DIG_STAGE_ROI = (330, 185, 20, 100) 
 
-# HUD Overlay Coordinates (Separate from analysis)
-HUD_BOX_TL = (185, 330) # X, Y
-HUD_BOX_BR = (285, 350) # X, Y
+# HUD Overlay Coordinates (Using your corrected X,Y)
+# Aligned to the top of the grid where the "Dig Stage" text appears
+HUD_BOX_TL = (185, 330) 
+HUD_BOX_BR = (285, 350) 
 
 def run_forensic_sentinel():
-    print(f"--- INITIATING v38.5 FORENSIC SENTINEL ---")
+    print(f"--- INITIATING v38.6 FORENSIC SENTINEL ---")
     digit_map = load_digit_map_robust()
     
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -41,14 +40,14 @@ def run_forensic_sentinel():
         if not frames: continue
 
         milestones = []
-        # GUARANTEED START: Anchor the first frame as Floor 1
+        # GUARANTEED START: Your datasets always begin with Floor 1
         first_img = cv2.imread(os.path.join(buffer_path, frames[0]))
         commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
         
         current_f = 1
         leap_candidate = -1; leap_counter = 0
 
-        print(f"\n[START] Run {ds_id} | Guaranteed Floor 1 Anchor Set.")
+        print(f"\n[START] Run {ds_id} | Dataset size: {len(frames)} frames")
         
         for i in range(1, len(frames)):
             f_name = frames[i]
@@ -61,13 +60,13 @@ def run_forensic_sentinel():
             d_val = get_bitwise_number(gray[330:350, 185:285], digit_map)
             read_val = max(h_val, d_val)
             
-            # STABILITY & LEAP LOGIC
+            # ADAPTIVE LEAP LOGIC
             if read_val > current_f:
                 if (read_val - current_f) > 10:
                     if read_val == leap_candidate: leap_counter += 1
                     else: leap_candidate = read_val; leap_counter = 1
                     
-                    if leap_counter >= 5: # Confirmed Leap
+                    if leap_counter >= 5: # Confirm leap after 5-frame stability
                         commit_milestone(ds_id, i, read_val, f_name, img, milestones, evidence_path)
                         current_f = read_val
                         leap_candidate = -1; leap_counter = 0
@@ -77,7 +76,7 @@ def run_forensic_sentinel():
                     leap_candidate = -1; leap_counter = 0
             
             if i % 100 == 0:
-                sys.stdout.write(f"\r Run {ds_id} | {f_name} | Max: {current_f} | Read: {read_val}")
+                sys.stdout.write(f"\r Run {ds_id} | {f_name} | Max Floor: {current_f} | Read: {read_val}")
                 sys.stdout.flush()
 
         with open(f"milestones_run_{ds_id}.json", 'w') as f:
@@ -90,7 +89,7 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     
     if SHOW_HUD:
         marked = img.copy()
-        # Purple box drawn in the CORRECT HUD location (top of grid)
+        # Purple box drawn in the specific HUD location at top of grid
         cv2.rectangle(marked, HUD_BOX_TL, HUD_BOX_BR, (255, 0, 255), 2)
         cv2.imwrite(out_file, marked)
     else:
@@ -99,11 +98,11 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     print(f"\n [RUN {ds_id}] Milestone: Floor {floor}")
 
 def load_digit_map_robust():
-    """Extracts the first digit found in the filename regardless of position."""
+    """Extracts the first numeric character from file names (e.g., '1_bright_0.png' or '7.png')"""
     d_map = {i: [] for i in range(10)}
     for f in os.listdir(DIGITS_DIR):
         if f.endswith('.png'):
-            match = re.search(r'\d', f) # Find first digit
+            match = re.search(r'\d', f)
             if match:
                 v = int(match.group())
                 img = cv2.imread(os.path.join(DIGITS_DIR, f), 0)
