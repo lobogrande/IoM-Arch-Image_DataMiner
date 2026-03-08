@@ -1,0 +1,16 @@
+.DS_Store
+.vscode/
+*.csv
+*.png
+audit_verification/
+capture_buffer_0/
+capture_buffer_1/
+capture_buffer_2/
+capture_buffer_3/
+capture_buffer_4/
+divine_receipts/
+forensic_v34_1/
+forensic_v37_1/
+forensic_verification_endless/
+path/
+v29_results/
