@@ -55,19 +55,22 @@ BOSS_DATA = {
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
+SHOW_HUD = True
 
-HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 58, 70, 105, 127
-DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
+# AI SCANNING (Y, X, H, W)
+HEADER_ROI = (58, 70, 105, 127)
+DIG_ROI = (230, 246, 255, 281) # Shifted 5px right to avoid Game Speed icons
 
+# HUD DRAWING (X1, Y1, X2, Y2)
 HUD_STAGE = (103, 56, 129, 72)
 HUD_DIG_WIDE = (161, 231, 281, 248)
-HUD_DIG_NARROW = (250, 230, 281, 246)
+HUD_DIG_NARROW = (255, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_greedy_sentinel():
+def run_validated_sentinel():
     start_time = time.time()
-    digit_map = load_digit_map_fixed() # Templates pre-thresholded at 195
+    digit_map = load_digit_map_fixed()
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -95,31 +98,26 @@ def run_greedy_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # 1. HEADER-ONLY SCAN (The Stable Foundation)
+            # 1. PRIMARY SENSOR: Stage Header
             h_val = -1
-            for t in [195, 175, 155]: # Aggressive squitning
-                h_val = get_bitwise_greedy(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.80)
+            for t in [195, 175, 155]:
+                h_val = get_bitwise_number(gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]], digit_map, t, 0.82)
                 if h_val != -1: break
             
-            # 2. STABILITY TRIGGER
+            # 2. VALIDATION LOGIC
             if h_val > current_f:
-                if h_val == h_candidate: h_count += 1
-                else: h_candidate, h_count = h_val, 1
-                
-                # If the Header sees a new floor for 2 frames, it's an Anchor
-                if h_count >= 2:
-                    current_f = h_candidate
-                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
-                    h_candidate, h_count = -1, 0
-            else:
-                # If Header fails, check Dig Stage as a backup
-                d_val = -1
-                for t in [155, 165, 175]:
-                    d_val = get_bitwise_greedy(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.65)
-                    if d_val > current_f:
-                        current_f = d_val
+                # Sequential Sanity Guard: No jumps > 10 unless it's a known boss floor
+                if (h_val - current_f) <= 10 or h_val in BOSS_DATA:
+                    if h_val == h_candidate: h_count += 1
+                    else: h_candidate, h_count = h_val, 1
+                    
+                    # High-Stability Lock: Must be static for 5 frames to beat scrolling text
+                    if h_count >= 5:
+                        current_f = h_candidate
                         commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
-                        break
+                        h_candidate, h_count = -1, 0
+            else:
+                h_candidate, h_count = -1, 0
 
             if i % 100 == 0:
                 fps = 100 / (time.time() - perf_timer)
@@ -131,8 +129,8 @@ def run_greedy_sentinel():
             json.dump(milestones, f, indent=4)
         perform_audit(ds_id, milestones, current_f)
 
-def get_bitwise_greedy(gray_roi, digit_map, thresh_val, min_conf):
-    _, bin_roi = cv2.threshold(gray_roi, thresh_val, 255, cv2.THRESH_BINARY)
+def get_bitwise_number(roi, digit_map, thresh, min_conf):
+    _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
         for t_bin in temps:
@@ -141,11 +139,9 @@ def get_bitwise_greedy(gray_roi, digit_map, thresh_val, min_conf):
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]): matches.append({'x': pt[0], 'val': val})
     matches.sort(key=lambda d: d['x'])
-    unique = [m['val'] for i, m in enumerate(matches) if i == 0 or abs(m['x'] - matches[i-1]['x']) > 6]
-    try:
-        return int("".join(map(str, unique))) if unique else -1
-    except:
-        return -1
+    unique = [m['val'] for j, m in enumerate(matches) if j == 0 or abs(m['x'] - matches[j-1]['x']) > 6]
+    try: return int("".join(map(str, unique))) if unique else -1
+    except: return -1
 
 def load_digit_map_fixed():
     d_map = {i: [] for i in range(10)}
@@ -183,4 +179,4 @@ def perform_audit(run_id, milestones, max_floor):
     print(f" Found: {len(milestones)} | Missing: {len(missing)} floors.")
 
 if __name__ == "__main__":
-    run_greedy_sentinel()
+    run_validated_sentinel()
