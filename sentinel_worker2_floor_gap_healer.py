@@ -14,9 +14,9 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
-GRID_ROI = (250, 500, 75, 425) # ROI for board-change detection
+GRID_ROI = (250, 500, 75, 425)
 
-def run_infallible_healer():
+def run_adaptive_healer():
     digit_map = load_digit_map()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
@@ -31,75 +31,72 @@ def run_infallible_healer():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- INFALLIBLE HEALING RUN {ds_id} ---")
+        print(f"\n--- ADAPTIVE HEALING RUN {ds_id} ---")
         
-        # 1. CEILING DISCOVERY
-        ceiling_f = find_ceiling_verified(buffer_path, frames, anchors[-1], digit_map)
+        # CEILING DISCOVERY
+        ceiling_f = find_ceiling_adaptive(buffer_path, frames, anchors[-1], digit_map)
         if ceiling_f: anchors.append(ceiling_f)
 
-        final_milestones = []
-        # 2. THE SIEGE: Fill every single gap
+        final_consensus = []
+        # STEP-BY-STEP HEALING
         for i in range(len(anchors) - 1):
-            final_milestones.append(anchors[i])
+            final_consensus.append(anchors[i])
             s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
             s_idx, e_idx = anchors[i]['idx'], anchors[i+1]['idx']
             
             if (e_f - s_f) > 1:
-                print(f" Siege Triggered: F{s_f}->F{e_f} (Need {e_f-s_f-1})")
-                healed = solve_gap_recursively(buffer_path, frames, s_idx, e_idx, s_f, e_f, digit_map)
-                final_milestones.extend(healed)
+                print(f" Healing Gap: F{s_f}->F{e_f} ({e_idx-s_idx} frames)")
+                healed = solve_gap_adaptive(buffer_path, frames, s_idx, e_idx, s_f, e_f, digit_map)
+                final_consensus.extend(healed)
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
-        final_milestones.append(anchors[-1])
-        final_milestones.sort(key=lambda x: x['idx'])
+        final_consensus.append(anchors[-1])
+        final_consensus.sort(key=lambda x: x['idx'])
         
         with open(f"healed_consensus_run_{ds_id}.json", 'w') as f:
-            json.dump(final_milestones, f, indent=4)
-        perform_final_audit(ds_id, final_milestones)
+            json.dump(final_consensus, f, indent=4)
+        perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_recursively(path, frames, start_idx, end_idx, start_f, end_f, digit_map):
+def solve_gap_adaptive(path, frames, s_idx, e_idx, s_f, e_f, digit_map):
     healed = []
-    missing_floors = list(range(start_f + 1, end_f))
-    current_min = start_idx + 1
+    missing_floors = list(range(s_f + 1, e_f))
+    
+    # DYNAMIC BUFFER: 10% of gap, min 2 frames
+    buf = max(2, (e_idx - s_idx) // 10)
+    current_search_start = s_idx + buf
     
     for target in missing_floors:
         found_m = None
-        # PASS 1: High-Speed Skip Scan
-        for i in range(current_min, end_idx, 5):
-            gray = cv2.imread(os.path.join(path, frames[i]), 0)
-            roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-            if get_bitwise_verified(roi, digit_map, 175, 0.70) == target:
-                found_m = {'idx': i, 'floor': target, 'frame': frames[i]}
-                break
-        
-        # PASS 2: Recursive Deep Siege (Every Frame + Multi-Thresh)
-        if not found_m:
-            for t in [155, 195, 145, 205]:
-                for i in range(current_min, end_idx):
+        # We search FORWARD to maintain floor order
+        # Multi-threshold Siege Pass
+        for conf, thresholds in [(0.78, [175, 165]), (0.70, [155, 195]), (0.62, [145, 205])]:
+            for t in thresholds:
+                for i in range(current_search_start, e_idx - buf):
                     gray = cv2.imread(os.path.join(path, frames[i]), 0)
                     roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-                    if get_bitwise_verified(roi, digit_map, t, 0.65) == target:
+                    if get_bitwise_verified(roi, digit_map, t, conf) == target:
                         found_m = {'idx': i, 'floor': target, 'frame': frames[i]}
                         break
                 if found_m: break
-
-        # PASS 3: Blind Heuristic (Transition Detection)
+            if found_m: break
+            
+        # BLIND FALLBACK: Spaced Transition Detection
         if not found_m:
-            print(f" !! OCR Hard-Fail F{target}. Nominating via Transition Heuristic...")
-            found_m = nominate_by_transition(path, frames, current_min, end_idx, target)
-
+            print(f" !! OCR Fail F{target}. Interpolating via Dynamic Transition...")
+            found_m = nominate_adaptive_transition(path, frames, current_search_start, e_idx - buf, target)
+            
         healed.append(found_m)
-        current_min = found_m['idx'] + 1
+        current_search_start = found_m['idx'] + 2 # Minimal step-forward
         
     return healed
 
-def nominate_by_transition(path, frames, start, end, floor):
-    # Find frame with largest pixel difference (board clear)
+def nominate_adaptive_transition(path, frames, start, end, floor):
     max_diff = -1
     best_idx = start
     prev_img = None
-    
-    for i in range(start, end):
+    # We only look at a small window to prevent reaching into next floor
+    limit = min(start + 100, end) 
+    for i in range(start, limit):
         img = cv2.imread(os.path.join(path, frames[i]), 0)
         grid = img[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
         if prev_img is not None:
@@ -110,10 +107,10 @@ def nominate_by_transition(path, frames, start, end, floor):
         prev_img = grid
     return {'idx': best_idx, 'floor': floor, 'frame': frames[best_idx]}
 
-def find_ceiling_verified(path, frames, last_anc, d_map):
-    for i in range(len(frames) - 1, last_anc['idx'], -5):
+def find_ceiling_adaptive(path, frames, last_anc, d_map):
+    for i in range(len(frames) - 1, last_anc['idx'] + 5, -5):
         gray = cv2.imread(os.path.join(path, frames[i]), 0)
-        val = get_bitwise_verified(gray[52:76, 100:142], d_map, 165, 0.68)
+        val = get_bitwise_verified(gray[52:76, 100:142], d_map, 165, 0.65)
         if val > last_anc['floor']: return {'idx': i, 'floor': val, 'frame': frames[i]}
     return None
 
@@ -126,7 +123,6 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    # Geometric Verification
                     if val == 6 and bin_roi[pt[1]+2, pt[0]+5] > 0: continue
                     if val == 8:
                         if np.sum(bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+1]) < 255: matches.append({'x': pt[0], 'val': 3})
@@ -163,8 +159,8 @@ def perform_final_audit(run_id, milestones):
     max_f = milestones[-1]['floor']
     missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
     print(f"--- FINAL AUDIT RUN {run_id} ---")
-    print(f" Completion: {100 - (len(missing)/max_f)*100:.1f}% | Missing: {len(missing)}")
-    if missing: print(f" Missing: {missing}")
+    print(f" Completion: {100 - (len(missing)/max_f)*100:.1f}%")
+    if missing: print(f" Still Missing: {missing}")
 
 if __name__ == "__main__":
-    run_infallible_healer()
+    run_adaptive_healer()
