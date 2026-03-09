@@ -7,7 +7,7 @@ import shutil
 import re
 import time
 
-# --- 1. THE RESTORED BOSS DATA ---
+# --- 1. MASTER BOSS DATA ---
 BOSS_DATA = {
     11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
     25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'},
@@ -51,27 +51,26 @@ BOSS_DATA = {
     }
 }
 
-# --- 2. CONFIGURATION ---
+# --- 2. VERIFIED COORDINATES ---
 DATASETS = ["0", "1", "2", "3", "4"] 
 DIGITS_DIR = "digits"
 TEMPLATE_DIR = "templates"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
-SHOW_HUD = True 
+SHOW_HUD = True
 
-# Analysis coordinates (Reverted to original values)
-HEADER_ROI = (56, 100, 16, 35)    
-DIG_STAGE_SCAN_ROI = (330, 185, 20, 100) # Reverted to what worked
+# AI ROIs (Y, X, H, W)
+HEADER_ROI = (58, 105, 12, 22)      
+DIG_STAGE_ROI = (233, 163, 13, 116) 
+SLOT1_CENTER = (75, 261)
+X_STEP, Y_STEP = 59.1, 59.1
 
-# HUD calibration (Recalculated from F52_Source.jpg)
-HUD_COORDS = {i: (73 + (i % 6) * 59, 268 + (i // 6) * 61) for i in range(24)}
-HUD_BOX_X1, HUD_BOX_Y1 = 160, 210 # Corrected to top-of-grid text
-HUD_BOX_X2, HUD_BOX_Y2 = 300, 245 
+# HUD Overlays (X1, Y1, X2, Y2)
+HUD_STAGE = (103, 56, 129, 72)
+HUD_DIG = (161, 231, 281, 248)
 
-def run_restoration_sentinel():
+def run_calibrated_sentinel():
     start_time = time.time()
-    total_frames = 0
     digit_map = load_digit_map_robust()
-    
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -84,34 +83,38 @@ def run_restoration_sentinel():
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
         if not frames: continue
-        total_frames += len(frames)
 
         milestones = []
-        # First frame is Floor 1
+        # GUARANTEED START
         first_img = cv2.imread(os.path.join(buffer_path, frames[0]))
         commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
         
         current_f = 1
         leap_candidate = -1; leap_counter = 0
 
-        print(f"\n[START] Run {ds_id} | Frames: {len(frames)}")
+        print(f"\n[START] Run {ds_id} | {len(frames)} frames")
         
         for i in range(1, len(frames)):
             img = cv2.imread(os.path.join(buffer_path, frames[i]))
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # Use established high-accuracy ROIs
-            h_val = get_bitwise_number(gray[56:72, 100:135], digit_map)
-            d_val = get_bitwise_number(gray[330:350, 185:285], digit_map)
+            # SENSORS
+            h_val = get_bitwise_number(gray[58:70, 105:127], digit_map)
+            d_val = get_bitwise_number(gray[233:246, 163:279], digit_map)
             read_val = max(h_val, d_val)
             
             if read_val > current_f:
-                if (read_val - current_f) > 10:
-                    if read_val == leap_candidate: leap_counter += 1
-                    else: leap_candidate = read_val; leap_counter = 1
+                # 79-100 Stability Check
+                # If we see a big jump or an 80/90 number, require 2 frames of proof
+                if (read_val - current_f) > 10 or 79 <= read_val <= 100:
+                    if read_val == leap_candidate:
+                        leap_counter += 1
+                    else:
+                        leap_candidate = read_val
+                        leap_counter = 1
                     
-                    if leap_counter >= 5: 
+                    if leap_counter >= 2: # High-confidence trigger
                         commit_milestone(ds_id, i, read_val, frames[i], img, milestones, evidence_path)
                         current_f = read_val
                         leap_candidate = -1; leap_counter = 0
@@ -128,8 +131,7 @@ def run_restoration_sentinel():
             json.dump(milestones, f, indent=4)
         perform_gap_audit(ds_id, milestones, current_f)
 
-    elapsed = time.time() - start_time
-    print(f"\n\n--- PASS 1 PERFORMANCE: {total_frames / elapsed:.2f} FPS ---")
+    print(f"\n\n--- ALL DATASETS PROCESSED IN {time.time()-start_time:.2f}s ---")
 
 def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     milestones.append({'idx': idx, 'floor': floor, 'frame': f_name})
@@ -137,17 +139,21 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     
     if SHOW_HUD:
         marked = img.copy()
-        cv2.rectangle(marked, (HUD_BOX_X1, HUD_BOX_Y1), (HUD_BOX_X2, HUD_BOX_Y2), (255, 0, 255), 2)
+        cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
+        cv2.rectangle(marked, (HUD_DIG[0], HUD_DIG[1]), (HUD_DIG[2], HUD_DIG[3]), (255, 0, 255), 1)
+        
         if floor in BOSS_DATA:
             for i in range(24):
-                hx, hy = HUD_COORDS[i]
-                cv2.rectangle(marked, (hx-24, hy-24), (hx+24, hy+24), (0, 255, 0), 1)
+                row, col = divmod(i, 6)
+                cx = int(SLOT1_CENTER[0] + (col * X_STEP))
+                cy = int(SLOT1_CENTER[1] + (row * Y_STEP))
+                cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
                 tier = BOSS_DATA[floor]['special'].get(i, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
-                cv2.putText(marked, tier[:5], (hx-22, hy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+                cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
         cv2.imwrite(out_file, marked)
     else:
         cv2.imwrite(out_file, img)
-    print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
+    print(f"\n [RUN {ds_id}] Anchor: Floor {floor}")
 
 def load_digit_map_robust():
     d_map = {i: [] for i in range(10)}
@@ -177,7 +183,7 @@ def perform_gap_audit(run_id, milestones, max_floor):
     found = set(m['floor'] for m in milestones)
     missing = sorted(list(set(range(1, max_floor + 1)) - found))
     print(f"\n--- GAP AUDIT RUN {run_id} ---")
-    print(f" Found: {len(milestones)} | Missing: {len(missing)} floors: {missing[:10]}...")
+    print(f" Missing: {len(missing)} floors: {missing[:15]}...")
 
 if __name__ == "__main__":
-    run_restoration_sentinel()
+    run_calibrated_sentinel()
