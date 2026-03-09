@@ -16,7 +16,7 @@ BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
 GRID_ROI = (250, 500, 75, 425)
 
-def run_adaptive_healer():
+def run_convergent_healer():
     digit_map = load_digit_map()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
@@ -31,22 +31,24 @@ def run_adaptive_healer():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- ADAPTIVE HEALING RUN {ds_id} ---")
+        print(f"\n--- SOVEREIGN CONVERGENCE RUN {ds_id} ---")
         
-        # CEILING DISCOVERY
-        ceiling_f = find_ceiling_adaptive(buffer_path, frames, anchors[-1], digit_map)
+        # 1. CEILING DISCOVERY
+        ceiling_f = find_ceiling_sovereign(buffer_path, frames, anchors[-1], digit_map)
         if ceiling_f: anchors.append(ceiling_f)
 
         final_consensus = []
-        # STEP-BY-STEP HEALING
         for i in range(len(anchors) - 1):
             final_consensus.append(anchors[i])
             s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
             s_idx, e_idx = anchors[i]['idx'], anchors[i+1]['idx']
             
             if (e_f - s_f) > 1:
-                print(f" Healing Gap: F{s_f}->F{e_f} ({e_idx-s_idx} frames)")
-                healed = solve_gap_adaptive(buffer_path, frames, s_idx, e_idx, s_f, e_f, digit_map)
+                # 2. BOUNDARY LOCKS
+                clean_start, clean_end = map_signature_boundaries(buffer_path, frames, anchors[i], anchors[i+1])
+                
+                # 3. RECURSIVE HEALING WITH CONVERGENCE
+                healed = solve_gap_with_convergence(buffer_path, frames, clean_start, clean_end, s_f, e_f, digit_map)
                 final_consensus.extend(healed)
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
@@ -57,57 +59,82 @@ def run_adaptive_healer():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_adaptive(path, frames, s_idx, e_idx, s_f, e_f, digit_map):
+def solve_gap_with_convergence(path, frames, s_idx, e_idx, s_f, e_f, digit_map):
+    """Heals gaps while allowing new floors to claim territory iteratively"""
     healed = []
     missing_floors = list(range(s_f + 1, e_f))
-    
-    # DYNAMIC BUFFER: 10% of gap, min 2 frames
-    buf = max(2, (e_idx - s_idx) // 10)
-    current_search_start = s_idx + buf
+    current_search_start = s_idx
     
     for target in missing_floors:
         found_m = None
-        # We search FORWARD to maintain floor order
-        # Multi-threshold Siege Pass
+        # PASS 1: Adaptive OCR Siege
         for conf, thresholds in [(0.78, [175, 165]), (0.70, [155, 195]), (0.62, [145, 205])]:
             for t in thresholds:
-                for i in range(current_search_start, e_idx - buf):
+                for i in range(current_search_start, e_idx):
                     gray = cv2.imread(os.path.join(path, frames[i]), 0)
-                    roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-                    if get_bitwise_verified(roi, digit_map, t, conf) == target:
+                    if get_bitwise_verified(gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]], digit_map, t, conf) == target:
                         found_m = {'idx': i, 'floor': target, 'frame': frames[i]}
                         break
                 if found_m: break
             if found_m: break
             
-        # BLIND FALLBACK: Spaced Transition Detection
+        # PASS 2: Transition nomination if OCR fails
         if not found_m:
-            print(f" !! OCR Fail F{target}. Interpolating via Dynamic Transition...")
-            found_m = nominate_adaptive_transition(path, frames, current_search_start, e_idx - buf, target)
-            
+            found_m = nominate_signature_transition(path, frames, current_search_start, e_idx, target)
+        
+        # ACTIVE CONVERGENCE: Map the signature of the newly found floor
+        new_start, new_end = find_local_signature_end(path, frames, found_m, e_idx)
         healed.append(found_m)
-        current_search_start = found_m['idx'] + 2 # Minimal step-forward
+        
+        # The next floor cannot begin until this one's visual signature ends
+        current_search_start = new_end + 1
         
     return healed
 
-def nominate_adaptive_transition(path, frames, start, end, floor):
-    max_diff = -1
-    best_idx = start
-    prev_img = None
-    # We only look at a small window to prevent reaching into next floor
-    limit = min(start + 100, end) 
-    for i in range(start, limit):
+def find_local_signature_end(path, frames, m, upper_limit):
+    """Determines how many frames the newly healed floor 'owns'"""
+    img = cv2.imread(os.path.join(path, m['frame']), 0)
+    sig = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+    
+    end_claim = m['idx']
+    for i in range(m['idx'] + 1, upper_limit):
+        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+        if np.mean(cv2.absdiff(curr, sig)) < 15:
+            end_claim = i
+        else: break
+    return m['idx'], end_claim
+
+def map_signature_boundaries(path, frames, anc_start, anc_end):
+    img_s = cv2.imread(os.path.join(path, anc_start['frame']), 0)
+    sig_s = img_s[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+    clean_start = anc_start['idx']
+    for i in range(anc_start['idx'] + 1, anc_end['idx']):
+        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+        if np.mean(cv2.absdiff(curr, sig_s)) < 15: clean_start = i
+        else: break
+
+    img_e = cv2.imread(os.path.join(path, anc_end['frame']), 0)
+    sig_e = img_e[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+    clean_end = anc_end['idx']
+    for i in range(anc_end['idx'] - 1, anc_start['idx'], -1):
+        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+        if np.mean(cv2.absdiff(curr, sig_e)) < 15: clean_end = i
+        else: break
+    return clean_start + 1, clean_end - 1
+
+def nominate_signature_transition(path, frames, start, end, floor):
+    max_diff = -1; best_idx = start; prev_img = None
+    window_limit = min(start + 200, end)
+    for i in range(start, window_limit):
         img = cv2.imread(os.path.join(path, frames[i]), 0)
         grid = img[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
         if prev_img is not None:
             diff = np.sum(cv2.absdiff(grid, prev_img))
-            if diff > max_diff:
-                max_diff = diff
-                best_idx = i
+            if diff > max_diff and diff < 15000000: max_diff = diff; best_idx = i
         prev_img = grid
     return {'idx': best_idx, 'floor': floor, 'frame': frames[best_idx]}
 
-def find_ceiling_adaptive(path, frames, last_anc, d_map):
+def find_ceiling_sovereign(path, frames, last_anc, d_map):
     for i in range(len(frames) - 1, last_anc['idx'] + 5, -5):
         gray = cv2.imread(os.path.join(path, frames[i]), 0)
         val = get_bitwise_verified(gray[52:76, 100:142], d_map, 165, 0.65)
@@ -140,7 +167,7 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
     cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
-    cv2.putText(img, f"HEALED F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
+    cv2.putText(img, f"CONV-HEAL F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
 def load_digit_map():
@@ -149,18 +176,16 @@ def load_digit_map():
         if f.endswith('.png'):
             m = re.search(r'\d', f)
             if m:
-                img = cv2.imread(os.path.join(DIGITS_DIR, f), 0)
-                _, b = cv2.threshold(img, 195, 255, cv2.THRESH_BINARY)
+                img = cv2.imread(os.path.join(DIGITS_DIR, f), 0); _, b = cv2.threshold(img, 195, 255, cv2.THRESH_BINARY)
                 d_map[int(m.group())].append(b)
     return d_map
 
 def perform_final_audit(run_id, milestones):
     found = sorted(list(set(m['floor'] for m in milestones)))
-    max_f = milestones[-1]['floor']
-    missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
+    max_f = milestones[-1]['floor']; missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
     print(f"--- FINAL AUDIT RUN {run_id} ---")
     print(f" Completion: {100 - (len(missing)/max_f)*100:.1f}%")
     if missing: print(f" Still Missing: {missing}")
 
 if __name__ == "__main__":
-    run_adaptive_healer()
+    run_convergent_healer()
