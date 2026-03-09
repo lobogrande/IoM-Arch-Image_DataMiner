@@ -15,9 +15,10 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
+GRID_ROI = (250, 500, 50, 450) # Region for visual state hashing
 
-def run_geometric_sentinel():
-    digit_map = load_digit_map_fixed()
+def run_pincer_sentinel():
+    digit_map = load_digit_map_pincer()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
     for ds_id in DATASETS:
@@ -31,23 +32,24 @@ def run_geometric_sentinel():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- GEOMETRIC ANCHOR RUN {ds_id} ---")
+        print(f"\n--- PINCER SENTINEL RUN {ds_id} ---")
         
         final_consensus = []
-        last_locked_idx = -1
-        
+        used_state_hashes = set()
+
         for i in range(len(anchors) - 1):
             final_consensus.append(anchors[i])
-            last_locked_idx = anchors[i]['idx']
-            s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
+            # Register anchor state hash
+            used_state_hashes.add(get_board_hash(buffer_path, anchors[i]['frame']))
             
+            s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
             if (e_f - s_f) > 1:
                 print(f" Healing Gap: F{s_f}->F{e_f}...")
-                sys.stdout.flush()
-                healed = solve_gap_with_geometric_verification(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
+                healed = solve_gap_with_pincer(buffer_path, frames, anchors[i], anchors[i+1], digit_map, used_state_hashes)
                 final_consensus.extend(healed)
-                if healed: last_locked_idx = healed[-1]['idx']
-                for h in healed: save_healed_evidence(buffer_path, h, heal_path)
+                for h in healed: 
+                    save_healed_evidence(buffer_path, h, heal_path)
+                    used_state_hashes.add(get_board_hash(buffer_path, h['frame']))
 
         final_consensus.append(anchors[-1])
         final_consensus.sort(key=lambda x: x['idx'])
@@ -55,57 +57,97 @@ def run_geometric_sentinel():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_with_geometric_verification(path, frames, anc_s, anc_e, digit_map):
+def solve_gap_with_pincer(path, frames, anc_s, anc_e, digit_map, used_hashes):
+    """Iteratively identifies floors by looking for stability plateaus between resets"""
     healed = []
-    # Hard-lock search start to the index AFTER the previous anchor
-    search_start = anc_s['idx'] + 1
+    # Identify visual end of start-anchor
+    wilderness_start = find_visual_break_pincer(path, frames, anc_s, anc_e['idx'], direction=1)
+    
+    num_missing = anc_e['floor'] - anc_s['floor'] - 1
+    current_search_start = wilderness_start
     
     for target in range(anc_s['floor'] + 1, anc_e['floor']):
         found_m = None
-        cand_f, cand_count = -1, 0
         
-        for i in range(search_start, anc_e['idx']):
+        # 1. OCR SEARCH (Priority)
+        for i in range(current_search_start, anc_e['idx']):
             gray = cv2.imread(os.path.join(path, frames[i]), 0)
             roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
             
-            # MANDATORY IDENTITY CHECK: Reject if it explicitly looks like a previous floor
-            # Uses very low confidence to act as a sensitive 'No Go' sensor
-            if get_bitwise_geometric(roi, digit_map, 175, 0.50) < target:
-                cand_f, cand_count = -1, 0
-                continue
-
-            val = -1
-            for t in [175, 155, 195]:
-                if get_bitwise_geometric(roi, digit_map, t, 0.75) == target:
-                    val = target; break
-            
+            # IDENTITY VETO (7 vs 8)
+            val = get_bitwise_structural_pincer(roi, digit_map, 175, 0.75)
             if val == target:
-                if val == cand_f: cand_count += 1
-                else: cand_f, cand_count = val, 1
-                if cand_count >= 5: # Persistence gate
-                    found_m = {'idx': i - 4, 'floor': target, 'frame': frames[i-4]}
-                    break
-            else:
-                cand_f, cand_count = -1, 0
+                # Require 3 frames of stability
+                stability_check = True
+                for s_offset in range(1, 3):
+                    next_gray = cv2.imread(os.path.join(path, frames[i + s_offset]), 0)
+                    if get_bitwise_structural_pincer(next_gray[52:76, 100:142], digit_map, 175, 0.72) != target:
+                        stability_check = False; break
                 
+                if stability_check:
+                    # Final check: is this a repeat frame?
+                    if get_board_hash(path, frames[i]) not in used_hashes:
+                        found_m = {'idx': i, 'floor': target, 'frame': frames[i]}
+                        break
+        
         if not found_m:
-            # Fallback uses Proportional Logic to assign a frame that CANNOT be the same as neighbors
-            found_m = nominate_safe_frame(path, frames, search_start, anc_e['idx'], target, anc_e['floor']-target)
+            # 2. GRADIENT NOMINATION (Fallback)
+            # Instead of midpoint, scan for the most stable plateau *after* the previous floor ends
+            print(f"   [F{target}] OCR Fail - Pincering stability gradient...")
+            found_m = nominate_via_gradient(path, frames, current_search_start, anc_e['idx'], target, anc_e['floor']-target, used_hashes)
 
-        print(f"   [F{target}] Assigned: {found_m['frame']} (Idx: {found_m['idx']})")
+        print(f"   [F{target}] Locked: {found_m['frame']} (Idx: {found_m['idx']})")
         sys.stdout.flush()
         healed.append(found_m)
-        search_start = found_m['idx'] + 1 # Strict step-forward
+        
+        # 3. PINCER MARCH: Find where this healed floor visual signature ends
+        current_search_start = find_visual_break_pincer(path, frames, found_m, anc_e['idx'], direction=1)
         
     return healed
 
-def nominate_safe_frame(path, frames, start, end, floor, remaining):
-    # Splits remaining space equally to avoid cannibalization
-    segment = (end - start) // (remaining + 1)
-    nom_idx = start + max(1, segment // 2)
-    return {'idx': nom_idx, 'floor': floor, 'frame': frames[nom_idx]}
+def find_visual_break_pincer(path, frames, milestone, limit, direction):
+    img = cv2.imread(os.path.join(path, milestone['frame']), 0)
+    sig = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+    rng = range(milestone['idx'] + direction, limit, direction)
+    break_idx = milestone['idx']
+    for i in rng:
+        curr = cv2.imread(os.path.join(path, frames[i]), 0)[52:76, 100:142]
+        if np.mean(cv2.absdiff(curr, sig)) > 15: # Stability break
+            break_idx = i; break
+    return break_idx + 1
 
-def get_bitwise_geometric(roi, digit_map, thresh, min_conf):
+def nominate_via_gradient(path, frames, start, end, floor, remaining, used_hashes):
+    """Hunts for a stable board state that differs from previous hashes"""
+    gap_size = end - start
+    step_size = gap_size // (remaining + 1)
+    
+    best_frame = start + (step_size // 2)
+    # Search for local stability minimum within this segment
+    min_variance = 999999
+    
+    for i in range(start + 2, min(start + step_size, end - 2)):
+        # Check board reset spike followed by plateau
+        gray = cv2.imread(os.path.join(path, frames[i]), 0)
+        grid = gray[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
+        
+        # Simple variance as stability metric
+        var = np.var(grid)
+        curr_hash = get_board_hash(path, frames[i])
+        
+        if var < min_variance and curr_hash not in used_hashes:
+            min_variance = var
+            best_frame = i
+            
+    return {'idx': best_frame, 'floor': floor, 'frame': frames[best_frame]}
+
+def get_board_hash(path, frame_name):
+    # Generates a simple hash for duplicate detection
+    img = cv2.imread(os.path.join(path, frame_name), 0)
+    grid = cv2.resize(img[250:500, 50:450], (16, 16))
+    return hash(grid.tobytes())
+
+def get_bitwise_structural_pincer(roi, digit_map, thresh, min_conf):
+    h, w = roi.shape[:2]
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
@@ -114,18 +156,17 @@ def get_bitwise_geometric(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    # GEOMETRIC VETO: 8 vs 7 vs 3
-                    # To be an '8', the center-left (X, Y+10) must be black (white pixel present)
+                    # VETO: Disambiguate 8 from 7/3/9
                     if val == 8:
-                        if bin_roi[pt[1]+10, pt[0]] == 0: matches.append({'x': pt[0], 'val': 3}) # Mid-left empty
-                        elif bin_roi[pt[1]+15, pt[0]] == 0: matches.append({'x': pt[0], 'val': 9}) # Bottom-left empty
+                        y_mid, y_bot = pt[1] + 10, pt[1] + 18
+                        if y_bot < h and bin_roi[y_bot, pt[0]] == 0:
+                            matches.append({'x': pt[0], 'val': 9 if bin_roi[y_mid, pt[0]] > 0 else 3})
                         else: matches.append({'x': pt[0], 'val': 8})
-                    # To be a '7', the bottom half MUST be empty
                     elif val == 7:
-                        if bin_roi[pt[1]+15, pt[0]+5] > 0: continue # Loop found, not a 7
+                        y_test = pt[1] + 15
+                        if y_test < h and bin_roi[y_test, pt[0]+5] > 0: continue 
                         matches.append({'x': pt[0], 'val': 7})
-                    else:
-                        matches.append({'x': pt[0], 'val': val})
+                    else: matches.append({'x': pt[0], 'val': val})
     if not matches: return -1
     matches.sort(key=lambda d: d['x'])
     unique = []; lx = -99
@@ -136,12 +177,11 @@ def get_bitwise_geometric(roi, digit_map, thresh, min_conf):
 
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
-    # Draw after scan logic confirmed
     cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
-    cv2.putText(img, f"HEALED F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
+    cv2.putText(img, f"PINCER F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
-def load_digit_map_fixed():
+def load_digit_map_pincer():
     d_map = {i: [] for i in range(10)}
     for f in os.listdir(DIGITS_DIR):
         if f.endswith('.png'):
@@ -158,4 +198,4 @@ def perform_final_audit(run_id, milestones):
     print(f" Found: {len(milestones)}/{max_f} | Missing: {missing}")
 
 if __name__ == "__main__":
-    run_geometric_sentinel()
+    run_pincer_sentinel()
