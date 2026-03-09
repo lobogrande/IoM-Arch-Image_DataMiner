@@ -10,93 +10,88 @@ BOSS_DATA = {11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
 # --- 2. MASTER CONSTANTS (VERIFIED HUD/ROI) ---
 HEADER_ROI = (52, 76, 100, 142)  
 GRID_ROI = (250, 550, 50, 450)    
-# Protected Folder for Integrated Results
-COLLAPSED_OUT = "Collapsed_Integrated_Results"
+CENTER_ROI = (230, 246, 250, 281)
+# PROTECTED OUTPUT DIRECTORY
+FINAL_OUT = "Consensus_Sentinel_Results"
 
-def run_integrated_surveyor():
-    if not os.path.exists(COLLAPSED_OUT): os.makedirs(COLLAPSED_OUT)
+def run_consensus_sentinel():
+    if not os.path.exists(FINAL_OUT): os.makedirs(FINAL_OUT)
     
-    datasets = ["0"] 
+    datasets = ["0"] # Focus on the problematic noisy run
     for ds_id in datasets:
         buffer_path = f"capture_buffer_{ds_id}"
         if not os.path.exists(buffer_path): continue
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        ds_out = os.path.join(COLLAPSED_OUT, f"Run_{ds_id}")
+        ds_out = os.path.join(FINAL_OUT, f"Run_{ds_id}")
         if os.path.exists(ds_out): shutil.rmtree(ds_out)
         os.makedirs(ds_out)
 
-        print(f"\n--- INTEGRATED SURVEY RUN {ds_id} ---")
+        print(f"\n--- CONSENSUS SENTINEL RUN {ds_id} ---")
         
+        # Initialize Sequence
         sequence = [{'idx': 0, 'floor': 1, 'frame': frames[0]}]
-        first_img = cv2.imread(os.path.join(buffer_path, frames[0]), 0)
-        anchor_h = first_img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+        start_img = cv2.imread(os.path.join(buffer_path, frames[0]), 0)
         
-        prev_h = anchor_h.copy()
-        prev_g = first_img[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
+        # History Buffer: Store the last 2 floor anchors to prevent stutters
+        history = [start_img[52:76, 100:142]]
         
         current_floor = 1
         last_found_idx = 0
         
         i = 1
-        while i < len(frames) - 10:
-            if i < last_found_idx + 6:
+        while i < len(frames) - 6:
+            # 1. SHORT REFRACTORY: Support for 4-6 frame floor clears
+            if i < last_found_idx + 4:
                 i += 1; continue
 
             img = cv2.imread(os.path.join(buffer_path, frames[i]), 0)
-            curr_h = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
             curr_g = img[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
             
-            h_flux = np.mean(cv2.absdiff(curr_h, prev_h))
+            # Use previous frame for Grid Flux trigger
+            prev_img = cv2.imread(os.path.join(buffer_path, frames[i-1]), 0)
+            prev_g = prev_img[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
             g_flux = np.mean(cv2.absdiff(curr_g, prev_g))
             
-            # 1. TRIGGER: Candidate is any frame where Header pulses
-            if h_flux > 1.5:
-                # 2. GRID VALIDATION: Must have a Board Reset (>3.0) in +/- 2 frame window
-                # Banners never cause a 3.0 Grid reset.
-                window_max_grid = g_flux
-                for offset in range(-2, 3):
-                    w_idx = i + offset
-                    if 0 <= w_idx < len(frames):
-                        w_img = cv2.imread(os.path.join(buffer_path, frames[w_idx]), 0)
-                        w_g = w_img[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
-                        # Re-calculating flux for window check
-                        if w_idx > 0:
-                            w_prev = cv2.imread(os.path.join(buffer_path, frames[w_idx-1]), 0)[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
-                            f = np.mean(cv2.absdiff(w_g, w_prev))
-                            if f > window_max_grid: window_max_grid = f
+            # 2. TRIGGER: High-Sensitivity Grid Reset (2.8 catches early floors)
+            if g_flux > 2.8:
+                # 3. TEMPORAL MEDIAN CANDIDATE: Filter out moving text banners
+                window = []
+                for offset in range(0, 3):
+                    w_img = cv2.imread(os.path.join(buffer_path, frames[i+offset]), 0)
+                    window.append(w_img[52:76, 100:142])
                 
-                if window_max_grid > 3.0:
-                    # 3. IDENTITY VETO: Confirm visual state change against anchor
-                    # Settling 4 frames forward for a clean anchor
-                    settled_idx = i + 4
-                    settled_h = cv2.imread(os.path.join(buffer_path, frames[settled_idx]), 0)[52:76, 100:142]
-                    res = cv2.matchTemplate(settled_h, anchor_h, cv2.TM_CCORR_NORMED)
-                    identity = res.max()
+                # Create a "Clean" Consensus Header
+                clean_h = np.median(np.array(window), axis=0).astype(np.uint8)
+                
+                # 4. HISTORY VETO: Compare clean state against last 2 floors
+                is_duplicate = False
+                for old_anchor in history[-2:]:
+                    res = cv2.matchTemplate(clean_h, old_anchor, cv2.TM_CCORR_NORMED)
+                    if res.max() > 0.975: # High identity = same floor
+                        is_duplicate = True; break
+                
+                if not is_duplicate:
+                    current_floor += 1
+                    last_found_idx = i + 4 # Anchor deep in the new state
+                    sequence.append({'idx': last_found_idx, 'floor': current_floor, 'frame': frames[last_found_idx]})
                     
-                    if identity < 0.985:
-                        current_floor += 1
-                        last_found_idx = settled_idx
-                        sequence.append({'idx': last_found_idx, 'floor': current_floor, 'frame': frames[last_found_idx]})
-                        
-                        if current_floor % 10 == 0: 
-                            print(f"  Captured F{current_floor} @ Idx {last_found_idx} (Grid Spike: {window_max_grid:.2f})")
-                        
-                        anchor_h = settled_h.copy()
-                        i = last_found_idx + 1
-                        prev_h = anchor_h.copy()
-                        # Update grid baseline to post-reset state
-                        prev_g = cv2.imread(os.path.join(buffer_path, frames[last_found_idx]), 0)[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
-                        continue
-            
-            prev_h, prev_g = curr_h, curr_g
+                    if current_floor % 10 == 0: 
+                        print(f"  Floor {current_floor} Identified @ Idx {last_found_idx} (Grid Pulse: {g_flux:.2f})")
+                    
+                    # Update History with a clean stable anchor
+                    new_anchor_img = cv2.imread(os.path.join(buffer_path, frames[last_found_idx]), 0)
+                    history.append(new_anchor_img[52:76, 100:142])
+                    i = last_found_idx + 1
+                    continue
             i += 1
 
-        with open(f"integrated_sequence_run_{ds_id}.json", 'w') as f:
+        # Save Final Outputs
+        with open(f"consensus_sequence_run_{ds_id}.json", 'w') as f:
             json.dump(sequence, f, indent=4)
         for entry in sequence:
             shutil.copy2(os.path.join(buffer_path, entry['frame']), 
                          os.path.join(ds_out, f"F{entry['floor']}_{entry['frame']}"))
 
 if __name__ == "__main__":
-    run_integrated_surveyor()
+    run_consensus_sentinel()
