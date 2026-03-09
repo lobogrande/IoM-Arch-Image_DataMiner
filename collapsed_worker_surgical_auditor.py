@@ -15,14 +15,14 @@ SURGICAL_OUT = "Surgical_Proof"
 
 # --- 3. TARGETED TEST ZONES ---
 TEST_ZONES = [
-    {"ds": "0", "start_idx": 2550, "end_idx": 4000},  # F34-42
-    {"ds": "0", "start_idx": 7500, "end_idx": 9500},  # F63-70
-    {"ds": "0", "start_idx": 17200, "end_idx": 25200}, # F101-109
+    {"ds": "0", "start_idx": 2550, "end_idx": 4000},  
+    {"ds": "0", "start_idx": 7450, "end_idx": 9500},  
+    {"ds": "0", "start_idx": 17200, "end_idx": 25200}, 
     {"ds": "1", "start_idx": 22800, "end_idx": 25270}, 
     {"ds": "2", "start_idx": 24000, "end_idx": 25270}
 ]
 
-def run_refined_discovery():
+def run_universal_discovery():
     if not os.path.exists(SURGICAL_OUT): os.makedirs(SURGICAL_OUT)
     global_report = []
 
@@ -37,56 +37,61 @@ def run_refined_discovery():
         if os.path.exists(ds_out): shutil.rmtree(ds_out)
         os.makedirs(ds_out)
 
-        print(f"\n--- REFINED DISCOVERY: {label} ---")
+        print(f"\n--- UNIVERSAL DISCOVERY: {label} ---")
         
         start_idx = zone['start_idx']
         prev_img = cv2.imread(os.path.join(buffer_path, frames[start_idx]), 0)
-        prev_h = prev_img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-        prev_c = prev_img[CENTER_ROI[0]:CENTER_ROI[1], CENTER_ROI[2]:CENTER_ROI[3]]
+        prev_h = prev_img[52:76, 100:142]
+        prev_c = prev_img[230:246, 250:281]
         
         anchor_h = prev_h.copy()
         found_count = 0
 
         for i in range(start_idx + 1, min(zone['end_idx'], len(frames) - 4)):
             img = cv2.imread(os.path.join(buffer_path, frames[i]), 0)
-            curr_h = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-            curr_c = img[CENTER_ROI[0]:CENTER_ROI[1], CENTER_ROI[2]:CENTER_ROI[3]]
+            curr_h = img[52:76, 100:142]
+            curr_c = img[230:246, 250:281]
             
             h_flux = np.mean(cv2.absdiff(curr_h, prev_h))
             c_flux = np.mean(cv2.absdiff(curr_c, prev_c))
-            anc_diff = np.mean(cv2.absdiff(curr_h, anchor_h))
             
             trigger = False
-            if h_flux > 2.0 and c_flux > 1.2: # High-sensitivity pulse gate
-                # 1. STRUCTURAL FILTER: Digit variance check
+            # SENSITIVITY: 1.8 h_flux is the limit for subtle digit increments
+            if h_flux > 1.8 and c_flux > 1.2:
+                # STRUCTURAL CHECK: Lowered to 90 to allow 'clean' but subtle floors
                 row_sums = np.sum(cv2.absdiff(curr_h, prev_h), axis=1)
                 struct_score = np.std(row_sums)
                 
-                # 2. PERSISTENCE CHECK: Reverted to 3-frame (v40.66)
+                # PERSISTENCE: 3 frames for high-speed support (v40.66 architecture)
                 is_permanent = True
                 for offset in range(1, 4):
                     future_h = cv2.imread(os.path.join(buffer_path, frames[i+offset]), 0)[52:76, 100:142]
-                    if np.mean(cv2.absdiff(future_h, curr_h)) > 6.5: # Flux threshold for banner noise
+                    # Banner Veto: If future movement is too high, it's noise
+                    if np.mean(cv2.absdiff(future_h, curr_h)) > 6.0:
                         is_permanent = False; break
                 
-                # 3. ABSOLUTE ANCHOR GATE: Reject stutters < 2.4 MSE from current anchor
-                if is_permanent and struct_score > 100.0 and anc_diff > 2.4:
-                    trigger = True
-                    found_count += 1
-                    anchor_idx = i + 3 # Optimized anchor offset
+                if is_permanent and struct_score > 90.0:
+                    # LITERAL SIMILARITY CHECK: Is this candidate just a stutter of the previous floor?
+                    # If the candidate is >98.5% identical to the current anchor, veto the trigger.
+                    candidate_diff = np.mean(cv2.absdiff(curr_h, anchor_h))
                     
-                    # Lock new anchor and state
-                    anchor_h = cv2.imread(os.path.join(buffer_path, frames[anchor_idx]), 0)[52:76, 100:142]
-                    print(f" [+] TR_{found_count} @ {i} (AncDiff: {anc_diff:.2f}, Score: {struct_score:.1f})")
-                    shutil.copy2(os.path.join(buffer_path, frames[anchor_idx]), 
-                                 os.path.join(ds_out, f"TR_{found_count}_Idx{anchor_idx}_{frames[anchor_idx]}"))
+                    if candidate_diff > 1.0: # Minimum literal change from previous floor
+                        trigger = True
+                        found_count += 1
+                        anchor_idx = i + 3
+                        
+                        # Lock new anchor
+                        anchor_h = cv2.imread(os.path.join(buffer_path, frames[anchor_idx]), 0)[52:76, 100:142]
+                        print(f" [+] TR_{found_count} @ {i} (AncDiff: {candidate_diff:.2f}, Score: {struct_score:.1f})")
+                        shutil.copy2(os.path.join(buffer_path, frames[anchor_idx]), 
+                                     os.path.join(ds_out, f"TR_{found_count}_Idx{anchor_idx}_{frames[anchor_idx]}"))
             
-            global_report.append({'ds': ds_id, 'idx': i, 'anc_diff': anc_diff, 'triggered': trigger})
+            global_report.append({'ds': ds_id, 'idx': i, 'h_flux': h_flux, 'triggered': trigger})
             prev_h, prev_c = curr_h, curr_c
 
-    with open("surgical_refined_log.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=['ds', 'idx', 'anc_diff', 'triggered'])
+    with open("surgical_universal_log.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=['ds', 'idx', 'h_flux', 'triggered'])
         writer.writeheader(); writer.writerows(global_report)
 
 if __name__ == "__main__":
-    run_refined_discovery()
+    run_universal_discovery()
