@@ -61,7 +61,7 @@ HEADER_ROI_COORDS = (54, 74, 103, 138)
 DIG_VAL_ROI_COORDS = (230, 246, 250, 281)
 DIG_ANCH_ROI_COORDS = (229, 248, 163, 253)
 
-def run_recapture_sentinel():
+def run_final_worker1():
     digit_map = load_digit_map_fixed()
     anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -77,7 +77,6 @@ def run_recapture_sentinel():
         if not frames: continue
 
         milestones = []
-        # Logical anchor for Floor 1
         milestones.append({'idx': 0, 'floor': 1, 'frame': frames[0]})
         print(f"\n [RUN {ds_id}] Anchor Saved: Floor 1")
         
@@ -92,26 +91,20 @@ def run_recapture_sentinel():
             gray = cv2.imread(os.path.join(buffer_path, frames[i]), cv2.IMREAD_GRAYSCALE)
             if gray is None: continue
             
-            # 1. READ SENSORS (Restored Confidence levels for Recall)
-            h_val = get_bitwise_recapture(gray[54:74, 103:138], digit_map, 175, 0.82)
-            d_val = get_bitwise_recapture(gray[230:246, 250:281], digit_map, 165, 0.72)
+            h_val = get_bitwise_final(gray[54:74, 103:138], digit_map, 175, 0.82)
+            d_val = get_bitwise_final(gray[230:246, 250:281], digit_map, 165, 0.72)
             
-            # 2. ANCHOR TEXT CHECK
             has_anch = False
             if anchor_tmpl is not None:
                 res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED)
                 if res.max() > 0.60: has_anch = True
 
-            # 3. BALANCED LOGIC
             if h_val > current_f and (h_val - current_f <= 30 or h_val in BOSS_DATA):
-                # TRIPLE LOCK -> Instant
                 if h_val == d_val and has_anch:
                     current_f = h_val
                     milestones.append({'idx': i, 'floor': current_f, 'frame': frames[i]})
                     print(f"\n [RUN {ds_id}] Anchor Saved: Floor {current_f}")
                     h_cand, h_count, sync_count = -1, 0, 0
-                
-                # DOUBLE LOCK -> 2 frames
                 elif h_val == d_val:
                     if h_val == sync_cand: sync_count += 1
                     else: sync_cand, sync_count = h_val, 1
@@ -120,8 +113,6 @@ def run_recapture_sentinel():
                         milestones.append({'idx': i, 'floor': current_f, 'frame': frames[i]})
                         print(f"\n [RUN {ds_id}] Anchor Saved: Floor {current_f}")
                         h_cand, h_count, sync_count = -1, 0, 0
-
-                # STABILITY LOCK -> 4 frames (Balance between 3 and 6)
                 else:
                     if h_val == h_cand: h_count += 1
                     else: h_cand, h_count = h_val, 1
@@ -133,19 +124,19 @@ def run_recapture_sentinel():
             else:
                 h_cand, h_count, sync_count = -1, 0, 0
 
-            if i % 500 == 0:
-                fps = 500 / (time.time() - perf_timer)
-                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} | FPS: {fps:.1f}")
+            if i % 1000 == 0:
+                fps = 1000 / (time.time() - perf_timer)
+                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | FPS: {fps:.1f}")
                 sys.stdout.flush()
                 perf_timer = time.time()
 
         with open(f"milestones_run_{ds_id}.json", 'w') as f:
             json.dump(milestones, f, indent=4)
         
-        generate_consensus_images(ds_id, buffer_path, milestones, evidence_path)
+        generate_consensus_images_final(ds_id, buffer_path, milestones, evidence_path)
         perform_gap_audit_detailed(ds_id, milestones, current_f)
 
-def get_bitwise_recapture(roi, digit_map, thresh, min_conf):
+def get_bitwise_final(roi, digit_map, thresh, min_conf):
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
@@ -154,19 +145,14 @@ def get_bitwise_recapture(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    # DISAMBIGUATION: Density/Point Logic
                     if val == 6:
-                        # Check top-right pixel for '5' closure
                         if bin_roi[pt[1]+2, pt[0]+5] > 0: continue 
                         matches.append({'x': pt[0], 'val': 6})
                     elif val == 8:
-                        # Left-middle density for 8 vs 3
                         if np.sum(bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+1]) < 255: matches.append({'x': pt[0], 'val': 3})
-                        # Bottom-left density for 8 vs 9
                         elif np.sum(bin_roi[pt[1]+8:pt[1]+12, pt[0]:pt[0]+1]) < 255: matches.append({'x': pt[0], 'val': 9})
                         else: matches.append({'x': pt[0], 'val': 8})
-                    else:
-                        matches.append({'x': pt[0], 'val': val})
+                    else: matches.append({'x': pt[0], 'val': val})
     if not matches: return -1
     matches.sort(key=lambda d: d['x'])
     unique = []; last_x = -99
@@ -187,13 +173,14 @@ def load_digit_map_fixed():
                 d_map[v].append(b)
     return d_map
 
-def generate_consensus_images(ds_id, buffer_path, milestones, evidence_path):
+def generate_consensus_images_final(ds_id, buffer_path, milestones, evidence_path):
     print(f"\n Batch Generating Evidence for Run {ds_id}...")
     for m in milestones:
         img = cv2.imread(os.path.join(buffer_path, m['frame']))
         out_file = f"{evidence_path}/F{m['floor']}_{m['frame']}"
-        cv2.rectangle(img, (103, 54), (138, 74), (255, 0, 255), 1)
-        cv2.rectangle(img, (161, 230), (281, 246), (255, 0, 255), 1)
+        # HUD rectangles commented out for Pass 1 Final
+        # cv2.rectangle(img, (103, 54), (138, 74), (255, 0, 255), 1)
+        # cv2.rectangle(img, (161, 230), (281, 246), (255, 0, 255), 1)
         cv2.imwrite(out_file, img)
 
 def perform_gap_audit_detailed(run_id, milestones, max_floor):
@@ -212,4 +199,4 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_recapture_sentinel()
+    run_final_worker1()
