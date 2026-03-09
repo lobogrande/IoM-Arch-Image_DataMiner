@@ -15,7 +15,7 @@ AI_DIM = 48 # Resulting 48x48 crops
 # --- 3. HARVEST CONFIG ---
 HARVEST_CONFIG = {
     "target_run": "0",
-    "target_floors": [34, 49, 99], # Best variety for templates
+    "target_floors": [11,17,23,25,29,31,34,35,41,44,49,74,98,99], # Best variety for templates
     "output_dir": "Standardized_Templates_Raw"
 }
 
