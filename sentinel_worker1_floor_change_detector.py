@@ -57,12 +57,11 @@ DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 ANCHOR_FILE = "dig_stage_anchor.png"
 
-# ROIs
 HEADER_ROI = (54, 74, 103, 138)
 DIG_ANCH_ROI = (229, 248, 163, 253)
 DIG_VAL_ROI = (230, 246, 250, 281)
 
-def run_proportional_sentinel():
+def run_production_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
     anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
@@ -80,9 +79,8 @@ def run_proportional_sentinel():
         if not frames: continue
 
         milestones = []
-        # Forced Start
-        first_frame_img = cv2.imread(os.path.join(buffer_path, frames[0]))
-        commit_milestone(ds_id, 0, 1, frames[0], first_frame_img, milestones, evidence_path)
+        # Initial floor 1 anchor
+        commit_milestone(ds_id, 0, 1, frames[0], cv2.imread(os.path.join(buffer_path, frames[0])), milestones, evidence_path)
         
         current_f = 1
         h_cand, h_count = -1, 0
@@ -106,16 +104,16 @@ def run_proportional_sentinel():
                 res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED)
                 if res.max() > 0.60: has_anch = True
 
-            # 3. PROPORTIONAL TRUST LOGIC
+            # 3. PRODUCTION LOGIC: Tiered trust with sequential reinforcement
             if h_val > current_f and (h_val - current_f <= 30 or h_val in BOSS_DATA):
                 
-                # LEVEL 1: TRIPLE LOCK (Consensus + Anchor) -> Instant
+                # TRIPLE LOCK -> Instant
                 if h_val == d_val and has_anch:
                     current_f = h_val
                     commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
                     h_cand, h_count, sync_count = -1, 0, 0
                 
-                # LEVEL 2: DOUBLE LOCK (Header == Dig Stage) -> 2 Frames
+                # DOUBLE LOCK -> 2 Frames
                 elif h_val == d_val:
                     if h_val == sync_cand: sync_count += 1
                     else: sync_cand, sync_count = h_val, 1
@@ -125,7 +123,7 @@ def run_proportional_sentinel():
                         commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
                         h_cand, h_count, sync_count = -1, 0, 0
 
-                # LEVEL 3: STABILITY LOCK (Header Only) -> 5 Frames
+                # STABILITY LOCK -> 5 Frames
                 else:
                     if h_val == h_cand: h_count += 1
                     else: h_cand, h_count = h_val, 1
@@ -156,10 +154,14 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    # DISAMBIGUATION: Left-middle pixel check for 8 vs 3
+                    # DISAMBIGUATION: Pixel check for 8 vs 3 vs 9
                     if val == 8:
+                        # Check left-middle for 3-style gap
                         if np.sum(bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+1]) < 255:
                             matches.append({'x': pt[0], 'val': 3})
+                        # Check bottom-left for 9-style gap
+                        elif np.sum(bin_roi[pt[1]+8:pt[1]+12, pt[0]:pt[0]+1]) < 255:
+                            matches.append({'x': pt[0], 'val': 9})
                         else: matches.append({'x': pt[0], 'val': 8})
                     else: matches.append({'x': pt[0], 'val': val})
     if not matches: return -1
@@ -194,6 +196,8 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
             row, col = divmod(b_idx, 6)
             cx, cy = int(75 + (col * 59.1)), int(261 + (row * 59.1))
             cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
+            tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
+            cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
     cv2.imwrite(out_file, marked)
     print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
 
@@ -213,4 +217,4 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_proportional_sentinel()
+    run_production_sentinel()
