@@ -10,13 +10,13 @@ import time
 # --- 1. MASTER BOSS DATA (UNABRIDGED) ---
 BOSS_DATA = {11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 34: {'tier': 'mixed', 'special': {0: 'com2', 1: 'com2', 2: 'com2', 3: 'com2', 4: 'com2', 5: 'com2', 6: 'com2', 7: 'com2', 8: 'myth1', 9: 'myth1', 10: 'com2', 11: 'com2', 12: 'com2', 13: 'com2', 14: 'myth1', 15: 'myth1', 16: 'com2', 17: 'com2', 18: 'com2', 19: 'com2', 20: 'com2', 21: 'com2', 22: 'com2', 23: 'com2'}}, 35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'}, 49: {"tier": "mixed", "special": {0: "dirt3", 1: "dirt3", 2: "dirt3", 3: "dirt3", 4: "dirt3", 5: "dirt3", 6: "com3", 7: "com3", 8: "com3", 9: "com3", 10: "com3", 11: "com3", 12: "rare3", 13: "rare3", 14: "rare3", 15: "rare3", 16: "rare3", 17: "rare3", 18: "myth2", 19: "myth2", 20: "myth2", 21: "myth2", 22: "myth2", 23: "myth2"}}, 74: {'tier': 'mixed', 'special': {0: 'dirt3', 1: 'dirt3', 2: 'dirt3', 3: 'dirt3', 4: 'dirt3', 5: 'dirt3', 6: 'dirt3', 7: 'dirt3', 8: 'dirt3', 9: 'dirt3', 10: 'dirt3', 11: 'dirt3', 12: 'dirt3', 13: 'dirt3', 14: 'dirt3', 15: 'dirt3', 16: 'dirt3', 17: 'dirt3', 18: 'dirt3', 19: 'dirt3', 20: 'div1', 21: 'div1', 22: 'dirt3', 23: 'dirt3'}}, 98: {'tier': 'myth3'}, 99: {"tier": "mixed", "special": {0: "com3", 1: "rare3", 2: "epic3", 3: "leg3", 4: "myth3", 5: "div2", 6: "com3", 7: "rare3", 8: "epic3", 9: "leg3", 10: "myth3", 11: "div2", 12: "com3", 13: "rare3", 14: "epic3", 15: "leg3", 16: "myth3", 17: "div2", 18: "com3", 19: "rare3", 20: "epic3", 21: "leg3", 22: "myth3", 23: "div2"}}}
 
-# --- 2. CONSTANTS ---
+# --- 2. MASTER CONSTANTS ---
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
 
-def run_division_sentinel():
+def run_integrated_sentinel():
     digit_map = load_digit_map()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
@@ -31,9 +31,9 @@ def run_division_sentinel():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- DIVISION SENTINEL RUN {ds_id} ---")
+        print(f"\n--- INTEGRATED SENTINEL RUN {ds_id} ---")
         
-        # 1. CEILING DISCOVERY
+        # CEILING DISCOVERY
         ceiling_f = find_ceiling_structural(buffer_path, frames, anchors[-1], digit_map)
         if ceiling_f: anchors.append(ceiling_f)
 
@@ -43,10 +43,9 @@ def run_division_sentinel():
             s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
             
             if (e_f - s_f) > 1:
-                print(f" Dividing Gap: F{s_f}->F{e_f}...")
+                print(f" Integrated Healing: F{s_f}->F{e_f}...")
                 sys.stdout.flush()
-                # Use temporal division hunting
-                healed = solve_gap_via_division(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
+                healed = solve_gap_integrated(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
                 final_consensus.extend(healed)
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
@@ -57,90 +56,65 @@ def run_division_sentinel():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_via_division(path, frames, anc_s, anc_e, digit_map):
-    """Divides the gap into equal segments and hunts for each floor within its zone"""
+def solve_gap_integrated(path, frames, anc_s, anc_e, digit_map):
     healed = []
-    num_missing = anc_e['floor'] - anc_s['floor'] - 1
+    # FEATURE: Claim and Lock (Prevents looking at previous floor frames)
+    search_start = find_visual_break(path, frames, anc_s, anc_e['idx'])
     
-    # 1. FIND THE 'WILDERNESS' (Frames not owned by the anchors)
-    start_border = find_visual_break_header(path, frames, anc_s, anc_e['idx'], direction=1)
-    end_border = find_visual_break_header(path, frames, anc_e, anc_s['idx'], direction=-1)
-    
-    wilderness_size = end_border - start_border
-    if wilderness_size <= 0:
-        print(f" !! Gap Too Tight! Forcing equal spacing for {num_missing} floors.")
-        start_border, end_border = anc_s['idx'] + 1, anc_e['idx'] - 1
-        wilderness_size = end_border - start_border
-
-    segment_size = wilderness_size // (num_missing + 1)
-    
-    for i in range(num_missing):
-        target_f = anc_s['floor'] + i + 1
-        # Hunt around the midpoint of this segment
-        zone_start = start_border + (i * segment_size)
-        zone_end = start_border + ((i + 2) * segment_size)
-        midpoint = zone_start + (segment_size // 2)
-        
+    for target in range(anc_s['floor'] + 1, anc_e['floor']):
         found_m = None
-        # HUNT: Search 20 frames around the midpoint for a clear OCR read
-        for offset in [0, 1, -1, 2, -2, 5, -5, 10, -10]:
-            idx = midpoint + offset
-            if not (zone_start < idx < zone_end): continue
-            
-            gray = cv2.imread(os.path.join(path, frames[idx]), 0)
+        cand_f, cand_count = -1, 0
+        
+        for i in range(search_start, anc_e['idx']):
+            gray = cv2.imread(os.path.join(path, frames[i]), 0)
             roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
             
-            # Peer Veto: Skip if we explicitly see a WRONG neighbor floor
-            observed = get_bitwise_verified(roi, digit_map, 175, 0.50)
-            if observed != -1 and observed != target_f: continue
+            # FEATURE: Identity Veto (Vetoes frames that look like the previous floor)
+            if get_bitwise_verified(roi, digit_map, 175, 0.55) == target - 1:
+                cand_f, cand_count = -1, 0
+                continue
             
-            # multi-thresh attempt
+            val = -1
             for t in [175, 155, 195]:
-                if get_bitwise_verified(roi, digit_map, t, 0.72) == target_f:
-                    found_m = {'idx': idx, 'floor': target_f, 'frame': frames[idx]}
+                if get_bitwise_verified(roi, digit_map, t, 0.72) == target:
+                    val = target; break
+            
+            if val == target:
+                if val == cand_f: cand_count += 1
+                else: cand_f, cand_count = val, 1
+                if cand_count >= 4: # PERSISTENCE GATE (Agility for fast floors)
+                    found_m = {'idx': i - 3, 'floor': target, 'frame': frames[i-3]}
                     break
-            if found_m: break
-            
+            else:
+                cand_f, cand_count = -1, 0
+        
         if not found_m:
-            # FALLBACK: If midpoint OCR fails, pick the most quiet frame in this segment
-            print(f"   [F{target_f}] Midpoint OCR Fail - Picking quietest frame in segment.")
-            found_m = nominate_quietest_in_zone(path, frames, zone_start, zone_end, target_f, digit_map)
+            # FEATURE: Midpoint-Only Initialization (Hunts inside deep-temporal zones)
+            print(f"   [F{target}] OCR Fail - Proportional Fallback...")
+            found_m = nominate_proportional_frame(path, frames, search_start, anc_e['idx'], target, anc_e['floor']-target)
             
-        print(f"   [F{target_f}] Locked: {found_m['frame']} (Index: {found_m['idx']})")
+        print(f"   [F{target}] Locked: {found_m['frame']} (Index: {found_m['idx']})")
         sys.stdout.flush()
         healed.append(found_m)
         
+        # FEATURE: Iterative search-start update (Hard-locked image uniqueness)
+        search_start = found_m['idx'] + 1 
+        
     return healed
 
-def find_visual_break_header(path, frames, milestone, limit, direction):
-    """Marches from a milestone until the visual signature changes"""
+def find_visual_break(path, frames, milestone, upper_limit):
     img = cv2.imread(os.path.join(path, milestone['frame']), 0)
     sig = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-    
-    rng = range(milestone['idx'] + direction, limit, direction)
-    last_stable = milestone['idx']
-    for i in rng:
+    for i in range(milestone['idx'] + 1, upper_limit):
         curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-        if np.mean(cv2.absdiff(curr, sig)) > 20: break
-        last_stable = i
-    return last_stable
+        if np.mean(cv2.absdiff(curr, sig)) > 18: return i
+    return milestone['idx'] + 1
 
-def nominate_quietest_in_zone(path, frames, start, end, floor, digit_map):
-    best_stability = 999999
-    best_idx = start + (end - start) // 2
-    
-    for i in range(start, end - 5):
-        # Peer Veto check
-        gray = cv2.imread(os.path.join(path, frames[i]), 0)
-        observed = get_bitwise_verified(gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]], digit_map, 175, 0.50)
-        if observed != -1 and observed != floor: continue
-
-        window = [cv2.imread(os.path.join(path, frames[i+j]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]] for j in range(3)]
-        diff = np.mean([np.mean(cv2.absdiff(window[k], window[k+1])) for k in range(2)])
-        if diff < best_stability:
-            best_stability, best_idx = diff, i
-            
-    return {'idx': best_idx, 'floor': floor, 'frame': frames[best_idx]}
+def nominate_proportional_frame(path, frames, start, end, floor, remaining):
+    # FEATURE: 33% Proportional Step (Avoids transition jitter)
+    segment = (end - start) // (remaining + 1)
+    nom_idx = start + (segment // 3) 
+    return {'idx': nom_idx, 'floor': floor, 'frame': frames[nom_idx]}
 
 def find_ceiling_structural(path, frames, last_anc, d_map):
     for i in range(len(frames) - 1, last_anc['idx'] + 20, -10):
@@ -174,8 +148,8 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
 
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
-    cv2.rectangle(img, (100, 52), (142, 76), (0, 255, 255), 2)
-    cv2.putText(img, f"DIVISION F{milestone['floor']}", (100, 48), 0, 0.4, (0, 255, 255), 1)
+    cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
+    cv2.putText(img, f"SENTINEL F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
 def load_digit_map():
@@ -192,8 +166,8 @@ def perform_final_audit(run_id, milestones):
     found = sorted(list(set(m['floor'] for m in milestones)))
     max_f = milestones[-1]['floor']; missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
     print(f"--- FINAL AUDIT RUN {run_id} ---")
-    print(f" Completion: {100 - (len(missing)/max_f)*100:.1f}%")
+    print(f" Found: {len(milestones)}/{max_f}")
     if missing: print(f" Still Missing: {missing}")
 
 if __name__ == "__main__":
-    run_division_sentinel()
+    run_integrated_sentinel()
