@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import os
 import json
+import sys
 import shutil
 import re
 import time
@@ -14,9 +15,8 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
-GRID_ROI = (250, 500, 75, 425)
 
-def run_convergent_healer():
+def run_structural_anchor_healer():
     digit_map = load_digit_map()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
@@ -31,10 +31,10 @@ def run_convergent_healer():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- SOVEREIGN CONVERGENCE RUN {ds_id} ---")
+        print(f"\n--- STRUCTURAL ANCHOR RUN {ds_id} ---")
         
-        # 1. CEILING DISCOVERY
-        ceiling_f = find_ceiling_sovereign(buffer_path, frames, anchors[-1], digit_map)
+        # CEILING FINDER
+        ceiling_f = find_ceiling_structural(buffer_path, frames, anchors[-1], digit_map)
         if ceiling_f: anchors.append(ceiling_f)
 
         final_consensus = []
@@ -44,11 +44,10 @@ def run_convergent_healer():
             s_idx, e_idx = anchors[i]['idx'], anchors[i+1]['idx']
             
             if (e_f - s_f) > 1:
-                # 2. BOUNDARY LOCKS
-                clean_start, clean_end = map_signature_boundaries(buffer_path, frames, anchors[i], anchors[i+1])
-                
-                # 3. RECURSIVE HEALING WITH CONVERGENCE
-                healed = solve_gap_with_convergence(buffer_path, frames, clean_start, clean_end, s_f, e_f, digit_map)
+                print(f" Healing Gap: F{s_f}->F{e_f}...")
+                sys.stdout.flush()
+                # Use stability-plateau logic
+                healed = solve_gap_with_plateaus(buffer_path, frames, s_idx, e_idx, s_f, e_f, digit_map)
                 final_consensus.extend(healed)
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
@@ -59,85 +58,72 @@ def run_convergent_healer():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_with_convergence(path, frames, s_idx, e_idx, s_f, e_f, digit_map):
-    """Heals gaps while allowing new floors to claim territory iteratively"""
+def solve_gap_with_plateaus(path, frames, s_idx, e_idx, s_f, e_f, digit_map):
     healed = []
     missing_floors = list(range(s_f + 1, e_f))
-    current_search_start = s_idx
+    current_search_start = s_idx + 1
     
     for target in missing_floors:
         found_m = None
-        # PASS 1: Adaptive OCR Siege
-        for conf, thresholds in [(0.78, [175, 165]), (0.70, [155, 195]), (0.62, [145, 205])]:
-            for t in thresholds:
-                for i in range(current_search_start, e_idx):
-                    gray = cv2.imread(os.path.join(path, frames[i]), 0)
-                    if get_bitwise_verified(gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]], digit_map, t, conf) == target:
-                        found_m = {'idx': i, 'floor': target, 'frame': frames[i]}
-                        break
-                if found_m: break
-            if found_m: break
+        # GATE: Stability Check (Header must be stable to ignore scrolling banners)
+        cand_f, cand_count = -1, 0
+        
+        for i in range(current_search_start, e_idx):
+            gray = cv2.imread(os.path.join(path, frames[i]), 0)
+            roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
             
-        # PASS 2: Transition nomination if OCR fails
+            # multi-thresh OCR siege
+            val = -1
+            for t in [175, 155, 195]:
+                res = get_bitwise_verified(roi, digit_map, t, 0.72)
+                if res == target:
+                    val = res; break
+            
+            if val == target:
+                # To defeat the banner, the number MUST be stable
+                if val == cand_f: cand_count += 1
+                else: cand_f, cand_count = val, 1
+                
+                if cand_count >= 5: # Gates against vertical scroll noise
+                    found_m = {'idx': i - 4, 'floor': target, 'frame': frames[i-4]}
+                    break
+            else:
+                cand_f, cand_count = -1, 0
+        
         if not found_m:
-            found_m = nominate_signature_transition(path, frames, current_search_start, e_idx, target)
-        
-        # ACTIVE CONVERGENCE: Map the signature of the newly found floor
-        new_start, new_end = find_local_signature_end(path, frames, found_m, e_idx)
+            # Plateau Fallback: Find the quietest frame in the logical window
+            print(f"   [F{target}] OCR Blind - Nominating Plateau...")
+            found_m = nominate_quiet_plateau(path, frames, current_search_start, e_idx, target)
+            
+        print(f"   [F{target}] Identified: {found_m['frame']}")
+        sys.stdout.flush()
         healed.append(found_m)
-        
-        # The next floor cannot begin until this one's visual signature ends
-        current_search_start = new_end + 1
+        current_search_start = found_m['idx'] + 5 # claim these frames
         
     return healed
 
-def find_local_signature_end(path, frames, m, upper_limit):
-    """Determines how many frames the newly healed floor 'owns'"""
-    img = cv2.imread(os.path.join(path, m['frame']), 0)
-    sig = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+def nominate_quiet_plateau(path, frames, start, end, floor):
+    # Instead of biggest change, we find the frame where the Header is MOST STABLE
+    best_stability = 999999
+    best_idx = start
+    prev_roi = None
     
-    end_claim = m['idx']
-    for i in range(m['idx'] + 1, upper_limit):
-        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-        if np.mean(cv2.absdiff(curr, sig)) < 15:
-            end_claim = i
-        else: break
-    return m['idx'], end_claim
-
-def map_signature_boundaries(path, frames, anc_start, anc_end):
-    img_s = cv2.imread(os.path.join(path, anc_start['frame']), 0)
-    sig_s = img_s[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-    clean_start = anc_start['idx']
-    for i in range(anc_start['idx'] + 1, anc_end['idx']):
-        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-        if np.mean(cv2.absdiff(curr, sig_s)) < 15: clean_start = i
-        else: break
-
-    img_e = cv2.imread(os.path.join(path, anc_end['frame']), 0)
-    sig_e = img_e[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-    clean_end = anc_end['idx']
-    for i in range(anc_end['idx'] - 1, anc_start['idx'], -1):
-        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-        if np.mean(cv2.absdiff(curr, sig_e)) < 15: clean_end = i
-        else: break
-    return clean_start + 1, clean_end - 1
-
-def nominate_signature_transition(path, frames, start, end, floor):
-    max_diff = -1; best_idx = start; prev_img = None
-    window_limit = min(start + 200, end)
-    for i in range(start, window_limit):
-        img = cv2.imread(os.path.join(path, frames[i]), 0)
-        grid = img[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
-        if prev_img is not None:
-            diff = np.sum(cv2.absdiff(grid, prev_img))
-            if diff > max_diff and diff < 15000000: max_diff = diff; best_idx = i
-        prev_img = grid
+    # We check 150 frames to find a "Quiet Spot"
+    limit = min(start + 150, end)
+    for i in range(start, limit):
+        gray = cv2.imread(os.path.join(path, frames[i]), 0)
+        roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+        if prev_roi is not None:
+            diff = np.mean(cv2.absdiff(roi, prev_roi))
+            if diff < best_stability: # Lower is more stable
+                best_stability, best_idx = diff, i
+        prev_roi = roi
     return {'idx': best_idx, 'floor': floor, 'frame': frames[best_idx]}
 
-def find_ceiling_sovereign(path, frames, last_anc, d_map):
-    for i in range(len(frames) - 1, last_anc['idx'] + 5, -5):
+def find_ceiling_structural(path, frames, last_anc, d_map):
+    for i in range(len(frames) - 1, last_anc['idx'] + 20, -10):
         gray = cv2.imread(os.path.join(path, frames[i]), 0)
-        val = get_bitwise_verified(gray[52:76, 100:142], d_map, 165, 0.65)
+        val = get_bitwise_verified(gray[52:76, 100:142], d_map, 165, 0.68)
         if val > last_anc['floor']: return {'idx': i, 'floor': val, 'frame': frames[i]}
     return None
 
@@ -166,8 +152,8 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
 
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
-    cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
-    cv2.putText(img, f"CONV-HEAL F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
+    cv2.rectangle(img, (100, 52), (142, 76), (0, 255, 0), 2)
+    cv2.putText(img, f"ANCHOR F{milestone['floor']}", (100, 48), 0, 0.4, (0, 255, 0), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
 def load_digit_map():
@@ -188,4 +174,4 @@ def perform_final_audit(run_id, milestones):
     if missing: print(f" Still Missing: {missing}")
 
 if __name__ == "__main__":
-    run_convergent_healer()
+    run_structural_anchor_healer()
