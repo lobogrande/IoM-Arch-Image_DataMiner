@@ -14,20 +14,17 @@ HEADER_ROI = (52, 76, 100, 142)
 CENTER_ROI = (230, 246, 250, 281)
 FINAL_CONSENSUS_DIR = "Final_Consensus_Images"
 
-def run_final_healer():
+def run_final_sentinel():
     if not os.path.exists(FINAL_CONSENSUS_DIR): os.makedirs(FINAL_CONSENSUS_DIR)
 
     for ds_id in DATASETS:
         json_file = f"milestones_run_{ds_id}.json"
         buffer_path = f"capture_buffer_{ds_id}"
-        w1_evidence = f"Worker1_Evidence/Run_{ds_id}"
-        
         if not os.path.exists(json_file): continue
         
         with open(json_file, 'r') as f: anchors = json.load(f)
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
         
-        # Prepare output directory
         ds_final_path = os.path.join(FINAL_CONSENSUS_DIR, f"Run_{ds_id}")
         if os.path.exists(ds_final_path): shutil.rmtree(ds_final_path)
         os.makedirs(ds_final_path)
@@ -39,7 +36,8 @@ def run_final_healer():
             final_list.append(anchors[i])
             count = anchors[i+1]['floor'] - anchors[i]['floor'] - 1
             if count > 0:
-                healed = solve_gap_absolute(buffer_path, frames, anchors[i], anchors[i+1], count)
+                print(f" Healing Gap: F{anchors[i]['floor']} -> F{anchors[i+1]['floor']} ({count} floors)")
+                healed = solve_gap_absolute_verbose(buffer_path, frames, anchors[i], anchors[i+1], count)
                 final_list.extend(healed)
 
         final_list.append(anchors[-1])
@@ -49,18 +47,18 @@ def run_final_healer():
         with open(f"final_sequence_run_{ds_id}.json", 'w') as f:
             json.dump(final_list, f, indent=4)
 
-        # Unified Image Collection
-        print(f" Migrating images to {ds_final_path}...")
+        print(f" Dataset Complete. Sequence length: {len(final_list)}")
+        print(f" Migrating unified images to {ds_final_path}...")
         for entry in final_list:
             src = os.path.join(buffer_path, entry['frame'])
             dst = os.path.join(ds_final_path, f"F{entry['floor']}_{entry['frame']}")
             shutil.copy2(src, dst)
-            # HUD logic commented out as requested
+            # HUD logic commented out
             # img = cv2.imread(dst)
             # cv2.rectangle(img, (100, 52), (142, 76), (0, 255, 0), 2)
             # cv2.imwrite(dst, img)
 
-def solve_gap_absolute(path, frames, anc_s, anc_e, count):
+def solve_gap_absolute_verbose(path, frames, anc_s, anc_e, count):
     healed = []
     prev_h = cv2.imread(os.path.join(path, frames[anc_s['idx']]), 0)[52:76, 100:142]
     prev_c = cv2.imread(os.path.join(path, frames[anc_s['idx']]), 0)[230:246, 250:281]
@@ -69,9 +67,12 @@ def solve_gap_absolute(path, frames, anc_s, anc_e, count):
     for i in range(anc_s['idx'] + 1, anc_e['idx'] - 5):
         if found >= count: break
         img = cv2.imread(os.path.join(path, frames[i]), 0)
-        curr_h = img[52:76, 100:142]; curr_c = img[230:246, 250:281]
+        curr_h = img[52:76, 100:142]
+        curr_c = img[230:246, 250:281]
         
+        # Signal Spike Detection
         if np.mean(cv2.absdiff(curr_h, prev_h)) > 2.2 and np.mean(cv2.absdiff(curr_c, prev_c)) > 1.5:
+            # 3-Frame Persistence Gate
             is_permanent = True
             for offset in range(1, 4):
                 future_h = cv2.imread(os.path.join(path, frames[i+offset]), 0)[52:76, 100:142]
@@ -80,8 +81,13 @@ def solve_gap_absolute(path, frames, anc_s, anc_e, count):
             
             if is_permanent:
                 found += 1
+                target_f = anc_s['floor'] + found
                 anchor_idx = i + 5
-                healed.append({'idx': anchor_idx, 'floor': anc_s['floor'] + found, 'frame': frames[anchor_idx]})
+                healed.append({'idx': anchor_idx, 'floor': target_f, 'frame': frames[anchor_idx]})
+                
+                # RESTORED LOGGING
+                print(f"   [F{target_f}] Pulse detected @ {i} -> Anchored @ {anchor_idx}")
+                
                 prev_h = cv2.imread(os.path.join(path, frames[anchor_idx]), 0)[52:76, 100:142]
                 prev_c = cv2.imread(os.path.join(path, frames[anchor_idx]), 0)[230:246, 250:281]
                 continue
