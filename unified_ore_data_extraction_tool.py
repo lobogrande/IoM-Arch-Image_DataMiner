@@ -24,18 +24,28 @@ UNIFIED_ROOT = "Unified_Consensus_Inputs"
 MINING_OUT = "Production_Mining_Results"
 
 def load_all_templates():
-    templates = {}
+    """Separates background files from ore files based on filename prefix."""
+    templates = {'ore': {}, 'bg': []}
     t_path = "templates"
+    if not os.path.exists(t_path): return templates
+
     files = [f for f in os.listdir(t_path) if f.endswith('.png')]
     for f in files:
-        parts = f.split("_")
-        tier, state = parts[0], parts[1]
-        if tier not in templates: templates[tier] = {'act': [], 'sha': []}
-        t_img = cv2.imread(os.path.join(t_path, f), 0)
-        # Force 48x48 to match our AI crops
-        if t_img.shape != (48, 48):
-            t_img = cv2.resize(t_img, (48, 48))
-        templates[tier][state].append(t_img)
+        img = cv2.imread(os.path.join(t_path, f), 0)
+        if img is None: continue
+        if img.shape != (48, 48):
+            img = cv2.resize(img, (48, 48))
+
+        if f.startswith("background"):
+            templates['bg'].append(img)
+        else:
+            parts = f.split("_")
+            if len(parts) < 2: continue
+            tier, state = parts[0], parts[1] # e.g., dirt1, act
+            if tier not in templates['ore']:
+                templates['ore'][tier] = {'act': [], 'sha': []}
+            if state in ['act', 'sha']:
+                templates['ore'][tier][state].append(img)
     return templates
 
 def run_production_miner():
@@ -43,8 +53,6 @@ def run_production_miner():
     if not os.path.exists(MINING_OUT): os.makedirs(MINING_OUT)
     
     global_report = []
-
-    # Get only the folders that are actual Runs
     runs = sorted([d for d in os.listdir(UNIFIED_ROOT) if d.startswith("Run_")])
 
     for run_dir in runs:
@@ -65,7 +73,6 @@ def run_production_miner():
             floor = entry['floor']
             anc_idx = entry['idx']
             
-            # Load anchor image for the final HUD
             hud_img = cv2.imread(os.path.join(run_path, f"F{floor}_{entry['frame']}"))
             allowed = [t for t, (s, e) in ORE_RESTRICTIONS.items() if s <= floor <= e]
             
@@ -75,7 +82,7 @@ def run_production_miner():
                 cy = int(SLOT1_CENTER[1] + (row * STEP_Y))
                 x1, y1, x2, y2 = cx-24, cy-24, cx+24, cy+24
 
-                # Determine Truth if Boss Floor
+                # Ground Truth for Boss Floors
                 boss_tier = None
                 if floor in BOSS_DATA:
                     b = BOSS_DATA[floor]
@@ -83,7 +90,8 @@ def run_production_miner():
                     elif 'special' in b and slot in b['special']: boss_tier = b['special'][slot]
                 
                 check_list = [boss_tier] if boss_tier else allowed
-                best = {'tier': 'empty', 'score': 0.0, 'state': 'none'}
+                best_ore = {'tier': 'empty', 'score': 0.0, 'state': 'none'}
+                best_bg_score = 0.0
 
                 # Temporal Audit (+/- 3 frames)
                 for off in range(-3, 4):
@@ -91,31 +99,36 @@ def run_production_miner():
                     if not (0 <= idx < len(buffer_files)): continue
                     roi = cv2.imread(os.path.join(buffer_path, buffer_files[idx]), 0)[y1:y2, x1:x2]
                     
+                    # 1. Background Veto Check (Negative Verification)
+                    for bg_img in templates['bg']:
+                        res_bg = cv2.matchTemplate(roi, bg_img, cv2.TM_CCOEFF_NORMED)
+                        best_bg_score = max(best_bg_score, res_bg.max())
+
+                    # 2. Ore Template Check
                     for tier in check_list:
-                        if tier not in templates: continue
+                        if tier not in templates['ore']: continue
                         for state in ['act', 'sha']:
-                            for t_img in templates[tier][state]:
+                            for t_img in templates['ore'][tier][state]:
                                 res = cv2.matchTemplate(roi, t_img, cv2.TM_CCOEFF_NORMED)
                                 score = res.max()
-                                if score > best['score']:
-                                    best = {'tier': tier, 'score': score, 'state': state}
+                                if score > best_ore['score']:
+                                    best_ore = {'tier': tier, 'score': score, 'state': state}
 
-                # Threshold of 0.75 for production calls
-                if best['score'] > 0.75:
+                # LOGIC GATE: Only call if ore is significantly better than background
+                # OR if the background match is low.
+                if best_ore['score'] > 0.78 and best_ore['score'] > best_bg_score:
                     global_report.append({
                         'run': run_id, 'floor': floor, 'slot': slot, 
-                        'tier': best['tier'], 'state': best['state'], 'score': f"{best['score']:.3f}"
+                        'tier': best_ore['tier'], 'state': best_ore['state'], 'score': f"{best_ore['score']:.4f}"
                     })
                     
-                    # HUD: Active=Green, Shadow=Orange
-                    color = (0, 255, 0) if best['state'] == 'act' else (0, 165, 255)
+                    color = (0, 255, 0) if best_ore['state'] == 'act' else (0, 165, 255)
                     cv2.rectangle(hud_img, (x1, y1), (x2, y2), color, 1)
-                    cv2.putText(hud_img, f"{best['tier']}", (x1, y1-3), 0, 0.35, color, 1)
+                    cv2.putText(hud_img, f"{best_ore['tier']}", (x1, y1-3), 0, 0.35, color, 1)
 
             cv2.imwrite(os.path.join(hud_dir, f"F{floor}_Mining_Overlay.jpg"), hud_img)
             if floor % 20 == 0: print(f"  Processed Floor {floor}")
 
-    # Save Master CSV
     with open("archaeology_final_mining_data.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=['run', 'floor', 'slot', 'tier', 'state', 'score'])
         writer.writeheader(); writer.writerows(global_report)
