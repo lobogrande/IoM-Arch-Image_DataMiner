@@ -15,8 +15,9 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
+CENTER_STAGE_ROI = (230, 246, 250, 281) # Dig Stage: X
 
-def run_sequential_absolute_healer():
+def run_forensic_auditor():
     digit_map = load_digit_map_final()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
@@ -31,15 +32,18 @@ def run_sequential_absolute_healer():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- SEQUENTIAL ABSOLUTE RUN {ds_id} ---")
+        print(f"\n--- FORENSIC AUDITOR RUN {ds_id} ---")
         
         final_consensus = []
         for i in range(len(anchors) - 1):
             final_consensus.append(anchors[i])
-            if (anchors[i+1]['floor'] - anchors[i]['floor']) > 1:
-                print(f" Healing Gap: F{anchors[i]['floor']} -> F{anchors[i+1]['floor']}")
+            s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
+            
+            if (e_f - s_f) > 1:
+                print(f" Auditing Gap: F{s_f}->F{e_f}...")
                 sys.stdout.flush()
-                healed = solve_gap_absolutely(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
+                # Enforce competitive rank-based healing
+                healed = solve_gap_forensically(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
                 final_consensus.extend(healed)
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
@@ -49,89 +53,81 @@ def run_sequential_absolute_healer():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_absolutely(path, frames, anc_s, anc_e, digit_map):
-    """Fills gaps by enforcing game logic: no frame reuse, no out-of-range floors"""
+def solve_gap_forensically(path, frames, anc_s, anc_e, digit_map):
+    """Fills gap by ranking all digit templates and enforcing strict sequence order"""
     healed = []
-    # Hard-lock search start to the index AFTER the previous anchor
-    search_start = anc_s['idx'] + 1
+    current_search_start = anc_s['idx'] + 1
     
     for target in range(anc_s['floor'] + 1, anc_e['floor']):
         found_m = None
         cand_f, cand_count = -1, 0
         
-        for i in range(search_start, anc_e['idx']):
+        for i in range(current_search_start, anc_e['idx']):
             gray = cv2.imread(os.path.join(path, frames[i]), 0)
-            roi = gray[52:76, 100:142]
             
-            # IDENTITY VETO: Read every frame. If it shows anchor floors, it is NOT the target
-            read_val = get_bitwise_absolute(roi, digit_map, 175, 0.75)
+            # 1. RANKED COMPETITION: Rank Header and Center readouts
+            h_val = get_competitive_ocr(gray[52:76, 100:142], digit_map)
+            c_val = get_competitive_ocr(gray[230:246, 250:281], digit_map)
             
-            # Rule: We cannot accept a floor that is <= start anchor or >= end anchor
-            if read_val != -1 and (read_val <= anc_s['floor'] or read_val >= anc_e['floor']):
+            # RULE: Discard if sensors see the start anchor (Haven't reached new floor)
+            if h_val == anc_s['floor'] or c_val == anc_s['floor']:
                 cand_f, cand_count = -1, 0
-                continue 
+                continue
+            
+            # RULE: Discard if sensors see the end anchor (Overshot the target)
+            if h_val == anc_e['floor'] or c_val == anc_e['floor']:
+                cand_f, cand_count = -1, 0
+                continue
 
-            if read_val == target:
+            if h_val == target or c_val == target:
                 if target == cand_f: cand_count += 1
                 else: cand_f, cand_count = target, 1
-                if cand_count >= 3: # Fast stability for 4-6 frame floor intervals
-                    found_m = {'idx': i - 2, 'floor': target, 'frame': frames[i-2]}
+                if cand_count >= 4: # Persistence gate
+                    found_m = {'idx': i - 3, 'floor': target, 'frame': frames[i-3]}
                     break
             else:
                 cand_f, cand_count = -1, 0
                 
         if not found_m:
-            # FALLBACK: Proportional nomination only in the verified 'No Man's Land'
-            found_m = nominate_absolute_frame(path, frames, search_start, anc_e['idx'], target, anc_e['floor']-target)
+            # Fallback: Proportional spacing within the verified No-Man's-Land
+            found_m = nominate_safe_frame(path, frames, current_search_start, anc_e['idx'], target, anc_e['floor']-target)
 
-        print(f"   [F{target}] Locked: {found_m['frame']} (Idx: {found_m['idx']})")
+        print(f"   [F{target}] Confirmed: {found_m['frame']} (Idx: {found_m['idx']})")
         sys.stdout.flush()
         healed.append(found_m)
-        search_start = found_m['idx'] + 1 # Strict step-forward ensures no frame reuse
+        current_search_start = found_m['idx'] + 1 
         
     return healed
 
-def nominate_absolute_frame(path, frames, start, end, floor, remaining):
-    # Mathematically spaces floors in the remaining Wilderness
-    segment = (end - start) // (remaining + 1)
-    nom_idx = start + max(1, segment // 2)
-    return {'idx': nom_idx, 'floor': floor, 'frame': frames[nom_idx]}
-
-def get_bitwise_absolute(roi, digit_map, thresh, min_conf):
-    h, w = roi.shape[:2]
-    _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
-    matches = []
+def get_competitive_ocr(roi, digit_map):
+    """Ranks all templates and enforces geometric vetoes for 7/8/9"""
+    h_dim = roi.shape[0]
+    _, bin_roi = cv2.threshold(roi, 175, 255, cv2.THRESH_BINARY)
+    
+    results = []
     for val, temps in digit_map.items():
-        for t_bin in temps:
-            res = cv2.matchTemplate(bin_roi, t_bin, cv2.TM_CCOEFF_NORMED)
-            if res.max() >= min_conf:
-                locs = np.where(res >= min_conf)
-                for pt in zip(*locs[::-1]):
-                    # GEOMETRIC VETO: Force check for loop closures
-                    # If hunting 8/9/0, we MUST see the loops. If hunting 7, we MUST NOT.
-                    if val == 8 or val == 9 or val == 0:
-                        # Bottom-left curve point (X+2, Y+18)
-                        if pt[1]+18 < h and bin_roi[pt[1]+18, pt[0]+2] == 0: continue # 7 impersonating 8
-                        matches.append({'x': pt[0], 'val': val})
-                    elif val == 7:
-                        # 7 cannot have a loop at (X+2, Y+18)
-                        if pt[1]+18 < h and bin_roi[pt[1]+18, pt[0]+2] > 0: continue # 8 impersonating 7
-                        matches.append({'x': pt[0], 'val': 7})
-                    else:
-                        matches.append({'x': pt[0], 'val': val})
-    if not matches: return -1
-    matches.sort(key=lambda d: d['x'])
-    unique = []; lx = -99
-    for m in matches:
-        if abs(m['x'] - lx) > 4: unique.append(m['val']); lx = m['x']
-    try: return int("".join(map(str, unique)))
-    except: return -1
+        max_conf = 0
+        for t in temps:
+            res = cv2.matchTemplate(bin_roi, t, cv2.TM_CCOEFF_NORMED)
+            max_conf = max(max_conf, res.max())
+        results.append((val, max_conf))
+        
+    # Sort by confidence
+    results.sort(key=lambda x: x[1], reverse=True)
+    winner = results[0][0]
+    
+    # GEOMETRIC TIE-BREAKER: 7 vs 8 vs 9
+    if winner in [8, 9, 0]:
+        # If middle-left is empty, it CANNOT be an 8/9/0. Promote 7.
+        if bin_roi[15, 5] == 0: return 7
+        
+    return winner
 
-def save_healed_evidence(path, milestone, heal_path):
-    img = cv2.imread(os.path.join(path, milestone['frame']))
-    cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
-    cv2.putText(img, f"ABSOLUTE F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
-    cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
+def nominate_safe_frame(path, frames, start, end, floor, remaining):
+    gap = end - start
+    step = max(1, gap // (remaining + 1))
+    nom_idx = start + (step // 2)
+    return {'idx': nom_idx, 'floor': floor, 'frame': frames[nom_idx]}
 
 def load_digit_map_final():
     d_map = {i: [] for i in range(10)}
@@ -143,12 +139,17 @@ def load_digit_map_final():
                 d_map[v].append(b)
     return d_map
 
+def save_healed_evidence(path, milestone, heal_path):
+    img = cv2.imread(os.path.join(path, milestone['frame']))
+    cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
+    cv2.putText(img, f"AUDIT F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
+    cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
+
 def perform_final_audit(run_id, milestones):
     found = sorted(list(set(m['floor'] for m in milestones)))
-    max_f = milestones[-1]['floor']
-    missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
+    max_f = milestones[-1]['floor']; missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
     print(f"--- FINAL AUDIT RUN {run_id} ---")
     print(f" Found: {len(milestones)}/{max_f} | Missing: {missing}")
 
 if __name__ == "__main__":
-    run_sequential_absolute_healer()
+    run_forensic_auditor()
