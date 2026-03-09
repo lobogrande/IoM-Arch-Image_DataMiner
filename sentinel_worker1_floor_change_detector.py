@@ -55,18 +55,19 @@ BOSS_DATA = {
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
+ANCHOR_FILE = "dig_stage_anchor.png"
 
-HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 54, 74, 103, 138
-DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
+# ROIs
+HEADER_ROI = (54, 74, 103, 138)
+DIG_VAL_ROI = (230, 246, 250, 281)
+DIG_ANCH_ROI = (229, 248, 163, 253)
 
-HUD_STAGE = (103, 54, 138, 74)
-HUD_DIG_WIDE = (161, 230, 281, 246)
-SLOT1_CENTER = (75, 261)
-X_STEP, Y_STEP = 59.1, 59.1
-
-def run_forensic_sentinel():
+def run_precision_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
+    # Load the text anchor template
+    anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
+    
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -81,11 +82,11 @@ def run_forensic_sentinel():
         if not frames: continue
 
         milestones = []
+        # Initial floor 1 anchor
         commit_milestone(ds_id, 0, 1, frames[0], cv2.imread(os.path.join(buffer_path, frames[0])), milestones, evidence_path)
         
         current_f = 1
         h_candidate, h_count = -1, 0
-        d_history = []
         perf_timer = time.time()
 
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
@@ -93,35 +94,37 @@ def run_forensic_sentinel():
         for i in range(1, len(frames)):
             img = cv2.imread(os.path.join(buffer_path, frames[i]))
             if img is None: continue
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # SENSOR 1: Header
-            h_val = -1
-            for t in [175, 155]: 
-                h_val = get_bitwise_forensic(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
-                if h_val != -1: break
+            # COLOR FILTERING: We only want WHITE text
+            # Damage numbers that are yellow/red/purple will be filtered out here
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, (0, 0, 200), (180, 50, 255)) 
             
-            # SENSOR 2: Dig Stage
+            # 1. HEADER SCAN
+            h_val = get_bitwise_precision(mask[54:74, 103:138], digit_map, 0.82)
+            
+            # 2. DIG STAGE VERIFICATION
             d_val = -1
+            if h_val > current_f and anchor_tmpl is not None:
+                # First, verify the "Dig Stage:" anchor text exists
+                anch_area = mask[230:246, 161:245]
+                res = cv2.matchTemplate(anch_area, anchor_tmpl, cv2.TM_CCOEFF_NORMED)
+                if res.max() > 0.65: # The words are there
+                    d_val = get_bitwise_precision(mask[230:246, 250:281], digit_map, 0.76)
+
+            # 3. CONSENSUS LOGIC
             if h_val > current_f:
-                for t in [155, 175]:
-                    d_val = get_bitwise_forensic(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.76)
-                    if d_val != -1: break
-            
-            d_history.append(d_val)
-            if len(d_history) > 3: d_history.pop(0)
-            
-            # CONSENSUS TRIGGER (Restored to 3-frame stability)
-            if h_val > current_f:
-                if h_val in d_history:
+                # If Header and Dig Stage agree, it's an instant lock
+                if h_val == d_val:
                     current_f = h_val
                     commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
                     h_candidate, h_count = -1, 0
                 else:
+                    # Header stability fallback (3 frames)
                     if h_val == h_candidate: h_count += 1
                     else: h_candidate, h_count = h_val, 1
                     
-                    if h_count >= 3: # Restored to original approved setting
+                    if h_count >= 3:
                         current_f = h_val
                         commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
                         h_candidate, h_count = -1, 0
@@ -138,8 +141,7 @@ def run_forensic_sentinel():
             json.dump(milestones, f, indent=4)
         perform_gap_audit_detailed(ds_id, milestones, current_f)
 
-def get_bitwise_forensic(roi, digit_map, thresh, min_conf):
-    _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
+def get_bitwise_precision(bin_roi, digit_map, min_conf):
     matches = []
     for val, temps in digit_map.items():
         for t_bin in temps:
@@ -170,8 +172,8 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     milestones.append({'idx': idx, 'floor': floor, 'frame': f_name})
     out_file = f"{evidence_path}/F{floor}_{f_name}"
     marked = img.copy()
-    cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
-    cv2.rectangle(marked, (HUD_DIG_WIDE[0], HUD_DIG_WIDE[1]), (HUD_DIG_WIDE[2], HUD_DIG_WIDE[3]), (255, 0, 255), 1)
+    cv2.rectangle(marked, (HEADER_ROI[2], HEADER_ROI[0]), (HEADER_ROI[3], HEADER_ROI[1]), (255, 0, 255), 1)
+    cv2.rectangle(marked, (161, 230), (281, 246), (255, 0, 255), 1)
     if floor in BOSS_DATA:
         for b_idx in range(24):
             row, col = divmod(b_idx, 6)
@@ -180,7 +182,6 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
             tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
             cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
     cv2.imwrite(out_file, marked)
-    print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
 
 def perform_gap_audit_detailed(run_id, milestones, max_floor):
     found = sorted(list(set(m['floor'] for m in milestones)))
@@ -198,4 +199,4 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_forensic_sentinel()
+    run_precision_sentinel()
