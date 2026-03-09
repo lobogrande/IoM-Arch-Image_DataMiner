@@ -55,24 +55,19 @@ BOSS_DATA = {
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
-SHOW_HUD = True
 
-# ROIs for Scanning (Y, X, H, W)
 HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 58, 70, 105, 127
 DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
 
-# HUD Drawing Coordinates (X1, Y1, X2, Y2)
 HUD_STAGE = (103, 56, 129, 72)
 HUD_DIG_WIDE = (161, 231, 281, 248)
 HUD_DIG_NARROW = (250, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_adaptive_sentinel():
+def run_greedy_sentinel():
     start_time = time.time()
-    # PRE-PROCESS TEMPLATES ONCE AT HIGH CONTRAST
-    digit_map = load_digit_map_fixed()
-    
+    digit_map = load_digit_map_fixed() # Templates pre-thresholded at 195
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -87,12 +82,10 @@ def run_adaptive_sentinel():
         if not frames: continue
 
         milestones = []
-        # Initial Anchor
-        first_img = cv2.imread(os.path.join(buffer_path, frames[0]))
-        commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
+        commit_milestone(ds_id, 0, 1, frames[0], cv2.imread(os.path.join(buffer_path, frames[0])), milestones, evidence_path)
         
         current_f = 1
-        stab_candidate, stab_counter = -1, 0
+        h_candidate, h_count = -1, 0
         perf_timer = time.time()
 
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
@@ -102,38 +95,35 @@ def run_adaptive_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # CONSENSUS SENSORS
+            # 1. HEADER-ONLY SCAN (The Stable Foundation)
             h_val = -1
-            for t in [195, 175]:
-                h_val = get_bitwise_adaptive(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
+            for t in [195, 175, 155]: # Aggressive squitning
+                h_val = get_bitwise_greedy(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.80)
                 if h_val != -1: break
-                
-            d_val = -1
-            for t in [155, 165, 175]: # Focus on lower thresholds where transitions are visible
-                d_val = get_bitwise_adaptive(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.72)
-                if d_val != -1: break
             
-            # CORE LOGIC: Trust matching sensors or a stable Header
-            raw_read = -1
-            if h_val > current_f and (h_val == d_val or d_val == -1):
-                raw_read = h_val
-            elif d_val > current_f and d_val == h_val:
-                raw_read = d_val
+            # 2. STABILITY TRIGGER
+            if h_val > current_f:
+                if h_val == h_candidate: h_count += 1
+                else: h_candidate, h_count = h_val, 1
                 
-            if raw_read != -1:
-                if raw_read == stab_candidate: stab_counter += 1
-                else: stab_candidate, stab_counter = raw_read, 1
-                
-                if stab_counter >= 2: # Success: static confirmed transition
-                    current_f = stab_candidate
+                # If the Header sees a new floor for 2 frames, it's an Anchor
+                if h_count >= 2:
+                    current_f = h_candidate
                     commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
-                    stab_candidate, stab_counter = -1, 0
+                    h_candidate, h_count = -1, 0
             else:
-                stab_candidate, stab_counter = -1, 0
+                # If Header fails, check Dig Stage as a backup
+                d_val = -1
+                for t in [155, 165, 175]:
+                    d_val = get_bitwise_greedy(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.65)
+                    if d_val > current_f:
+                        current_f = d_val
+                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                        break
 
             if i % 100 == 0:
                 fps = 100 / (time.time() - perf_timer)
-                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} | FPS: {fps:.1f}")
+                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | FPS: {fps:.1f}")
                 sys.stdout.flush()
                 perf_timer = time.time()
 
@@ -141,12 +131,11 @@ def run_adaptive_sentinel():
             json.dump(milestones, f, indent=4)
         perform_audit(ds_id, milestones, current_f)
 
-def get_bitwise_adaptive(gray_roi, digit_map, thresh_val, min_conf):
+def get_bitwise_greedy(gray_roi, digit_map, thresh_val, min_conf):
     _, bin_roi = cv2.threshold(gray_roi, thresh_val, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
         for t_bin in temps:
-            # Match current ROI against the pre-thresholded templates
             res = cv2.matchTemplate(bin_roi, t_bin, cv2.TM_CCOEFF_NORMED)
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
@@ -165,7 +154,6 @@ def load_digit_map_fixed():
             m = re.search(r'\d', f)
             if m:
                 v = int(m.group()); img = cv2.imread(os.path.join(DIGITS_DIR, f), 0)
-                # Lock templates at high-contrast 195
                 _, b = cv2.threshold(img, 195, 255, cv2.THRESH_BINARY)
                 d_map[v].append(b)
     return d_map
@@ -195,4 +183,4 @@ def perform_audit(run_id, milestones, max_floor):
     print(f" Found: {len(milestones)} | Missing: {len(missing)} floors.")
 
 if __name__ == "__main__":
-    run_adaptive_sentinel()
+    run_greedy_sentinel()
