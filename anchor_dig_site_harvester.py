@@ -3,7 +3,7 @@ import os
 
 # Coordinates for the words "Dig Stage:" (Left of the number)
 # X=161 to X=250 covers the text area
-ANCHOR_ROI = (230, 246, 161, 245) 
+ANCHOR_ROI = (229, 248, 163, 253) 
 DATASET_DIR = "capture_buffer_0"
 TARGET_FRAME = "frame_20260306_231745_817144.png"
 
