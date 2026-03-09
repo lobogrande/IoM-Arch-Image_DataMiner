@@ -7,7 +7,7 @@ import shutil
 import re
 import time
 
-# --- 1. MASTER DATA SOURCES ---
+# --- 1. MASTER BOSS DATA (FULLY RESTORED) ---
 BOSS_DATA = {
     11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
     25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'},
@@ -55,20 +55,19 @@ BOSS_DATA = {
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
-SHOW_HUD = True
 
-# Scanning ROIs (Y, X, H, W)
-HEADER_ROI = (58, 105, 12, 22)
-DIG_NARROW_ROI = (230, 250, 16, 31)
+# ROIs for Scanning (Y, X, H, W)
+HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 58, 70, 105, 127
+DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
 
-# HUD Drawing (X1, Y1, X2, Y2)
+# HUD Drawing Coordinates (X1, Y1, X2, Y2)
 HUD_STAGE = (103, 56, 129, 72)
 HUD_DIG_WIDE = (161, 231, 281, 248)
 HUD_DIG_NARROW = (250, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_stabilized_sentinel():
+def run_unabridged_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_robust()
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -85,16 +84,12 @@ def run_stabilized_sentinel():
         if not frames: continue
 
         milestones = []
-        # GUARANTEED START
+        # Initial Anchor
         first_img = cv2.imread(os.path.join(buffer_path, frames[0]))
         commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
         
         current_f = 1
-        # Stabilizer Logic
-        stab_candidate = -1
-        stab_counter = 0
         perf_timer = time.time()
-
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
         
         for i in range(1, len(frames)):
@@ -102,35 +97,26 @@ def run_stabilized_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # CONSENSUS SENSORS
-            h_val = get_bitwise_number(gray[58:70, 105:127], digit_map, 195)
-            d_val = get_bitwise_number(gray[230:246, 250:281], digit_map, 175)
+            # SENSOR PASS 1: Header
+            h_val = get_bitwise_number(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, 195, 0.85)
             
-            # CORE CONSENSUS
-            raw_read = -1
-            if h_val > current_f and (h_val == d_val or d_val == -1):
-                raw_read = h_val
-            elif d_val > current_f and d_val == h_val:
-                raw_read = d_val
-            
-            # TWO-FRAME STABILIZER LOCK
-            if raw_read != -1:
-                if raw_read == stab_candidate:
-                    stab_counter += 1
-                else:
-                    stab_candidate = raw_read
-                    stab_counter = 1
+            if h_val > current_f:
+                # SENSOR PASS 2: Triple-Threshold Burst for Dig Stage
+                confirmed = False
+                for t in [165, 175, 185]:
+                    d_val = get_bitwise_number(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.78)
+                    if d_val == h_val:
+                        confirmed = True
+                        break
                 
-                if stab_counter >= 2: # Success: Frame is static and verified
-                    current_f = stab_candidate
+                # Consensus logic: Lock only if they match or the Header makes a safe call
+                if confirmed or (h_val > current_f and i % 5 == 0):
+                    current_f = h_val
                     commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
-                    stab_candidate = -1; stab_counter = 0
-            else:
-                stab_candidate = -1; stab_counter = 0
-
+            
             if i % 100 == 0:
                 fps = 100 / (time.time() - perf_timer)
-                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} | FPS: {fps:.1f}")
+                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} | FPS: {fps:.1f}")
                 sys.stdout.flush()
                 perf_timer = time.time()
 
@@ -144,23 +130,23 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     milestones.append({'idx': idx, 'floor': floor, 'frame': f_name})
     out_file = f"{evidence_path}/F{floor}_{f_name}"
     
-    if SHOW_HUD:
-        marked = img.copy()
-        # Drawing Stage Context
-        cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
-        cv2.rectangle(marked, (HUD_DIG_WIDE[0], HUD_DIG_WIDE[1]), (HUD_DIG_WIDE[2], HUD_DIG_WIDE[3]), (255, 0, 255), 1)
-        cv2.rectangle(marked, (HUD_DIG_NARROW[0], HUD_DIG_NARROW[1]), (HUD_DIG_NARROW[2], HUD_DIG_NARROW[3]), (0, 255, 0), 1)
-        
-        if floor in BOSS_DATA:
-            for b_idx in range(24):
-                row, col = divmod(b_idx, 6)
-                cx, cy = int(75 + (col * 59.1)), int(261 + (row * 59.1))
-                cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
-                tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
-                cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
-        cv2.imwrite(out_file, marked)
-    else:
-        cv2.imwrite(out_file, img)
+    marked = img.copy()
+    # Purple Context HUDs
+    cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
+    cv2.rectangle(marked, (HUD_DIG_WIDE[0], HUD_DIG_WIDE[1]), (HUD_DIG_WIDE[2], HUD_DIG_WIDE[3]), (255, 0, 255), 1)
+    # Green AI Scan HUD
+    cv2.rectangle(marked, (HUD_DIG_NARROW[0], HUD_DIG_NARROW[1]), (HUD_DIG_NARROW[2], HUD_DIG_NARROW[3]), (0, 255, 0), 1)
+    
+    if floor in BOSS_DATA:
+        for b_idx in range(24):
+            row, col = divmod(b_idx, 6)
+            cx = int(SLOT1_CENTER[0] + (col * X_STEP))
+            cy = int(SLOT1_CENTER[1] + (row * Y_STEP))
+            cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
+            tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
+            cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+            
+    cv2.imwrite(out_file, marked)
     print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
 
 def load_digit_map_robust():
@@ -174,7 +160,7 @@ def load_digit_map_robust():
                 d_map[v].append(b)
     return d_map
 
-def get_bitwise_number(gray_roi, digit_map, thresh_val, min_conf=0.82):
+def get_bitwise_number(gray_roi, digit_map, thresh_val, min_conf):
     _, bin_h = cv2.threshold(gray_roi, thresh_val, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
@@ -194,4 +180,4 @@ def perform_gap_audit(run_id, milestones, max_floor):
     print(f" Found: {len(milestones)} | Missing: {len(missing)} floors: {missing[:15]}...")
 
 if __name__ == "__main__":
-    run_stabilized_sentinel()
+    run_unabridged_sentinel()
