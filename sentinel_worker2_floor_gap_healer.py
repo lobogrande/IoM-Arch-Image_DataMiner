@@ -15,10 +15,10 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
-GRID_ROI = (250, 500, 50, 450) # Region for visual state hashing
+CENTER_ROI = (335, 355, 175, 230) # Center 'Dig Stage' readout
 
-def run_pincer_sentinel():
-    digit_map = load_digit_map_pincer()
+def run_truth_sentinel():
+    digit_map = load_digit_map_truth()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
     for ds_id in DATASETS:
@@ -32,24 +32,17 @@ def run_pincer_sentinel():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- PINCER SENTINEL RUN {ds_id} ---")
+        print(f"\n--- TRUTH SENTINEL RUN {ds_id} ---")
         
         final_consensus = []
-        used_state_hashes = set()
-
         for i in range(len(anchors) - 1):
             final_consensus.append(anchors[i])
-            # Register anchor state hash
-            used_state_hashes.add(get_board_hash(buffer_path, anchors[i]['frame']))
-            
-            s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
-            if (e_f - s_f) > 1:
-                print(f" Healing Gap: F{s_f}->F{e_f}...")
-                healed = solve_gap_with_pincer(buffer_path, frames, anchors[i], anchors[i+1], digit_map, used_state_hashes)
+            if (anchors[i+1]['floor'] - anchors[i]['floor']) > 1:
+                print(f" Validating Gap: F{anchors[i]['floor']} -> F{anchors[i+1]['floor']}")
+                sys.stdout.flush()
+                healed = solve_gap_with_literal_truth(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
                 final_consensus.extend(healed)
-                for h in healed: 
-                    save_healed_evidence(buffer_path, h, heal_path)
-                    used_state_hashes.add(get_board_hash(buffer_path, h['frame']))
+                for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
         final_consensus.append(anchors[-1])
         final_consensus.sort(key=lambda x: x['idx'])
@@ -57,96 +50,68 @@ def run_pincer_sentinel():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_with_pincer(path, frames, anc_s, anc_e, digit_map, used_hashes):
-    """Iteratively identifies floors by looking for stability plateaus between resets"""
+def solve_gap_with_literal_truth(path, frames, anc_s, anc_e, digit_map):
+    """Fills gaps by requiring Dual-Sensor agreement and strict search boundaries"""
     healed = []
-    # Identify visual end of start-anchor
-    wilderness_start = find_visual_break_pincer(path, frames, anc_s, anc_e['idx'], direction=1)
-    
-    num_missing = anc_e['floor'] - anc_s['floor'] - 1
-    current_search_start = wilderness_start
+    # 1. BOUNDARY LOCK: Identify exact visual end of previous anchor
+    search_start = find_literal_break(path, frames, anc_s, anc_e['idx'], direction=1)
+    # Identify exact visual start of next anchor
+    search_end = find_literal_break(path, frames, anc_e, anc_s['idx'], direction=-1)
     
     for target in range(anc_s['floor'] + 1, anc_e['floor']):
         found_m = None
+        cand_f, cand_count = -1, 0
         
-        # 1. OCR SEARCH (Priority)
-        for i in range(current_search_start, anc_e['idx']):
+        # 2. DUAL-SENSOR HUNT
+        for i in range(search_start, search_end + 1):
             gray = cv2.imread(os.path.join(path, frames[i]), 0)
-            roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
             
-            # IDENTITY VETO (7 vs 8)
-            val = get_bitwise_structural_pincer(roi, digit_map, 175, 0.75)
-            if val == target:
-                # Require 3 frames of stability
-                stability_check = True
-                for s_offset in range(1, 3):
-                    next_gray = cv2.imread(os.path.join(path, frames[i + s_offset]), 0)
-                    if get_bitwise_structural_pincer(next_gray[52:76, 100:142], digit_map, 175, 0.72) != target:
-                        stability_check = False; break
+            # Read Header and Center. If they don't both show target, skip
+            h_val = get_bitwise_truth(gray[52:76, 100:142], digit_map, 175, 0.75)
+            c_val = get_bitwise_truth(gray[335:355, 175:230], digit_map, 165, 0.70)
+            
+            # VETO: Reject if sensors see ANY other floor number
+            if (h_val != -1 and h_val != target) or (c_val != -1 and c_val != target):
+                cand_f, cand_count = -1, 0
+                continue
                 
-                if stability_check:
-                    # Final check: is this a repeat frame?
-                    if get_board_hash(path, frames[i]) not in used_hashes:
-                        found_m = {'idx': i, 'floor': target, 'frame': frames[i]}
-                        break
+            if h_val == target or c_val == target:
+                if target == cand_f: cand_count += 1
+                else: cand_f, cand_count = target, 1
+                if cand_count >= 3: # Fast stability gate
+                    found_m = {'idx': i - 2, 'floor': target, 'frame': frames[i-2]}
+                    break
         
         if not found_m:
-            # 2. GRADIENT NOMINATION (Fallback)
-            # Instead of midpoint, scan for the most stable plateau *after* the previous floor ends
-            print(f"   [F{target}] OCR Fail - Pincering stability gradient...")
-            found_m = nominate_via_gradient(path, frames, current_search_start, anc_e['idx'], target, anc_e['floor']-target, used_hashes)
+            # 3. LITERAL FALLBACK: Proportional step in the remaining valid window
+            print(f"   [F{target}] Literal Fail - Nominating centered plateau...")
+            found_m = nominate_literal_frame(path, frames, search_start, search_end, target, anc_e['floor']-target)
 
-        print(f"   [F{target}] Locked: {found_m['frame']} (Idx: {found_m['idx']})")
+        print(f"   [F{target}] Confirmed: {found_m['frame']} (Idx: {found_m['idx']})")
         sys.stdout.flush()
         healed.append(found_m)
-        
-        # 3. PINCER MARCH: Find where this healed floor visual signature ends
-        current_search_start = find_visual_break_pincer(path, frames, found_m, anc_e['idx'], direction=1)
+        search_start = found_m['idx'] + 1 # Never reuse
         
     return healed
 
-def find_visual_break_pincer(path, frames, milestone, limit, direction):
+def find_literal_break(path, frames, milestone, limit, direction):
+    """Marches from milestone until the visual signature of the digits changes"""
     img = cv2.imread(os.path.join(path, milestone['frame']), 0)
-    sig = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-    rng = range(milestone['idx'] + direction, limit, direction)
-    break_idx = milestone['idx']
-    for i in rng:
+    sig = img[52:76, 100:142]
+    last_stable = milestone['idx']
+    for i in range(milestone['idx'] + direction, limit, direction):
         curr = cv2.imread(os.path.join(path, frames[i]), 0)[52:76, 100:142]
-        if np.mean(cv2.absdiff(curr, sig)) > 15: # Stability break
-            break_idx = i; break
-    return break_idx + 1
+        if np.mean(cv2.absdiff(curr, sig)) > 15: break
+        last_stable = i
+    return last_stable
 
-def nominate_via_gradient(path, frames, start, end, floor, remaining, used_hashes):
-    """Hunts for a stable board state that differs from previous hashes"""
-    gap_size = end - start
-    step_size = gap_size // (remaining + 1)
-    
-    best_frame = start + (step_size // 2)
-    # Search for local stability minimum within this segment
-    min_variance = 999999
-    
-    for i in range(start + 2, min(start + step_size, end - 2)):
-        # Check board reset spike followed by plateau
-        gray = cv2.imread(os.path.join(path, frames[i]), 0)
-        grid = gray[GRID_ROI[0]:GRID_ROI[1], GRID_ROI[2]:GRID_ROI[3]]
-        
-        # Simple variance as stability metric
-        var = np.var(grid)
-        curr_hash = get_board_hash(path, frames[i])
-        
-        if var < min_variance and curr_hash not in used_hashes:
-            min_variance = var
-            best_frame = i
-            
-    return {'idx': best_frame, 'floor': floor, 'frame': frames[best_frame]}
+def nominate_literal_frame(path, frames, start, end, floor, remaining):
+    gap = end - start
+    step = max(1, gap // (remaining + 1))
+    nom_idx = start + (step // 2)
+    return {'idx': nom_idx, 'floor': floor, 'frame': frames[nom_idx]}
 
-def get_board_hash(path, frame_name):
-    # Generates a simple hash for duplicate detection
-    img = cv2.imread(os.path.join(path, frame_name), 0)
-    grid = cv2.resize(img[250:500, 50:450], (16, 16))
-    return hash(grid.tobytes())
-
-def get_bitwise_structural_pincer(roi, digit_map, thresh, min_conf):
+def get_bitwise_truth(roi, digit_map, thresh, min_conf):
     h, w = roi.shape[:2]
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
@@ -156,15 +121,13 @@ def get_bitwise_structural_pincer(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    # VETO: Disambiguate 8 from 7/3/9
+                    # STRUCTURAL DISAMBIGUATION (8 vs 7)
                     if val == 8:
-                        y_mid, y_bot = pt[1] + 10, pt[1] + 18
-                        if y_bot < h and bin_roi[y_bot, pt[0]] == 0:
-                            matches.append({'x': pt[0], 'val': 9 if bin_roi[y_mid, pt[0]] > 0 else 3})
+                        if pt[1]+18 < h and bin_roi[pt[1]+18, pt[0]] == 0: matches.append({'x': pt[0], 'val': 9})
+                        elif pt[1]+10 < h and bin_roi[pt[1]+10, pt[0]] == 0: matches.append({'x': pt[0], 'val': 3})
                         else: matches.append({'x': pt[0], 'val': 8})
                     elif val == 7:
-                        y_test = pt[1] + 15
-                        if y_test < h and bin_roi[y_test, pt[0]+5] > 0: continue 
+                        if pt[1]+15 < h and bin_roi[pt[1]+15, pt[0]+5] > 0: continue
                         matches.append({'x': pt[0], 'val': 7})
                     else: matches.append({'x': pt[0], 'val': val})
     if not matches: return -1
@@ -178,10 +141,10 @@ def get_bitwise_structural_pincer(roi, digit_map, thresh, min_conf):
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
     cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
-    cv2.putText(img, f"PINCER F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
+    cv2.putText(img, f"TRUTH F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
-def load_digit_map_pincer():
+def load_digit_map_truth():
     d_map = {i: [] for i in range(10)}
     for f in os.listdir(DIGITS_DIR):
         if f.endswith('.png'):
@@ -198,4 +161,4 @@ def perform_final_audit(run_id, milestones):
     print(f" Found: {len(milestones)}/{max_f} | Missing: {missing}")
 
 if __name__ == "__main__":
-    run_pincer_sentinel()
+    run_truth_sentinel()
