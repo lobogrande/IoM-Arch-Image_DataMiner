@@ -1,55 +1,49 @@
 import cv2
 import os
 
-# --- 1. CURRENT "SENTINEL" COORDINATES ---
-# Update these values to test new offsets
-HEADER_ROI = (56, 100, 16, 35)      # (Y, X, H, W)
-DIG_STAGE_ROI = (330, 185, 20, 100) # (Y, X, H, W) - The AI scanner
+# --- 1. PROBED COORDINATES ---
+# Header ROI: Click 1 (105, 58) to Click 2 (127, 70)
+HEADER_ROI = (58, 105, 12, 22)      # (Y, X, H, W)
 
-# HUD Overlay Coordinates (Top of grid area)
-HUD_X1, HUD_Y1 = 160, 210           # Top Left
-HUD_X2, HUD_Y2 = 300, 245           # Bottom Right
+# Dig Stage ROI: Click 3 (163, 233) to Click 4 (279, 246)
+DIG_STAGE_ROI = (233, 163, 13, 116) # (Y, X, H, W)
+
+# HUD Overlay: Based on your Probe for the purple box
+HUD_X1, HUD_Y1 = 161, 231           # Top Left (+1px buffer)
+HUD_X2, HUD_Y2 = 281, 248           # Bottom Right (+2px buffer)
 
 # --- 2. INPUT IMAGE ---
-# Change this to any image you want to test from your buffer
 TEST_IMAGE = "capture_buffer_0/frame_20260306_233844_294839.png" 
-OUTPUT_DIR = "calibration_outputs"
+OUTPUT_DIR = "calibration_outputs_v2_1"
 
-def run_calibration_check():
+def run_calibration_v2_1():
     if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR)
-    
     img = cv2.imread(TEST_IMAGE)
     if img is None:
         print(f"!!! Error: Could not find {TEST_IMAGE}")
         return
 
-    # A. THE AI VIEW (What the bitwise engine sees)
-    # Header ROI
-    y, x, h, w = HEADER_ROI
-    header_crop = img[y:y+h, x:x+w]
-    cv2.imwrite(f"{OUTPUT_DIR}/view_AI_header.jpg", header_crop)
+    # A. THE AI'S EYES (What the Worker actually scans)
+    y_h, x_h, h_h, w_h = HEADER_ROI
+    cv2.imwrite(f"{OUTPUT_DIR}/1_AI_Header_Crop.jpg", img[y_h:y_h+h_h, x_h:x_h+w_h])
 
-    # Dig Stage ROI
-    y2, x2, h2, w2 = DIG_STAGE_ROI
-    dig_stage_crop = img[y2:y2+h2, x2:x2+w2]
-    cv2.imwrite(f"{OUTPUT_DIR}/view_AI_dig_stage.jpg", dig_stage_crop)
+    y_d, x_d, h_d, w_d = DIG_STAGE_ROI
+    cv2.imwrite(f"{OUTPUT_DIR}/2_AI_DigStage_Crop.jpg", img[y_d:y_d+h_d, x_d:x_d+w_d])
 
-    # B. THE HUD VIEW (Where the purple box lands)
+    # B. THE HUD OVERLAY (The visual forensic output)
     hud_preview = img.copy()
-    cv2.rectangle(hud_preview, (HUD_X1, HUD_Y1), (HUD_X2, HUD_Y2), (255, 0, 255), 2)
+    cv2.rectangle(hud_preview, (HUD_X1, HUD_Y1), (HUD_X2, HUD_Y2), (255, 0, 255), 1)
     
-    # Save full image with HUD for context
-    cv2.imwrite(f"{OUTPUT_DIR}/view_HUD_context.jpg", hud_preview)
+    # Context Image (Full Screen)
+    cv2.imwrite(f"{OUTPUT_DIR}/3_HUD_Full_Context.jpg", hud_preview)
     
-    # Save a zoomed-in crop of just the HUD area
-    hud_zoom = hud_preview[HUD_Y1-20:HUD_Y2+20, HUD_X1-20:HUD_X2+20]
-    cv2.imwrite(f"{OUTPUT_DIR}/view_HUD_zoom.jpg", hud_zoom)
+    # Zoomed Image (The precision check)
+    # We crop a bit around the box to see the alignment clearly
+    zoom_crop = hud_preview[HUD_Y1-30:HUD_Y2+30, HUD_X1-30:HUD_X2+30]
+    cv2.imwrite(f"{OUTPUT_DIR}/4_HUD_Zoom_Check.jpg", zoom_crop)
 
-    print(f"--- CALIBRATION COMPLETE ---")
-    print(f"Check the '{OUTPUT_DIR}' folder for:")
-    print(f" 1. view_AI_header.jpg    <- Should contain ONLY the Stage number.")
-    print(f" 2. view_AI_dig_stage.jpg <- Should contain ONLY the 'Dig Stage: XX' text.")
-    print(f" 3. view_HUD_zoom.jpg     <- Shows if the purple box is framing the text correctly.")
+    print(f"--- CALIBRATION V2.1 COMPLETE ---")
+    print(f"Check '{OUTPUT_DIR}' for the 4-piece evidence set.")
 
 if __name__ == "__main__":
-    run_calibration_check()
+    run_calibration_v2_1()
