@@ -55,20 +55,19 @@ BOSS_DATA = {
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
-SHOW_HUD = True
 
-# Scanning ROIs (Y, X, H, W)
-HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 58, 70, 105, 127
+# Expanded Scanning ROIs (Y1, Y2, X1, X2)
+HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 57, 71, 103, 133 # Widened to 30px
 DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
 
-# HUD Coordinates (X1, Y1, X2, Y2)
-HUD_STAGE = (103, 56, 129, 72)
+# HUD Overlays
+HUD_STAGE = (103, 56, 133, 72)
 HUD_DIG_WIDE = (161, 231, 281, 248)
 HUD_DIG_NARROW = (250, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_calibrated_sentinel():
+def run_resonant_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -98,30 +97,27 @@ def run_calibrated_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # 1. HEADER SCAN
+            # 1. PRIMARY SENSOR: Stage Header
             h_val = -1
-            for t in [175, 195, 155]: # Audit suggests 175 is best baseline
-                h_val = get_bitwise_number(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
+            for t in [175, 155]: # Audit suggests 175 is stable
+                h_val = get_bitwise_resonant(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.78)
                 if h_val != -1: break
             
             # 2. STABILITY & JUMP GUARD
-            if h_val > current_f:
-                # Sanity: Reject jumps > 10 unless it's a known Boss Floor
-                if (h_val - current_f) <= 10 or h_val in BOSS_DATA:
-                    if h_val == h_candidate: h_count += 1
-                    else: h_candidate, h_count = h_val, 1
-                    
-                    # 3-Frame Lock: Matches real-world floor duration
-                    if h_count >= 3:
-                        current_f = h_candidate
-                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
-                        h_candidate, h_count = -1, 0
+            if h_val > current_f and ((h_val - current_f) <= 10 or h_val in BOSS_DATA):
+                if h_val == h_candidate: h_count += 1
+                else: h_candidate, h_count = h_val, 1
+                
+                if h_count >= 3:
+                    current_f = h_candidate
+                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                    h_candidate, h_count = -1, 0
             else:
                 h_candidate, h_count = -1, 0
 
             if i % 100 == 0:
                 fps = 100 / (time.time() - perf_timer)
-                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | FPS: {fps:.1f}")
+                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | Read: {h_val} | FPS: {fps:.1f}")
                 sys.stdout.flush()
                 perf_timer = time.time()
 
@@ -129,17 +125,26 @@ def run_calibrated_sentinel():
             json.dump(milestones, f, indent=4)
         perform_gap_audit(ds_id, milestones, current_f)
 
-def get_bitwise_number(roi, digit_map, thresh, min_conf):
+def get_bitwise_resonant(roi, digit_map, thresh, min_conf):
+    h_roi, w_roi = roi.shape
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
+    
     for val, temps in digit_map.items():
         for t_bin in temps:
+            h_t, w_t = t_bin.shape
+            # GEOMETRY RESCUE: Shrink template if it is taller than the ROI
+            if h_t > h_roi:
+                scale = h_roi / h_t
+                t_bin = cv2.resize(t_bin, (int(w_t * scale), h_roi), interpolation=cv2.INTER_AREA)
+            
             res = cv2.matchTemplate(bin_roi, t_bin, cv2.TM_CCOEFF_NORMED)
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]): matches.append({'x': pt[0], 'val': val})
+                
     matches.sort(key=lambda d: d['x'])
-    unique = [m['val'] for j, m in enumerate(matches) if j == 0 or abs(m['x'] - matches[j-1]['x']) > 6]
+    unique = [m['val'] for j, m in enumerate(matches) if j == 0 or abs(m['x'] - matches[j-1]['x']) > 5]
     try: return int("".join(map(str, unique))) if unique else -1
     except: return -1
 
@@ -179,4 +184,4 @@ def perform_gap_audit(run_id, milestones, max_floor):
     print(f" Found: {len(milestones)} | Missing: {len(missing)} floors.")
 
 if __name__ == "__main__":
-    run_calibrated_sentinel()
+    run_resonant_sentinel()
