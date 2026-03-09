@@ -10,13 +10,15 @@ BOSS_DATA = {11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
 # --- 2. MASTER CONSTANTS (VERIFIED HUD/ROI) ---
 HEADER_ROI = (52, 76, 100, 142)
 CENTER_ROI = (230, 246, 250, 281)
-# NEW FOLDER NAME TO PROTECT PREVIOUS WORK
 COLLAPSED_OUT = "Collapsed_Worker_Output"
+# Global noise floor based on your hyper_signal_analysis_0.csv
+MAX_CLEAN_STD = 38.0 
 
-def run_stealth_sentinel():
+def run_baseline_sentinel():
     if not os.path.exists(COLLAPSED_OUT): os.makedirs(COLLAPSED_OUT)
     
-    datasets = ["0", "1", "2", "3", "4"]
+    # Restricting to Dataset 0 as requested
+    datasets = ["0"] 
     for ds_id in datasets:
         buffer_path = f"capture_buffer_{ds_id}"
         if not os.path.exists(buffer_path): continue
@@ -26,60 +28,59 @@ def run_stealth_sentinel():
         if os.path.exists(ds_out): shutil.rmtree(ds_out)
         os.makedirs(ds_out)
 
-        print(f"\n--- STEALTH SCAN RUN {ds_id} ---")
+        print(f"\n--- BASELINE SENTINEL RUN {ds_id} ---")
         
-        # Init: Assume Floor 1 is Frame 0
         sequence = [{'idx': 0, 'floor': 1, 'frame': frames[0]}]
-        first_img = cv2.imread(os.path.join(buffer_path, frames[0]), 0)
-        anchor_h = first_img[52:76, 100:142]
+        anchor_h = cv2.imread(os.path.join(buffer_path, frames[0]), 0)[52:76, 100:142]
         
         prev_h = anchor_h.copy()
         current_floor = 1
         last_found_idx = 0
         
         i = 1
-        while i < len(frames) - 12:
-            if i < last_found_idx + 4: # Mandatory Lifespan check
+        while i < len(frames) - 15:
+            # 1. REFRACTORY: Basic inter-frame skip
+            if i < last_found_idx + 4:
                 i += 1; continue
-                
+
             img = cv2.imread(os.path.join(buffer_path, frames[i]), 0)
             curr_h = img[52:76, 100:142]
+            
+            # 2. NOISE GATE: Is a banner currently blocking the view?
+            if np.std(curr_h) > MAX_CLEAN_STD:
+                # Banner detected. Skip ahead until the header is clean again
+                i += 1; continue
+            
+            # 3. PULSE CHECK: Only on clean frames
             h_flux = np.mean(cv2.absdiff(curr_h, prev_h))
             
-            # SENSITIVITY: 1.3 flux catches subtle early floors like F31
             if h_flux > 1.3:
-                # 1. CLEAN-STATE SEARCH
-                # Look ahead 10 frames to find the one with the lowest Noise (Std Dev)
-                best_std = 999; best_idx = i
-                for offset in range(0, 10):
-                    c_idx = i + offset
-                    c_h = cv2.imread(os.path.join(buffer_path, frames[c_idx]), 0)[52:76, 100:142]
-                    c_std = np.std(c_h)
-                    if c_std < best_std:
-                        best_std = c_std; best_idx = c_idx
+                # 4. STABILITY LOOKAHEAD: Ensure it's a floor, not the start of a banner
+                is_stable = True
+                for offset in range(1, 5):
+                    next_h = cv2.imread(os.path.join(buffer_path, frames[i+offset]), 0)[52:76, 100:142]
+                    # If it gets noisy or moves too much immediately, it's a banner entrance
+                    if np.std(next_h) > MAX_CLEAN_STD or np.mean(cv2.absdiff(next_h, curr_h)) > 3.0:
+                        is_stable = False; break
                 
-                # 2. IDENTITY VETO: Compare 'Cleanest' state to Anchor
-                clean_h = cv2.imread(os.path.join(buffer_path, frames[best_idx]), 0)[52:76, 100:142]
-                res = cv2.matchTemplate(clean_h, anchor_h, cv2.TM_CCORR_NORMED)
-                identity = res.max()
-                
-                # If visually different (>1.5% pixels shifted), it's a true floor
-                if identity < 0.985:
-                    current_floor += 1
-                    last_found_idx = best_idx
-                    sequence.append({'idx': last_found_idx, 'floor': current_floor, 'frame': frames[last_found_idx]})
-                    
-                    if current_floor % 10 == 0: print(f"  Discovered F{current_floor} @ Idx {last_found_idx}")
-                    
-                    anchor_h = clean_h.copy()
-                    i = last_found_idx + 1
-                    prev_h = anchor_h.copy()
-                    continue
+                if is_stable:
+                    # 5. IDENTITY VETO: Confirm it's a new number, not a flicker
+                    res = cv2.matchTemplate(curr_h, anchor_h, cv2.TM_CCORR_NORMED)
+                    if res.max() < 0.985:
+                        current_floor += 1
+                        last_found_idx = i
+                        sequence.append({'idx': last_found_idx, 'floor': current_floor, 'frame': frames[last_found_idx]})
+                        
+                        if current_floor % 10 == 0: print(f"  Confirmed F{current_floor} @ Idx {last_found_idx}")
+                        
+                        anchor_h = curr_h.copy()
+                        i = last_found_idx + 1
+                        prev_h = anchor_h.copy()
+                        continue
             
             prev_h = curr_h
             i += 1
 
-        # Final Archival
         with open(f"collapsed_sequence_run_{ds_id}.json", 'w') as f:
             json.dump(sequence, f, indent=4)
         for entry in sequence:
@@ -87,4 +88,4 @@ def run_stealth_sentinel():
                          os.path.join(ds_out, f"F{entry['floor']}_{entry['frame']}"))
 
 if __name__ == "__main__":
-    run_stealth_sentinel()
+    run_baseline_sentinel()
