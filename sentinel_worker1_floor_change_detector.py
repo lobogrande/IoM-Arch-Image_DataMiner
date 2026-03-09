@@ -68,9 +68,11 @@ HUD_DIG_NARROW = (250, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_omniscient_sentinel():
+def run_adaptive_sentinel():
     start_time = time.time()
-    digit_map = load_digit_map_raw()
+    # PRE-PROCESS TEMPLATES ONCE AT HIGH CONTRAST
+    digit_map = load_digit_map_fixed()
+    
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -100,18 +102,18 @@ def run_omniscient_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # CONSENSUS SENSORS: Checking multiple thresholds based on user audit
+            # CONSENSUS SENSORS
             h_val = -1
-            for t in [195, 175, 155]:
-                h_val = get_bitwise_number(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.80)
+            for t in [195, 175]:
+                h_val = get_bitwise_adaptive(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
                 if h_val != -1: break
                 
             d_val = -1
-            for t in [155, 175, 195]: # Checking lower threshold first for transitions
-                d_val = get_bitwise_number(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.76)
+            for t in [155, 165, 175]: # Focus on lower thresholds where transitions are visible
+                d_val = get_bitwise_adaptive(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.72)
                 if d_val != -1: break
             
-            # STABILITY LOGIC: Require two frames of consensus
+            # CORE LOGIC: Trust matching sensors or a stable Header
             raw_read = -1
             if h_val > current_f and (h_val == d_val or d_val == -1):
                 raw_read = h_val
@@ -139,28 +141,33 @@ def run_omniscient_sentinel():
             json.dump(milestones, f, indent=4)
         perform_audit(ds_id, milestones, current_f)
 
-def get_bitwise_number(gray_roi, digit_map, thresh_val, min_conf):
+def get_bitwise_adaptive(gray_roi, digit_map, thresh_val, min_conf):
     _, bin_roi = cv2.threshold(gray_roi, thresh_val, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
-        for t_gray in temps:
-            _, bin_temp = cv2.threshold(t_gray, thresh_val, 255, cv2.THRESH_BINARY)
-            res = cv2.matchTemplate(bin_roi, bin_temp, cv2.TM_CCOEFF_NORMED)
+        for t_bin in temps:
+            # Match current ROI against the pre-thresholded templates
+            res = cv2.matchTemplate(bin_roi, t_bin, cv2.TM_CCOEFF_NORMED)
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]): matches.append({'x': pt[0], 'val': val})
     matches.sort(key=lambda d: d['x'])
     unique = [m['val'] for i, m in enumerate(matches) if i == 0 or abs(m['x'] - matches[i-1]['x']) > 6]
-    return int("".join(map(str, unique))) if unique else -1
+    try:
+        return int("".join(map(str, unique))) if unique else -1
+    except:
+        return -1
 
-def load_digit_map_raw():
+def load_digit_map_fixed():
     d_map = {i: [] for i in range(10)}
     for f in os.listdir(DIGITS_DIR):
         if f.endswith('.png'):
             m = re.search(r'\d', f)
             if m:
                 v = int(m.group()); img = cv2.imread(os.path.join(DIGITS_DIR, f), 0)
-                d_map[v].append(img)
+                # Lock templates at high-contrast 195
+                _, b = cv2.threshold(img, 195, 255, cv2.THRESH_BINARY)
+                d_map[v].append(b)
     return d_map
 
 def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
@@ -188,4 +195,4 @@ def perform_audit(run_id, milestones, max_floor):
     print(f" Found: {len(milestones)} | Missing: {len(missing)} floors.")
 
 if __name__ == "__main__":
-    run_omniscient_sentinel()
+    run_adaptive_sentinel()
