@@ -2,77 +2,89 @@ import cv2
 import numpy as np
 import os
 import json
-import shutil # Fixed: Added missing import
+import shutil
 
-# --- MASTER CONSTANTS (VERIFIED HUD/ROI) ---
-DATASETS = ["0", "1", "2", "3", "4"]
+# --- 1. MASTER BOSS DATA (UNABRIDGED) ---
+BOSS_DATA = {11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 34: {'tier': 'mixed', 'special': {0: 'com2', 1: 'com2', 2: 'com2', 3: 'com2', 4: 'com2', 5: 'com2', 6: 'com2', 7: 'com2', 8: 'myth1', 9: 'myth1', 10: 'com2', 11: 'com2', 12: 'com2', 13: 'com2', 14: 'myth1', 15: 'myth1', 16: 'com2', 17: 'com2', 18: 'com2', 19: 'com2', 20: 'com2', 21: 'com2', 22: 'com2', 23: 'com2'}}, 35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'}, 49: {"tier": "mixed", "special": {0: "dirt3", 1: "dirt3", 2: "dirt3", 3: "dirt3", 4: "dirt3", 5: "dirt3", 6: "com3", 7: "com3", 8: "com3", 9: "com3", 10: "com3", 11: "com3", 12: "rare3", 13: "rare3", 14: "rare3", 15: "rare3", 16: "rare3", 17: "rare3", 18: "myth2", 19: "myth2", 20: "myth2", 21: "myth2", 22: "myth2", 23: "myth2"}}, 74: {'tier': 'mixed', 'special': {0: 'dirt3', 1: 'dirt3', 2: 'dirt3', 3: 'dirt3', 4: 'dirt3', 5: 'dirt3', 6: 'dirt3', 7: 'dirt3', 8: 'dirt3', 9: 'dirt3', 10: 'dirt3', 11: 'dirt3', 12: 'dirt3', 13: 'dirt3', 14: 'dirt3', 15: 'dirt3', 16: 'dirt3', 17: 'dirt3', 18: 'dirt3', 19: 'dirt3', 20: 'div1', 21: 'div1', 22: 'dirt3', 23: 'dirt3'}}, 98: {'tier': 'myth3'}, 99: {"tier": "mixed", "special": {0: "com3", 1: "rare3", 2: "epic3", 3: "leg3", 4: "myth3", 5: "div2", 6: "com3", 7: "rare3", 8: "epic3", 9: "leg3", 10: "myth3", 11: "div2", 12: "com3", 13: "rare3", 14: "epic3", 15: "leg3", 16: "myth3", 17: "div2", 18: "com3", 19: "rare3", 20: "epic3", 21: "leg3", 22: "myth3", 23: "div2"}}}
+
+# --- 2. MASTER CONSTANTS (VERIFIED HUD/ROI) ---
 HEADER_ROI = (52, 76, 100, 142)
 CENTER_ROI = (230, 246, 250, 281)
-COLLAPSED_OUTPUT = "Collapsed_Discovery"
+# NEW FOLDER NAME TO PROTECT PREVIOUS WORK
+COLLAPSED_OUT = "Collapsed_Worker_Output"
 
-def run_collapsed_worker():
-    if not os.path.exists(COLLAPSED_OUTPUT): os.makedirs(COLLAPSED_OUTPUT)
-
-    for ds_id in DATASETS:
+def run_stealth_sentinel():
+    if not os.path.exists(COLLAPSED_OUT): os.makedirs(COLLAPSED_OUT)
+    
+    datasets = ["0", "1", "2", "3", "4"]
+    for ds_id in datasets:
         buffer_path = f"capture_buffer_{ds_id}"
         if not os.path.exists(buffer_path): continue
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        ds_out = os.path.join(COLLAPSED_OUTPUT, f"Run_{ds_id}")
+        ds_out = os.path.join(COLLAPSED_OUT, f"Run_{ds_id}")
         if os.path.exists(ds_out): shutil.rmtree(ds_out)
         os.makedirs(ds_out)
 
-        print(f"\n--- COLLAPSED SCAN RUN {ds_id} ---")
+        print(f"\n--- STEALTH SCAN RUN {ds_id} ---")
         
-        # Initialization: Assume Floor 1 is Frame 0
+        # Init: Assume Floor 1 is Frame 0
         sequence = [{'idx': 0, 'floor': 1, 'frame': frames[0]}]
+        first_img = cv2.imread(os.path.join(buffer_path, frames[0]), 0)
+        anchor_h = first_img[52:76, 100:142]
         
-        # Initial Sensor State
-        prev_h = cv2.imread(os.path.join(buffer_path, frames[0]), 0)[52:76, 100:142]
-        prev_c = cv2.imread(os.path.join(buffer_path, frames[0]), 0)[230:246, 250:281]
-        
+        prev_h = anchor_h.copy()
         current_floor = 1
-        for i in range(1, len(frames) - 5):
-            img = cv2.imread(os.path.join(buffer_path, frames[i]), 0)
-            if img is None: continue
-            
-            curr_h = img[52:76, 100:142]
-            curr_c = img[230:246, 250:281]
-            
-            # THE ABSOLUTE GATE: Dual-Sensor Pulse + 3-Frame Persistence
-            if np.mean(cv2.absdiff(curr_h, prev_h)) > 2.2 and np.mean(cv2.absdiff(curr_c, prev_c)) > 1.5:
-                is_permanent = True
-                for offset in range(1, 4):
-                    # Check future frames to confirm this isn't a transient banner
-                    future_h = cv2.imread(os.path.join(buffer_path, frames[i+offset]), 0)[52:76, 100:142]
-                    if np.mean(cv2.absdiff(future_h, curr_h)) > 5.0:
-                        is_permanent = False; break
+        last_found_idx = 0
+        
+        i = 1
+        while i < len(frames) - 12:
+            if i < last_found_idx + 4: # Mandatory Lifespan check
+                i += 1; continue
                 
-                if is_permanent:
+            img = cv2.imread(os.path.join(buffer_path, frames[i]), 0)
+            curr_h = img[52:76, 100:142]
+            h_flux = np.mean(cv2.absdiff(curr_h, prev_h))
+            
+            # SENSITIVITY: 1.3 flux catches subtle early floors like F31
+            if h_flux > 1.3:
+                # 1. CLEAN-STATE SEARCH
+                # Look ahead 10 frames to find the one with the lowest Noise (Std Dev)
+                best_std = 999; best_idx = i
+                for offset in range(0, 10):
+                    c_idx = i + offset
+                    c_h = cv2.imread(os.path.join(buffer_path, frames[c_idx]), 0)[52:76, 100:142]
+                    c_std = np.std(c_h)
+                    if c_std < best_std:
+                        best_std = c_std; best_idx = c_idx
+                
+                # 2. IDENTITY VETO: Compare 'Cleanest' state to Anchor
+                clean_h = cv2.imread(os.path.join(buffer_path, frames[best_idx]), 0)[52:76, 100:142]
+                res = cv2.matchTemplate(clean_h, anchor_h, cv2.TM_CCORR_NORMED)
+                identity = res.max()
+                
+                # If visually different (>1.5% pixels shifted), it's a true floor
+                if identity < 0.985:
                     current_floor += 1
-                    # Anchor point offset to clear visual increment noise
-                    anchor_idx = i + 5
-                    sequence.append({'idx': anchor_idx, 'floor': current_floor, 'frame': frames[anchor_idx]})
+                    last_found_idx = best_idx
+                    sequence.append({'idx': last_found_idx, 'floor': current_floor, 'frame': frames[last_found_idx]})
                     
-                    if current_floor % 10 == 0: 
-                        print(f" Discovered F{current_floor} @ index {anchor_idx}")
+                    if current_floor % 10 == 0: print(f"  Discovered F{current_floor} @ Idx {last_found_idx}")
                     
-                    # Lock new baseline
-                    prev_h = cv2.imread(os.path.join(buffer_path, frames[anchor_idx]), 0)[52:76, 100:142]
-                    prev_c = cv2.imread(os.path.join(buffer_path, frames[anchor_idx]), 0)[230:246, 250:281]
+                    anchor_h = clean_h.copy()
+                    i = last_found_idx + 1
+                    prev_h = anchor_h.copy()
                     continue
             
-            prev_h, prev_c = curr_h, curr_c
+            prev_h = curr_h
+            i += 1
 
-        # Save the discovered sequence JSON
-        with open(os.path.join(ds_out, "collapsed_sequence.json"), 'w') as f:
+        # Final Archival
+        with open(f"collapsed_sequence_run_{ds_id}.json", 'w') as f:
             json.dump(sequence, f, indent=4)
-            
-        # Copy reviewed images to output subfolder
-        print(f" Saving {len(sequence)} consensus images...")
         for entry in sequence:
             shutil.copy2(os.path.join(buffer_path, entry['frame']), 
                          os.path.join(ds_out, f"F{entry['floor']}_{entry['frame']}"))
 
 if __name__ == "__main__":
-    run_collapsed_worker()
+    run_stealth_sentinel()
