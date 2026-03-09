@@ -57,17 +57,15 @@ DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 ANCHOR_FILE = "dig_stage_anchor.png"
 
-# ROIs
+# PADDED Scanning ROIs (Y1, Y2, X1, X2)
 HEADER_ROI = (54, 74, 103, 138)
 DIG_VAL_ROI = (230, 246, 250, 281)
 DIG_ANCH_ROI = (229, 248, 163, 253)
 
-def run_precision_sentinel():
+def run_resilient_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
-    # Load the text anchor template
     anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
-    
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -82,8 +80,9 @@ def run_precision_sentinel():
         if not frames: continue
 
         milestones = []
-        # Initial floor 1 anchor
-        commit_milestone(ds_id, 0, 1, frames[0], cv2.imread(os.path.join(buffer_path, frames[0])), milestones, evidence_path)
+        # GUARANTEED START
+        first_img = cv2.imread(os.path.join(buffer_path, frames[0]))
+        commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
         
         current_f = 1
         h_candidate, h_count = -1, 0
@@ -94,33 +93,32 @@ def run_precision_sentinel():
         for i in range(1, len(frames)):
             img = cv2.imread(os.path.join(buffer_path, frames[i]))
             if img is None: continue
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # COLOR FILTERING: We only want WHITE text
-            # Damage numbers that are yellow/red/purple will be filtered out here
-            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            mask = cv2.inRange(hsv, (0, 0, 200), (180, 50, 255)) 
+            # SENSOR 1: Header
+            h_val = get_bitwise_precision(gray[54:74, 103:138], digit_map, 175, 0.82)
             
-            # 1. HEADER SCAN
-            h_val = get_bitwise_precision(mask[54:74, 103:138], digit_map, 0.82)
-            
-            # 2. DIG STAGE VERIFICATION
-            d_val = -1
-            if h_val > current_f and anchor_tmpl is not None:
-                # First, verify the "Dig Stage:" anchor text exists
-                anch_area = mask[230:246, 161:245]
-                res = cv2.matchTemplate(anch_area, anchor_tmpl, cv2.TM_CCOEFF_NORMED)
-                if res.max() > 0.65: # The words are there
-                    d_val = get_bitwise_precision(mask[230:246, 250:281], digit_map, 0.76)
+            # SENSOR 2: Dig Stage + Anchor
+            has_anchor = False
+            if anchor_tmpl is not None:
+                res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED)
+                if res.max() > 0.60: has_anchor = True
 
-            # 3. CONSENSUS LOGIC
+            d_val = get_bitwise_precision(gray[230:246, 250:281], digit_map, 165, 0.72)
+
+            # --- RESILIENT LOGIC BRIDGE ---
             if h_val > current_f:
-                # If Header and Dig Stage agree, it's an instant lock
-                if h_val == d_val:
-                    current_f = h_val
-                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
-                    h_candidate, h_count = -1, 0
+                jump_size = h_val - current_f
+                
+                # CONDITION A: Large Jumps (>15) require Triple-Consensus
+                if jump_size > 15:
+                    if h_val == d_val and has_anchor:
+                        current_f = h_val
+                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                        h_candidate, h_count = -1, 0
+                
+                # CONDITION B: Standard Progression uses 3-frame stability
                 else:
-                    # Header stability fallback (3 frames)
                     if h_val == h_candidate: h_count += 1
                     else: h_candidate, h_count = h_val, 1
                     
@@ -141,7 +139,8 @@ def run_precision_sentinel():
             json.dump(milestones, f, indent=4)
         perform_gap_audit_detailed(ds_id, milestones, current_f)
 
-def get_bitwise_precision(bin_roi, digit_map, min_conf):
+def get_bitwise_precision(roi, digit_map, thresh, min_conf):
+    _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
         for t_bin in temps:
@@ -172,7 +171,7 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     milestones.append({'idx': idx, 'floor': floor, 'frame': f_name})
     out_file = f"{evidence_path}/F{floor}_{f_name}"
     marked = img.copy()
-    cv2.rectangle(marked, (HEADER_ROI[2], HEADER_ROI[0]), (HEADER_ROI[3], HEADER_ROI[1]), (255, 0, 255), 1)
+    cv2.rectangle(marked, (103, 54), (138, 74), (255, 0, 255), 1)
     cv2.rectangle(marked, (161, 230), (281, 246), (255, 0, 255), 1)
     if floor in BOSS_DATA:
         for b_idx in range(24):
@@ -199,4 +198,4 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_precision_sentinel()
+    run_resilient_sentinel()
