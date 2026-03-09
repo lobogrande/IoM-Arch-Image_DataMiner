@@ -17,7 +17,7 @@ FINAL_OUT = "Consensus_Sentinel_Results"
 def run_consensus_sentinel():
     if not os.path.exists(FINAL_OUT): os.makedirs(FINAL_OUT)
     
-    datasets = ["0"] # Focus on the problematic noisy run
+    datasets = ["1","2","3","4"] # Only using on clean runs with minimal UI clutter for this tool
     for ds_id in datasets:
         buffer_path = f"capture_buffer_{ds_id}"
         if not os.path.exists(buffer_path): continue
