@@ -59,14 +59,13 @@ ANCHOR_FILE = "dig_stage_anchor.png"
 
 # ROIs
 HEADER_ROI = (54, 74, 103, 138)
-DIG_ANCH_ROI = (229, 248, 163, 253) # YOUR CORRECTED COORDS
+DIG_ANCH_ROI = (229, 248, 163, 253)
 DIG_VAL_ROI = (230, 246, 250, 281)
 
-def run_verification_sentinel():
+def run_proportional_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
     anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
-    
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -86,6 +85,8 @@ def run_verification_sentinel():
         commit_milestone(ds_id, 0, 1, frames[0], first_frame_img, milestones, evidence_path)
         
         current_f = 1
+        h_cand, h_count = -1, 0
+        sync_cand, sync_count = -1, 0
         perf_timer = time.time()
 
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
@@ -95,33 +96,50 @@ def run_verification_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # 1. SCAN SENSORS
+            # 1. READ SENSORS
             h_val = get_bitwise_verified(gray[54:74, 103:138], digit_map, 175, 0.82)
             d_val = get_bitwise_verified(gray[230:246, 250:281], digit_map, 165, 0.72)
             
-            # 2. ANCHOR VERIFICATION
-            has_anchor = False
+            # 2. ANCHOR TEXT CHECK
+            has_anch = False
             if anchor_tmpl is not None:
                 res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED)
-                if res.max() > 0.65: has_anchor = True
+                if res.max() > 0.60: has_anch = True
 
-            # 3. VERIFICATION LOGIC
-            if h_val > current_f:
-                # Rule A: High Reliability Match (Sensors agree + Text Anchor is present)
-                # This kills the 204 hallucination because there is no "Dig Stage:" text next to damage numbers
-                if h_val == d_val and has_anchor:
-                    current_f = h_val
-                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+            # 3. PROPORTIONAL TRUST LOGIC
+            if h_val > current_f and (h_val - current_f <= 30 or h_val in BOSS_DATA):
                 
-                # Rule B: Boss Floor Safety
-                # We allow Boss floors to anchor on Header-only if stable, as they are crucial
-                elif h_val in BOSS_DATA and h_val == d_val:
+                # LEVEL 1: TRIPLE LOCK (Consensus + Anchor) -> Instant
+                if h_val == d_val and has_anch:
                     current_f = h_val
                     commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                    h_cand, h_count, sync_count = -1, 0, 0
+                
+                # LEVEL 2: DOUBLE LOCK (Header == Dig Stage) -> 2 Frames
+                elif h_val == d_val:
+                    if h_val == sync_cand: sync_count += 1
+                    else: sync_cand, sync_count = h_val, 1
+                    
+                    if sync_count >= 2:
+                        current_f = sync_cand
+                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                        h_cand, h_count, sync_count = -1, 0, 0
+
+                # LEVEL 3: STABILITY LOCK (Header Only) -> 5 Frames
+                else:
+                    if h_val == h_cand: h_count += 1
+                    else: h_cand, h_count = h_val, 1
+                    
+                    if h_count >= 5:
+                        current_f = h_cand
+                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                        h_cand, h_count, sync_count = -1, 0, 0
+            else:
+                h_cand, h_count, sync_count = -1, 0, 0
 
             if i % 100 == 0:
                 fps = 100 / (time.time() - perf_timer)
-                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} Anc:{'Y' if has_anchor else 'N'} | FPS: {fps:.1f}")
+                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} | FPS: {fps:.1f}")
                 sys.stdout.flush()
                 perf_timer = time.time()
 
@@ -138,18 +156,12 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    # DISAMBIGUATION: 3 vs 8 density check
-                    # If it looks like an 8, check the left-middle pixels
+                    # DISAMBIGUATION: Left-middle pixel check for 8 vs 3
                     if val == 8:
-                        digit_area = bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+7]
-                        # If left column is mostly empty, it's a 3
-                        if np.sum(digit_area[:, 0]) < 255: # threshold for "empty"
+                        if np.sum(bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+1]) < 255:
                             matches.append({'x': pt[0], 'val': 3})
-                        else:
-                            matches.append({'x': pt[0], 'val': 8})
-                    else:
-                        matches.append({'x': pt[0], 'val': val})
-                        
+                        else: matches.append({'x': pt[0], 'val': 8})
+                    else: matches.append({'x': pt[0], 'val': val})
     if not matches: return -1
     matches.sort(key=lambda d: d['x'])
     unique = []
@@ -176,14 +188,12 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     out_file = f"{evidence_path}/F{floor}_{f_name}"
     marked = img.copy()
     cv2.rectangle(marked, (103, 54), (138, 74), (255, 0, 255), 1)
-    cv2.rectangle(marked, (250, 230), (281, 246), (255, 0, 255), 1)
+    cv2.rectangle(marked, (161, 230), (281, 246), (255, 0, 255), 1)
     if floor in BOSS_DATA:
         for b_idx in range(24):
             row, col = divmod(b_idx, 6)
             cx, cy = int(75 + (col * 59.1)), int(261 + (row * 59.1))
             cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
-            tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
-            cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
     cv2.imwrite(out_file, marked)
     print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
 
@@ -199,8 +209,8 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
             if missing[i] != missing[i-1] + 1:
                 ranges.append(f"{start}-{missing[i-1]}" if start != missing[i-1] else f"{start}")
                 start = missing[i]
-        if missing: ranges.append(f"{start}-{missing[-1]}" if start != missing[-1] else f"{start}")
+        ranges.append(f"{start}-{missing[-1]}" if start != missing[-1] else f"{start}")
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_verification_sentinel()
+    run_proportional_sentinel()
