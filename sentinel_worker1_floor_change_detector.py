@@ -56,18 +56,15 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 
-# SCANNING ROIs (Y1, Y2, X1, X2)
-HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 54, 74, 103, 138 # Widened for 3-digits
+HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 54, 74, 103, 138
 DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
 
-# HUD Overlays
 HUD_STAGE = (103, 54, 138, 74)
-HUD_DIG_WIDE = (161, 231, 281, 248)
-HUD_DIG_NARROW = (250, 230, 281, 246)
+HUD_DIG_WIDE = (161, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_persistent_sentinel():
+def run_forensic_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -88,7 +85,7 @@ def run_persistent_sentinel():
         
         current_f = 1
         h_candidate, h_count = -1, 0
-        d_history = [] # For temporal consensus window
+        d_history = []
         perf_timer = time.time()
 
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
@@ -101,32 +98,30 @@ def run_persistent_sentinel():
             # SENSOR 1: Header
             h_val = -1
             for t in [175, 155]: 
-                h_val = get_bitwise_persistent(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
+                h_val = get_bitwise_forensic(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
                 if h_val != -1: break
             
             # SENSOR 2: Dig Stage
             d_val = -1
-            for t in [155, 175]:
-                d_val = get_bitwise_persistent(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.76)
-                if d_val != -1: break
+            if h_val > current_f:
+                for t in [155, 175]:
+                    d_val = get_bitwise_forensic(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.76)
+                    if d_val != -1: break
             
-            # Update temporal history (keep last 3 frames of Dig readings)
             d_history.append(d_val)
             if len(d_history) > 3: d_history.pop(0)
             
-            # CONSENSUS TRIGGER
+            # CONSENSUS TRIGGER (Restored to 3-frame stability)
             if h_val > current_f:
-                # Rule A: Strict Consensus (Agreement within a 3-frame window)
                 if h_val in d_history:
                     current_f = h_val
                     commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
                     h_candidate, h_count = -1, 0
-                # Rule B: Stability Nudge (Header is solid for 10 frames, even if Dig is messy)
                 else:
                     if h_val == h_candidate: h_count += 1
                     else: h_candidate, h_count = h_val, 1
                     
-                    if h_count >= 10:
+                    if h_count >= 3: # Restored to original approved setting
                         current_f = h_val
                         commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
                         h_candidate, h_count = -1, 0
@@ -141,9 +136,9 @@ def run_persistent_sentinel():
 
         with open(f"milestones_run_{ds_id}.json", 'w') as f:
             json.dump(milestones, f, indent=4)
-        perform_gap_audit(ds_id, milestones, current_f)
+        perform_gap_audit_detailed(ds_id, milestones, current_f)
 
-def get_bitwise_persistent(roi, digit_map, thresh, min_conf):
+def get_bitwise_forensic(roi, digit_map, thresh, min_conf):
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
@@ -177,7 +172,6 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     marked = img.copy()
     cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
     cv2.rectangle(marked, (HUD_DIG_WIDE[0], HUD_DIG_WIDE[1]), (HUD_DIG_WIDE[2], HUD_DIG_WIDE[3]), (255, 0, 255), 1)
-    cv2.rectangle(marked, (HUD_DIG_NARROW[0], HUD_DIG_NARROW[1]), (HUD_DIG_NARROW[2], HUD_DIG_NARROW[3]), (0, 255, 0), 1)
     if floor in BOSS_DATA:
         for b_idx in range(24):
             row, col = divmod(b_idx, 6)
@@ -188,11 +182,20 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     cv2.imwrite(out_file, marked)
     print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
 
-def perform_gap_audit(run_id, milestones, max_floor):
-    found = set(m['floor'] for m in milestones)
-    missing = sorted(list(set(range(1, max_floor + 1)) - found))
+def perform_gap_audit_detailed(run_id, milestones, max_floor):
+    found = sorted(list(set(m['floor'] for m in milestones)))
+    missing = sorted(list(set(range(1, max_floor + 1)) - set(found)))
     print(f"\n--- GAP AUDIT RUN {run_id} ---")
-    print(f" Found: {len(milestones)} | Missing: {len(missing)} floors.")
+    print(f" Found: {len(found)} | Missing: {len(missing)} floors")
+    if missing:
+        ranges = []
+        start = missing[0]
+        for i in range(1, len(missing)):
+            if missing[i] != missing[i-1] + 1:
+                ranges.append(f"{start}-{missing[i-1]}" if start != missing[i-1] else f"{start}")
+                start = missing[i]
+        ranges.append(f"{start}-{missing[-1]}" if start != missing[-1] else f"{start}")
+        print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_persistent_sentinel()
+    run_forensic_sentinel()
