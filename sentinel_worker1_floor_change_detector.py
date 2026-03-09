@@ -51,20 +51,22 @@ BOSS_DATA = {
     }
 }
 
-# --- 2. MASTER CONSTANTS ---
+# --- 2. MASTER CONSTANTS (VERIFIED HUD/ROI) ---
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 ANCHOR_FILE = "dig_stage_anchor.png"
 
-HEADER_ROI = (54, 74, 103, 138)
-DIG_ANCH_ROI = (229, 248, 163, 253)
-DIG_VAL_ROI = (230, 246, 250, 281)
+# SCANNING ROIs (Y1, Y2, X1, X2)
+HEADER_ROI_COORDS = (54, 74, 103, 138)
+DIG_VAL_ROI_COORDS = (230, 246, 250, 281)
+DIG_ANCH_ROI_COORDS = (229, 248, 163, 253)
 
-def run_production_sentinel():
+def run_optimized_production_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
     anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
+    
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -79,8 +81,8 @@ def run_production_sentinel():
         if not frames: continue
 
         milestones = []
-        # Initial floor 1 anchor
-        commit_milestone(ds_id, 0, 1, frames[0], cv2.imread(os.path.join(buffer_path, frames[0])), milestones, evidence_path)
+        # Logical anchor for Floor 1
+        milestones.append({'idx': 0, 'floor': 1, 'frame': frames[0]})
         
         current_f = 1
         h_cand, h_count = -1, 0
@@ -90,9 +92,9 @@ def run_production_sentinel():
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
         
         for i in range(1, len(frames)):
-            img = cv2.imread(os.path.join(buffer_path, frames[i]))
-            if img is None: continue
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # OPTIMIZATION: Direct Grayscale Load
+            gray = cv2.imread(os.path.join(buffer_path, frames[i]), cv2.IMREAD_GRAYSCALE)
+            if gray is None: continue
             
             # 1. READ SENSORS
             h_val = get_bitwise_verified(gray[54:74, 103:138], digit_map, 175, 0.82)
@@ -104,45 +106,41 @@ def run_production_sentinel():
                 res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED)
                 if res.max() > 0.60: has_anch = True
 
-            # 3. PRODUCTION LOGIC: Tiered trust with sequential reinforcement
+            # 3. CORE LOGIC (Stripped of Drawing Latency)
             if h_val > current_f and (h_val - current_f <= 30 or h_val in BOSS_DATA):
-                
-                # TRIPLE LOCK -> Instant
                 if h_val == d_val and has_anch:
                     current_f = h_val
-                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                    milestones.append({'idx': i, 'floor': current_f, 'frame': frames[i]})
                     h_cand, h_count, sync_count = -1, 0, 0
-                
-                # DOUBLE LOCK -> 2 Frames
                 elif h_val == d_val:
                     if h_val == sync_cand: sync_count += 1
                     else: sync_cand, sync_count = h_val, 1
-                    
                     if sync_count >= 2:
                         current_f = sync_cand
-                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                        milestones.append({'idx': i, 'floor': current_f, 'frame': frames[i]})
                         h_cand, h_count, sync_count = -1, 0, 0
-
-                # STABILITY LOCK -> 5 Frames
                 else:
                     if h_val == h_cand: h_count += 1
                     else: h_cand, h_count = h_val, 1
-                    
                     if h_count >= 5:
                         current_f = h_cand
-                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                        milestones.append({'idx': i, 'floor': current_f, 'frame': frames[i]})
                         h_cand, h_count, sync_count = -1, 0, 0
             else:
                 h_cand, h_count, sync_count = -1, 0, 0
 
-            if i % 100 == 0:
-                fps = 100 / (time.time() - perf_timer)
+            if i % 500 == 0: # Increased interval for less console I/O
+                fps = 500 / (time.time() - perf_timer)
                 sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} | FPS: {fps:.1f}")
                 sys.stdout.flush()
                 perf_timer = time.time()
 
+        # Save JSON Milestone List
         with open(f"milestones_run_{ds_id}.json", 'w') as f:
             json.dump(milestones, f, indent=4)
+            
+        # Post-Run Batch Generation of Consensus Images
+        generate_consensus_images(ds_id, buffer_path, milestones, evidence_path)
         perform_gap_audit_detailed(ds_id, milestones, current_f)
 
 def get_bitwise_verified(roi, digit_map, thresh, min_conf):
@@ -154,20 +152,14 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    # DISAMBIGUATION: Pixel check for 8 vs 3 vs 9
                     if val == 8:
-                        # Check left-middle for 3-style gap
-                        if np.sum(bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+1]) < 255:
-                            matches.append({'x': pt[0], 'val': 3})
-                        # Check bottom-left for 9-style gap
-                        elif np.sum(bin_roi[pt[1]+8:pt[1]+12, pt[0]:pt[0]+1]) < 255:
-                            matches.append({'x': pt[0], 'val': 9})
+                        if np.sum(bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+1]) < 255: matches.append({'x': pt[0], 'val': 3})
+                        elif np.sum(bin_roi[pt[1]+8:pt[1]+12, pt[0]:pt[0]+1]) < 255: matches.append({'x': pt[0], 'val': 9})
                         else: matches.append({'x': pt[0], 'val': 8})
                     else: matches.append({'x': pt[0], 'val': val})
     if not matches: return -1
     matches.sort(key=lambda d: d['x'])
-    unique = []
-    last_x = -99
+    unique = []; last_x = -99
     for m in matches:
         if abs(m['x'] - last_x) > 4:
             unique.append(m['val']); last_x = m['x']
@@ -185,21 +177,16 @@ def load_digit_map_fixed():
                 d_map[v].append(b)
     return d_map
 
-def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
-    milestones.append({'idx': idx, 'floor': floor, 'frame': f_name})
-    out_file = f"{evidence_path}/F{floor}_{f_name}"
-    marked = img.copy()
-    cv2.rectangle(marked, (103, 54), (138, 74), (255, 0, 255), 1)
-    cv2.rectangle(marked, (161, 230), (281, 246), (255, 0, 255), 1)
-    if floor in BOSS_DATA:
-        for b_idx in range(24):
-            row, col = divmod(b_idx, 6)
-            cx, cy = int(75 + (col * 59.1)), int(261 + (row * 59.1))
-            cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
-            tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
-            cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
-    cv2.imwrite(out_file, marked)
-    print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
+def generate_consensus_images(ds_id, buffer_path, milestones, evidence_path):
+    print(f"\n Generating Consensus Images for Run {ds_id}...")
+    for m in milestones:
+        img = cv2.imread(os.path.join(buffer_path, m['frame']))
+        out_file = f"{evidence_path}/F{m['floor']}_{m['frame']}"
+        # (Optional) Minimal HUD logic here if still desired for forensic review
+        # For Pass 1 Final, we will leave these uncommented but separate
+        cv2.rectangle(img, (103, 54), (138, 74), (255, 0, 255), 1)
+        cv2.rectangle(img, (161, 230), (281, 246), (255, 0, 255), 1)
+        cv2.imwrite(out_file, img)
 
 def perform_gap_audit_detailed(run_id, milestones, max_floor):
     found = sorted(list(set(m['floor'] for m in milestones)))
@@ -217,4 +204,4 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_production_sentinel()
+    run_optimized_production_sentinel()
