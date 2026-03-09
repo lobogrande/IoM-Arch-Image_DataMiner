@@ -57,12 +57,12 @@ DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 ANCHOR_FILE = "dig_stage_anchor.png"
 
-# PADDED Scanning ROIs (Y1, Y2, X1, X2)
+# ROIs
 HEADER_ROI = (54, 74, 103, 138)
 DIG_VAL_ROI = (230, 246, 250, 281)
 DIG_ANCH_ROI = (229, 248, 163, 253)
 
-def run_resilient_sentinel():
+def run_recovering_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
     anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
@@ -95,29 +95,25 @@ def run_resilient_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # SENSOR 1: Header
+            # 1. HEADER SCAN (Primary)
             h_val = get_bitwise_precision(gray[54:74, 103:138], digit_map, 175, 0.82)
             
-            # SENSOR 2: Dig Stage + Anchor
-            has_anchor = False
-            if anchor_tmpl is not None:
-                res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED)
-                if res.max() > 0.60: has_anchor = True
-
-            d_val = get_bitwise_precision(gray[230:246, 250:281], digit_map, 165, 0.72)
-
-            # --- RESILIENT LOGIC BRIDGE ---
+            # 2. DIG STAGE VERIFICATION (Secondary)
+            d_val = -1
             if h_val > current_f:
-                jump_size = h_val - current_f
-                
-                # CONDITION A: Large Jumps (>15) require Triple-Consensus
-                if jump_size > 15:
-                    if h_val == d_val and has_anchor:
-                        current_f = h_val
-                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
-                        h_candidate, h_count = -1, 0
-                
-                # CONDITION B: Standard Progression uses 3-frame stability
+                # Check for "Dig Stage:" text to validate the d_val sensor
+                res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED) if anchor_tmpl is not None else None
+                if res is not None and res.max() > 0.60:
+                    d_val = get_bitwise_precision(gray[230:246, 250:281], digit_map, 165, 0.72)
+
+            # 3. INDEPENDENT ANCHOR LOGIC
+            if h_val > current_f:
+                # PATH A: Consensus Lock (Instant)
+                if h_val == d_val:
+                    current_f = h_val
+                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                    h_candidate, h_count = -1, 0
+                # PATH B: Stability Lock (3-frame fallback)
                 else:
                     if h_val == h_candidate: h_count += 1
                     else: h_candidate, h_count = h_val, 1
@@ -198,4 +194,4 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_resilient_sentinel()
+    run_recovering_sentinel()
