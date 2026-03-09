@@ -51,21 +51,17 @@ BOSS_DATA = {
     }
 }
 
-# --- 2. VERIFIED CONSTANTS ---
+# --- 2. MASTER CONSTANTS (VERIFIED) ---
 DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
-ANCHOR_FILE = "dig_stage_anchor.png"
 
-# ROIs
 HEADER_ROI = (54, 74, 103, 138)
-DIG_VAL_ROI = (230, 246, 250, 281)
-DIG_ANCH_ROI = (229, 248, 163, 253)
+DIG_ROI = (230, 246, 250, 281)
 
-def run_recovering_sentinel():
+def run_restoration_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
-    anchor_tmpl = cv2.imread(ANCHOR_FILE, 0) if os.path.exists(ANCHOR_FILE) else None
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
 
     for ds_id in DATASETS:
@@ -80,9 +76,9 @@ def run_recovering_sentinel():
         if not frames: continue
 
         milestones = []
-        # GUARANTEED START
-        first_img = cv2.imread(os.path.join(buffer_path, frames[0]))
-        commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
+        # PHYSICAL INJECTION OF FLOOR 1
+        first_frame_img = cv2.imread(os.path.join(buffer_path, frames[0]))
+        commit_milestone(ds_id, 0, 1, frames[0], first_frame_img, milestones, evidence_path)
         
         current_f = 1
         h_candidate, h_count = -1, 0
@@ -95,25 +91,18 @@ def run_recovering_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # 1. HEADER SCAN (Primary)
-            h_val = get_bitwise_precision(gray[54:74, 103:138], digit_map, 175, 0.82)
+            # SENSOR PASS
+            h_val = get_bitwise_number(gray[54:74, 103:138], digit_map, 175, 0.82)
+            d_val = get_bitwise_number(gray[230:246, 250:281], digit_map, 165, 0.72)
             
-            # 2. DIG STAGE VERIFICATION (Secondary)
-            d_val = -1
+            # CORE ANCHOR LOGIC (Trust Header primarily)
             if h_val > current_f:
-                # Check for "Dig Stage:" text to validate the d_val sensor
-                res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED) if anchor_tmpl is not None else None
-                if res is not None and res.max() > 0.60:
-                    d_val = get_bitwise_precision(gray[230:246, 250:281], digit_map, 165, 0.72)
-
-            # 3. INDEPENDENT ANCHOR LOGIC
-            if h_val > current_f:
-                # PATH A: Consensus Lock (Instant)
+                # Path A: Fast Consensus Lock
                 if h_val == d_val:
                     current_f = h_val
                     commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
                     h_candidate, h_count = -1, 0
-                # PATH B: Stability Lock (3-frame fallback)
+                # Path B: Header Stability Fallback (3 frames)
                 else:
                     if h_val == h_candidate: h_count += 1
                     else: h_candidate, h_count = h_val, 1
@@ -135,7 +124,7 @@ def run_recovering_sentinel():
             json.dump(milestones, f, indent=4)
         perform_gap_audit_detailed(ds_id, milestones, current_f)
 
-def get_bitwise_precision(roi, digit_map, thresh, min_conf):
+def get_bitwise_number(roi, digit_map, thresh, min_conf):
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
@@ -168,7 +157,7 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     out_file = f"{evidence_path}/F{floor}_{f_name}"
     marked = img.copy()
     cv2.rectangle(marked, (103, 54), (138, 74), (255, 0, 255), 1)
-    cv2.rectangle(marked, (161, 230), (281, 246), (255, 0, 255), 1)
+    cv2.rectangle(marked, (250, 230), (281, 246), (255, 0, 255), 1)
     if floor in BOSS_DATA:
         for b_idx in range(24):
             row, col = divmod(b_idx, 6)
@@ -194,4 +183,4 @@ def perform_gap_audit_detailed(run_id, milestones, max_floor):
         print(f" Missing Ranges: {', '.join(ranges)}")
 
 if __name__ == "__main__":
-    run_recovering_sentinel()
+    run_restoration_sentinel()
