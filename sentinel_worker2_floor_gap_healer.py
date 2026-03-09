@@ -16,7 +16,7 @@ DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
 
-def run_physical_sentinel():
+def run_division_sentinel():
     digit_map = load_digit_map()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
@@ -31,8 +31,9 @@ def run_physical_sentinel():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- PHYSICAL SENTINEL RUN {ds_id} ---")
+        print(f"\n--- DIVISION SENTINEL RUN {ds_id} ---")
         
+        # 1. CEILING DISCOVERY
         ceiling_f = find_ceiling_structural(buffer_path, frames, anchors[-1], digit_map)
         if ceiling_f: anchors.append(ceiling_f)
 
@@ -42,10 +43,10 @@ def run_physical_sentinel():
             s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
             
             if (e_f - s_f) > 1:
-                print(f" Solving Gap: F{s_f}->F{e_f}...")
+                print(f" Dividing Gap: F{s_f}->F{e_f}...")
                 sys.stdout.flush()
-                # Use iterative physical fencing
-                healed = solve_gap_with_physical_fencing(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
+                # Use temporal division hunting
+                healed = solve_gap_via_division(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
                 final_consensus.extend(healed)
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
@@ -56,85 +57,89 @@ def run_physical_sentinel():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_with_physical_fencing(path, frames, anc_s, anc_e, digit_map):
+def solve_gap_via_division(path, frames, anc_s, anc_e, digit_map):
+    """Divides the gap into equal segments and hunts for each floor within its zone"""
     healed = []
-    missing_floors = list(range(anc_s['floor'] + 1, anc_e['floor']))
+    num_missing = anc_e['floor'] - anc_s['floor'] - 1
     
-    # 1. INITIAL FENCE: Lock out frames belonging to the previous anchor
-    current_search_start = find_visual_break_header(path, frames, anc_s, anc_e['idx'])
-            
-    for target in missing_floors:
+    # 1. FIND THE 'WILDERNESS' (Frames not owned by the anchors)
+    start_border = find_visual_break_header(path, frames, anc_s, anc_e['idx'], direction=1)
+    end_border = find_visual_break_header(path, frames, anc_e, anc_s['idx'], direction=-1)
+    
+    wilderness_size = end_border - start_border
+    if wilderness_size <= 0:
+        print(f" !! Gap Too Tight! Forcing equal spacing for {num_missing} floors.")
+        start_border, end_border = anc_s['idx'] + 1, anc_e['idx'] - 1
+        wilderness_size = end_border - start_border
+
+    segment_size = wilderness_size // (num_missing + 1)
+    
+    for i in range(num_missing):
+        target_f = anc_s['floor'] + i + 1
+        # Hunt around the midpoint of this segment
+        zone_start = start_border + (i * segment_size)
+        zone_end = start_border + ((i + 2) * segment_size)
+        midpoint = zone_start + (segment_size // 2)
+        
         found_m = None
-        cand_f, cand_count = -1, 0
-        
-        # 2. SEARCH: Stability-Gated OCR
-        for i in range(current_search_start, anc_e['idx']):
-            gray = cv2.imread(os.path.join(path, frames[i]), 0)
+        # HUNT: Search 20 frames around the midpoint for a clear OCR read
+        for offset in [0, 1, -1, 2, -2, 5, -5, 10, -10]:
+            idx = midpoint + offset
+            if not (zone_start < idx < zone_end): continue
+            
+            gray = cv2.imread(os.path.join(path, frames[idx]), 0)
             roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-            val = -1
+            
+            # Peer Veto: Skip if we explicitly see a WRONG neighbor floor
+            observed = get_bitwise_verified(roi, digit_map, 175, 0.50)
+            if observed != -1 and observed != target_f: continue
+            
+            # multi-thresh attempt
             for t in [175, 155, 195]:
-                res = get_bitwise_verified(roi, digit_map, t, 0.72)
-                if res == target:
-                    val = res; break
-            
-            if val == target:
-                if val == cand_f: cand_count += 1
-                else: cand_f, cand_count = val, 1
-                if cand_count >= 5: 
-                    found_m = {'idx': i - 4, 'floor': target, 'frame': frames[i-4]}
+                if get_bitwise_verified(roi, digit_map, t, 0.72) == target_f:
+                    found_m = {'idx': idx, 'floor': target_f, 'frame': frames[idx]}
                     break
-            else:
-                cand_f, cand_count = -1, 0
-        
-        if not found_m:
-            # 3. VERIFIED RESET: Use Sub-Grid logic with Red-Bar filter and OCR Veto
-            print(f"   [F{target}] OCR Fail - Hunting Physical Reset...")
-            found_m = nominate_physical_reset(path, frames, current_search_start, anc_e['idx'], target, digit_map)
+            if found_m: break
             
-        print(f"   [F{target}] Locked: {found_m['frame']}")
+        if not found_m:
+            # FALLBACK: If midpoint OCR fails, pick the most quiet frame in this segment
+            print(f"   [F{target_f}] Midpoint OCR Fail - Picking quietest frame in segment.")
+            found_m = nominate_quietest_in_zone(path, frames, zone_start, zone_end, target_f, digit_map)
+            
+        print(f"   [F{target_f}] Locked: {found_m['frame']} (Index: {found_m['idx']})")
         sys.stdout.flush()
         healed.append(found_m)
         
-        # 4. RECURSIVE FENCE: Newly healed floor claims its territory
-        current_search_start = find_visual_break_header(path, frames, found_m, anc_e['idx'])
-        
     return healed
 
-def find_visual_break_header(path, frames, milestone, upper_limit):
+def find_visual_break_header(path, frames, milestone, limit, direction):
+    """Marches from a milestone until the visual signature changes"""
     img = cv2.imread(os.path.join(path, milestone['frame']), 0)
     sig = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-    for i in range(milestone['idx'] + 1, upper_limit):
-        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-        if np.mean(cv2.absdiff(curr, sig)) > 20: return i + 1
-    return milestone['idx'] + 1
-
-def nominate_physical_reset(path, frames, start, end, floor, digit_map):
-    best_idx = start
-    max_reset_score = -1
-    prev_grid = None
     
-    limit = min(start + 400, end)
-    for i in range(start, limit):
-        # OCR VETO: If we explicitly see a WRONG floor number, skip
+    rng = range(milestone['idx'] + direction, limit, direction)
+    last_stable = milestone['idx']
+    for i in rng:
+        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+        if np.mean(cv2.absdiff(curr, sig)) > 20: break
+        last_stable = i
+    return last_stable
+
+def nominate_quietest_in_zone(path, frames, start, end, floor, digit_map):
+    best_stability = 999999
+    best_idx = start + (end - start) // 2
+    
+    for i in range(start, end - 5):
+        # Peer Veto check
         gray = cv2.imread(os.path.join(path, frames[i]), 0)
         observed = get_bitwise_verified(gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]], digit_map, 175, 0.50)
         if observed != -1 and observed != floor: continue
 
-        # RED-BAR FILTER: Look at the grid in BGR to filter out Red health bars
-        bgr = cv2.imread(os.path.join(path, frames[i]))
-        grid = bgr[250:550, 50:450]
-        
-        if prev_grid is not None:
-            # Score based on broad pixel change but ignore Red channel spikes
-            diff = cv2.absdiff(grid, prev_grid)
-            # If the change is mostly red (>2x Blue/Green), it's a health bar noise
-            is_health_bar = np.mean(diff[:,:,2]) > (np.mean(diff[:,:,0]) + np.mean(diff[:,:,1]))
-            if not is_health_bar:
-                score = np.sum(diff)
-                if score > max_reset_score:
-                    max_reset_score, best_idx = score, i
-        prev_grid = grid
-        
+        window = [cv2.imread(os.path.join(path, frames[i+j]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]] for j in range(3)]
+        diff = np.mean([np.mean(cv2.absdiff(window[k], window[k+1])) for k in range(2)])
+        if diff < best_stability:
+            best_stability, best_idx = diff, i
+            
     return {'idx': best_idx, 'floor': floor, 'frame': frames[best_idx]}
 
 def find_ceiling_structural(path, frames, last_anc, d_map):
@@ -169,8 +174,8 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
 
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
-    cv2.rectangle(img, (100, 52), (142, 76), (0, 255, 0), 2)
-    cv2.putText(img, f"PHYSICAL F{milestone['floor']}", (100, 48), 0, 0.4, (0, 255, 0), 1)
+    cv2.rectangle(img, (100, 52), (142, 76), (0, 255, 255), 2)
+    cv2.putText(img, f"DIVISION F{milestone['floor']}", (100, 48), 0, 0.4, (0, 255, 255), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
 def load_digit_map():
@@ -191,4 +196,4 @@ def perform_final_audit(run_id, milestones):
     if missing: print(f" Still Missing: {missing}")
 
 if __name__ == "__main__":
-    run_physical_sentinel()
+    run_division_sentinel()
