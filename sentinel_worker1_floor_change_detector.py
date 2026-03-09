@@ -56,16 +56,18 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 
-HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 54, 74, 103, 133
+# SCANNING ROIs (Y1, Y2, X1, X2)
+HEADER_Y1, HEADER_Y2, HEADER_X1, HEADER_X2 = 54, 74, 103, 138 # Widened for 3-digits
 DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
 
-HUD_STAGE = (103, 54, 133, 74)
+# HUD Overlays
+HUD_STAGE = (103, 54, 138, 74)
 HUD_DIG_WIDE = (161, 231, 281, 248)
 HUD_DIG_NARROW = (250, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_shielded_sentinel():
+def run_persistent_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_fixed()
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -82,16 +84,16 @@ def run_shielded_sentinel():
         if not frames: continue
 
         milestones = []
-        # Manual First Anchor
-        first_img = cv2.imread(os.path.join(buffer_path, frames[0]))
-        commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
+        commit_milestone(ds_id, 0, 1, frames[0], cv2.imread(os.path.join(buffer_path, frames[0])), milestones, evidence_path)
         
         current_f = 1
+        h_candidate, h_count = -1, 0
+        d_history = [] # For temporal consensus window
         perf_timer = time.time()
+
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
         
         for i in range(1, len(frames)):
-            # READ ONLY SOURCE FOR OCR
             img = cv2.imread(os.path.join(buffer_path, frames[i]))
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -99,20 +101,37 @@ def run_shielded_sentinel():
             # SENSOR 1: Header
             h_val = -1
             for t in [175, 155]: 
-                h_val = get_bitwise_shielded(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
+                h_val = get_bitwise_persistent(gray[HEADER_Y1:HEADER_Y2, HEADER_X1:HEADER_X2], digit_map, t, 0.82)
                 if h_val != -1: break
             
             # SENSOR 2: Dig Stage
             d_val = -1
-            if h_val > current_f:
-                for t in [155, 175]:
-                    d_val = get_bitwise_shielded(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.76)
-                    if d_val != -1: break
+            for t in [155, 175]:
+                d_val = get_bitwise_persistent(gray[DIG_Y1:DIG_Y2, DIG_X1:DIG_X2], digit_map, t, 0.76)
+                if d_val != -1: break
             
-            # CONSENSUS TRIGGER: Only anchor if sensors agree
-            if h_val > current_f and h_val == d_val:
-                current_f = h_val
-                commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+            # Update temporal history (keep last 3 frames of Dig readings)
+            d_history.append(d_val)
+            if len(d_history) > 3: d_history.pop(0)
+            
+            # CONSENSUS TRIGGER
+            if h_val > current_f:
+                # Rule A: Strict Consensus (Agreement within a 3-frame window)
+                if h_val in d_history:
+                    current_f = h_val
+                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                    h_candidate, h_count = -1, 0
+                # Rule B: Stability Nudge (Header is solid for 10 frames, even if Dig is messy)
+                else:
+                    if h_val == h_candidate: h_count += 1
+                    else: h_candidate, h_count = h_val, 1
+                    
+                    if h_count >= 10:
+                        current_f = h_val
+                        commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                        h_candidate, h_count = -1, 0
+            else:
+                h_candidate, h_count = -1, 0
 
             if i % 100 == 0:
                 fps = 100 / (time.time() - perf_timer)
@@ -124,7 +143,7 @@ def run_shielded_sentinel():
             json.dump(milestones, f, indent=4)
         perform_gap_audit(ds_id, milestones, current_f)
 
-def get_bitwise_shielded(roi, digit_map, thresh, min_conf):
+def get_bitwise_persistent(roi, digit_map, thresh, min_conf):
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
@@ -155,13 +174,10 @@ def load_digit_map_fixed():
 def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     milestones.append({'idx': idx, 'floor': floor, 'frame': f_name})
     out_file = f"{evidence_path}/F{floor}_{f_name}"
-    
-    # We DRAW on a copy, ensuring the original 'img' in memory remains clean
     marked = img.copy()
     cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
     cv2.rectangle(marked, (HUD_DIG_WIDE[0], HUD_DIG_WIDE[1]), (HUD_DIG_WIDE[2], HUD_DIG_WIDE[3]), (255, 0, 255), 1)
     cv2.rectangle(marked, (HUD_DIG_NARROW[0], HUD_DIG_NARROW[1]), (HUD_DIG_NARROW[2], HUD_DIG_NARROW[3]), (0, 255, 0), 1)
-    
     if floor in BOSS_DATA:
         for b_idx in range(24):
             row, col = divmod(b_idx, 6)
@@ -169,7 +185,6 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
             cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
             tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
             cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
-            
     cv2.imwrite(out_file, marked)
     print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
 
@@ -180,4 +195,4 @@ def perform_gap_audit(run_id, milestones, max_floor):
     print(f" Found: {len(milestones)} | Missing: {len(missing)} floors.")
 
 if __name__ == "__main__":
-    run_shielded_sentinel()
+    run_persistent_sentinel()
