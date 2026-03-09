@@ -16,8 +16,8 @@ DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
 
-def run_integrated_sentinel():
-    digit_map = load_digit_map()
+def run_geometric_sentinel():
+    digit_map = load_digit_map_fixed()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
     for ds_id in DATASETS:
@@ -31,35 +31,34 @@ def run_integrated_sentinel():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- INTEGRATED SENTINEL RUN {ds_id} ---")
+        print(f"\n--- GEOMETRIC ANCHOR RUN {ds_id} ---")
         
-        # CEILING DISCOVERY
-        ceiling_f = find_ceiling_structural(buffer_path, frames, anchors[-1], digit_map)
-        if ceiling_f: anchors.append(ceiling_f)
-
         final_consensus = []
+        last_locked_idx = -1
+        
         for i in range(len(anchors) - 1):
             final_consensus.append(anchors[i])
+            last_locked_idx = anchors[i]['idx']
             s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
             
             if (e_f - s_f) > 1:
-                print(f" Integrated Healing: F{s_f}->F{e_f}...")
+                print(f" Healing Gap: F{s_f}->F{e_f}...")
                 sys.stdout.flush()
-                healed = solve_gap_integrated(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
+                healed = solve_gap_with_geometric_verification(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
                 final_consensus.extend(healed)
+                if healed: last_locked_idx = healed[-1]['idx']
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
         final_consensus.append(anchors[-1])
         final_consensus.sort(key=lambda x: x['idx'])
-        
         with open(f"healed_consensus_run_{ds_id}.json", 'w') as f:
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_integrated(path, frames, anc_s, anc_e, digit_map):
+def solve_gap_with_geometric_verification(path, frames, anc_s, anc_e, digit_map):
     healed = []
-    # FEATURE: Claim and Lock (Prevents looking at previous floor frames)
-    search_start = find_visual_break(path, frames, anc_s, anc_e['idx'])
+    # Hard-lock search start to the index AFTER the previous anchor
+    search_start = anc_s['idx'] + 1
     
     for target in range(anc_s['floor'] + 1, anc_e['floor']):
         found_m = None
@@ -69,61 +68,44 @@ def solve_gap_integrated(path, frames, anc_s, anc_e, digit_map):
             gray = cv2.imread(os.path.join(path, frames[i]), 0)
             roi = gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
             
-            # FEATURE: Identity Veto (Vetoes frames that look like the previous floor)
-            if get_bitwise_verified(roi, digit_map, 175, 0.55) == target - 1:
+            # MANDATORY IDENTITY CHECK: Reject if it explicitly looks like a previous floor
+            # Uses very low confidence to act as a sensitive 'No Go' sensor
+            if get_bitwise_geometric(roi, digit_map, 175, 0.50) < target:
                 cand_f, cand_count = -1, 0
                 continue
-            
+
             val = -1
             for t in [175, 155, 195]:
-                if get_bitwise_verified(roi, digit_map, t, 0.72) == target:
+                if get_bitwise_geometric(roi, digit_map, t, 0.75) == target:
                     val = target; break
             
             if val == target:
                 if val == cand_f: cand_count += 1
                 else: cand_f, cand_count = val, 1
-                if cand_count >= 4: # PERSISTENCE GATE (Agility for fast floors)
-                    found_m = {'idx': i - 3, 'floor': target, 'frame': frames[i-3]}
+                if cand_count >= 5: # Persistence gate
+                    found_m = {'idx': i - 4, 'floor': target, 'frame': frames[i-4]}
                     break
             else:
                 cand_f, cand_count = -1, 0
-        
+                
         if not found_m:
-            # FEATURE: Midpoint-Only Initialization (Hunts inside deep-temporal zones)
-            print(f"   [F{target}] OCR Fail - Proportional Fallback...")
-            found_m = nominate_proportional_frame(path, frames, search_start, anc_e['idx'], target, anc_e['floor']-target)
-            
-        print(f"   [F{target}] Locked: {found_m['frame']} (Index: {found_m['idx']})")
+            # Fallback uses Proportional Logic to assign a frame that CANNOT be the same as neighbors
+            found_m = nominate_safe_frame(path, frames, search_start, anc_e['idx'], target, anc_e['floor']-target)
+
+        print(f"   [F{target}] Assigned: {found_m['frame']} (Idx: {found_m['idx']})")
         sys.stdout.flush()
         healed.append(found_m)
-        
-        # FEATURE: Iterative search-start update (Hard-locked image uniqueness)
-        search_start = found_m['idx'] + 1 
+        search_start = found_m['idx'] + 1 # Strict step-forward
         
     return healed
 
-def find_visual_break(path, frames, milestone, upper_limit):
-    img = cv2.imread(os.path.join(path, milestone['frame']), 0)
-    sig = img[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-    for i in range(milestone['idx'] + 1, upper_limit):
-        curr = cv2.imread(os.path.join(path, frames[i]), 0)[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-        if np.mean(cv2.absdiff(curr, sig)) > 18: return i
-    return milestone['idx'] + 1
-
-def nominate_proportional_frame(path, frames, start, end, floor, remaining):
-    # FEATURE: 33% Proportional Step (Avoids transition jitter)
+def nominate_safe_frame(path, frames, start, end, floor, remaining):
+    # Splits remaining space equally to avoid cannibalization
     segment = (end - start) // (remaining + 1)
-    nom_idx = start + (segment // 3) 
+    nom_idx = start + max(1, segment // 2)
     return {'idx': nom_idx, 'floor': floor, 'frame': frames[nom_idx]}
 
-def find_ceiling_structural(path, frames, last_anc, d_map):
-    for i in range(len(frames) - 1, last_anc['idx'] + 20, -10):
-        gray = cv2.imread(os.path.join(path, frames[i]), 0)
-        val = get_bitwise_verified(gray[52:76, 100:142], d_map, 165, 0.68)
-        if val > last_anc['floor']: return {'idx': i, 'floor': val, 'frame': frames[i]}
-    return None
-
-def get_bitwise_verified(roi, digit_map, thresh, min_conf):
+def get_bitwise_geometric(roi, digit_map, thresh, min_conf):
     _, bin_roi = cv2.threshold(roi, thresh, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
@@ -132,12 +114,18 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
             if res.max() >= min_conf:
                 locs = np.where(res >= min_conf)
                 for pt in zip(*locs[::-1]):
-                    if val == 6 and bin_roi[pt[1]+2, pt[0]+5] > 0: continue
+                    # GEOMETRIC VETO: 8 vs 7 vs 3
+                    # To be an '8', the center-left (X, Y+10) must be black (white pixel present)
                     if val == 8:
-                        if np.sum(bin_roi[pt[1]:pt[1]+12, pt[0]:pt[0]+1]) < 255: matches.append({'x': pt[0], 'val': 3})
-                        elif np.sum(bin_roi[pt[1]+8:pt[1]+12, pt[0]:pt[0]+1]) < 255: matches.append({'x': pt[0], 'val': 9})
+                        if bin_roi[pt[1]+10, pt[0]] == 0: matches.append({'x': pt[0], 'val': 3}) # Mid-left empty
+                        elif bin_roi[pt[1]+15, pt[0]] == 0: matches.append({'x': pt[0], 'val': 9}) # Bottom-left empty
                         else: matches.append({'x': pt[0], 'val': 8})
-                    else: matches.append({'x': pt[0], 'val': val})
+                    # To be a '7', the bottom half MUST be empty
+                    elif val == 7:
+                        if bin_roi[pt[1]+15, pt[0]+5] > 0: continue # Loop found, not a 7
+                        matches.append({'x': pt[0], 'val': 7})
+                    else:
+                        matches.append({'x': pt[0], 'val': val})
     if not matches: return -1
     matches.sort(key=lambda d: d['x'])
     unique = []; lx = -99
@@ -148,26 +136,26 @@ def get_bitwise_verified(roi, digit_map, thresh, min_conf):
 
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
+    # Draw after scan logic confirmed
     cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
-    cv2.putText(img, f"SENTINEL F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
+    cv2.putText(img, f"HEALED F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
-def load_digit_map():
+def load_digit_map_fixed():
     d_map = {i: [] for i in range(10)}
     for f in os.listdir(DIGITS_DIR):
         if f.endswith('.png'):
-            m = re.search(r'\d', f)
-            if m:
+            m = re.search(r'\d', f); v = int(m.group()) if m else None
+            if v is not None:
                 img = cv2.imread(os.path.join(DIGITS_DIR, f), 0); _, b = cv2.threshold(img, 195, 255, cv2.THRESH_BINARY)
-                d_map[int(m.group())].append(b)
+                d_map[v].append(b)
     return d_map
 
 def perform_final_audit(run_id, milestones):
     found = sorted(list(set(m['floor'] for m in milestones)))
     max_f = milestones[-1]['floor']; missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
     print(f"--- FINAL AUDIT RUN {run_id} ---")
-    print(f" Found: {len(milestones)}/{max_f}")
-    if missing: print(f" Still Missing: {missing}")
+    print(f" Found: {len(milestones)}/{max_f} | Missing: {missing}")
 
 if __name__ == "__main__":
-    run_integrated_sentinel()
+    run_geometric_sentinel()
