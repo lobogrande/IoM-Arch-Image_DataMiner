@@ -57,18 +57,18 @@ DIGITS_DIR = "digits"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 SHOW_HUD = True
 
-# AI Scanning ROIs (Y, X, H, W)
-HEADER_SCAN_ROI = (58, 105, 12, 22)
-DIG_SCAN_ROI = (230, 250, 16, 31) # Narrow Digits-Only box
+# Scanning ROIs (Y, X, H, W)
+HEADER_ROI = (58, 105, 12, 22)
+DIG_NARROW_ROI = (230, 250, 16, 31)
 
-# HUD Coordinates (X1, Y1, X2, Y2)
+# HUD Drawing (X1, Y1, X2, Y2)
 HUD_STAGE = (103, 56, 129, 72)
-HUD_DIG_WIDE = (161, 231, 281, 248) # Wide context box
-HUD_DIG_NARROW = (250, 230, 281, 246) # Green box showing the AI's "Eyes"
+HUD_DIG_WIDE = (161, 231, 281, 248)
+HUD_DIG_NARROW = (250, 230, 281, 246)
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-def run_consensus_sentinel():
+def run_stabilized_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_robust()
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -90,6 +90,9 @@ def run_consensus_sentinel():
         commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
         
         current_f = 1
+        # Stabilizer Logic
+        stab_candidate = -1
+        stab_counter = 0
         perf_timer = time.time()
 
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
@@ -99,19 +102,32 @@ def run_consensus_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # SENSOR PASS 1 (Raw Extraction)
+            # CONSENSUS SENSORS
             h_val = get_bitwise_number(gray[58:70, 105:127], digit_map, 195)
-            d_val = get_bitwise_number(gray[230:246, 250:281], digit_map, 175) # Lower thresh for Dig blur
+            d_val = get_bitwise_number(gray[230:246, 250:281], digit_map, 175)
             
-            # CONSENSUS LOGIC: Anchor only if they match or the Header makes a safe call
-            if h_val > current_f:
-                if h_val == d_val or d_val == -1:
-                    current_f = h_val
-                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+            # CORE CONSENSUS
+            raw_read = -1
+            if h_val > current_f and (h_val == d_val or d_val == -1):
+                raw_read = h_val
             elif d_val > current_f and d_val == h_val:
-                current_f = d_val
-                commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                raw_read = d_val
             
+            # TWO-FRAME STABILIZER LOCK
+            if raw_read != -1:
+                if raw_read == stab_candidate:
+                    stab_counter += 1
+                else:
+                    stab_candidate = raw_read
+                    stab_counter = 1
+                
+                if stab_counter >= 2: # Success: Frame is static and verified
+                    current_f = stab_candidate
+                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+                    stab_candidate = -1; stab_counter = 0
+            else:
+                stab_candidate = -1; stab_counter = 0
+
             if i % 100 == 0:
                 fps = 100 / (time.time() - perf_timer)
                 sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} | FPS: {fps:.1f}")
@@ -130,20 +146,18 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     
     if SHOW_HUD:
         marked = img.copy()
-        # Purple HUD Context Boxes
+        # Drawing Stage Context
         cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
         cv2.rectangle(marked, (HUD_DIG_WIDE[0], HUD_DIG_WIDE[1]), (HUD_DIG_WIDE[2], HUD_DIG_WIDE[3]), (255, 0, 255), 1)
-        # Green Box showing where the AI actually scanned
         cv2.rectangle(marked, (HUD_DIG_NARROW[0], HUD_DIG_NARROW[1]), (HUD_DIG_NARROW[2], HUD_DIG_NARROW[3]), (0, 255, 0), 1)
         
         if floor in BOSS_DATA:
-            for i in range(24):
-                row, col = divmod(i, 6)
-                cx = int(SLOT1_CENTER[0] + (col * X_STEP))
-                cy = int(SLOT1_CENTER[1] + (row * Y_STEP))
+            for b_idx in range(24):
+                row, col = divmod(b_idx, 6)
+                cx, cy = int(75 + (col * 59.1)), int(261 + (row * 59.1))
                 cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
-                tier = BOSS_DATA[floor]['special'].get(i, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
-                cv2.putText(marked, tier[:5], (cx-22, hy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+                tier = BOSS_DATA[floor]['special'].get(b_idx, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
+                cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
         cv2.imwrite(out_file, marked)
     else:
         cv2.imwrite(out_file, img)
@@ -180,4 +194,4 @@ def perform_gap_audit(run_id, milestones, max_floor):
     print(f" Found: {len(milestones)} | Missing: {len(missing)} floors: {missing[:15]}...")
 
 if __name__ == "__main__":
-    run_consensus_sentinel()
+    run_stabilized_sentinel()
