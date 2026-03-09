@@ -12,7 +12,7 @@ HUD_X2, HUD_Y2 = 300, 245           # Bottom Right
 
 # --- 2. INPUT IMAGE ---
 # Change this to any image you want to test from your buffer
-TEST_IMAGE = "capture_buffer_0/frame_20260306_231742_176023.png" 
+TEST_IMAGE = "capture_buffer_0/frame_20260306_233844_294839.png" 
 OUTPUT_DIR = "calibration_outputs"
 
 def run_calibration_check():
