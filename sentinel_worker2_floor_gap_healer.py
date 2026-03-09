@@ -5,7 +5,6 @@ import json
 import sys
 import shutil
 import re
-import time
 
 # --- 1. MASTER BOSS DATA (UNABRIDGED) ---
 BOSS_DATA = {11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 34: {'tier': 'mixed', 'special': {0: 'com2', 1: 'com2', 2: 'com2', 3: 'com2', 4: 'com2', 5: 'com2', 6: 'com2', 7: 'com2', 8: 'myth1', 9: 'myth1', 10: 'com2', 11: 'com2', 12: 'com2', 13: 'com2', 14: 'myth1', 15: 'myth1', 16: 'com2', 17: 'com2', 18: 'com2', 19: 'com2', 20: 'com2', 21: 'com2', 22: 'com2', 23: 'com2'}}, 35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'}, 49: {"tier": "mixed", "special": {0: "dirt3", 1: "dirt3", 2: "dirt3", 3: "dirt3", 4: "dirt3", 5: "dirt3", 6: "com3", 7: "com3", 8: "com3", 9: "com3", 10: "com3", 11: "com3", 12: "rare3", 13: "rare3", 14: "rare3", 15: "rare3", 16: "rare3", 17: "rare3", 18: "myth2", 19: "myth2", 20: "myth2", 21: "myth2", 22: "myth2", 23: "myth2"}}, 74: {'tier': 'mixed', 'special': {0: 'dirt3', 1: 'dirt3', 2: 'dirt3', 3: 'dirt3', 4: 'dirt3', 5: 'dirt3', 6: 'dirt3', 7: 'dirt3', 8: 'dirt3', 9: 'dirt3', 10: 'dirt3', 11: 'dirt3', 12: 'dirt3', 13: 'dirt3', 14: 'dirt3', 15: 'dirt3', 16: 'dirt3', 17: 'dirt3', 18: 'dirt3', 19: 'dirt3', 20: 'div1', 21: 'div1', 22: 'dirt3', 23: 'dirt3'}}, 98: {'tier': 'myth3'}, 99: {"tier": "mixed", "special": {0: "com3", 1: "rare3", 2: "epic3", 3: "leg3", 4: "myth3", 5: "div2", 6: "com3", 7: "rare3", 8: "epic3", 9: "leg3", 10: "myth3", 11: "div2", 12: "com3", 13: "rare3", 14: "epic3", 15: "leg3", 16: "myth3", 17: "div2", 18: "com3", 19: "rare3", 20: "epic3", 21: "leg3", 22: "myth3", 23: "div2"}}}
@@ -15,9 +14,8 @@ DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
 BASE_HEAL_DIR = "Pass2_Evidence"
 HEADER_ROI = (52, 76, 100, 142)
-CENTER_STAGE_ROI = (230, 246, 250, 281) # Dig Stage: X
 
-def run_forensic_auditor():
+def run_signal_sentinel():
     digit_map = load_digit_map_final()
     if not os.path.exists(BASE_HEAL_DIR): os.makedirs(BASE_HEAL_DIR)
 
@@ -32,18 +30,15 @@ def run_forensic_auditor():
         os.makedirs(heal_path)
         
         frames = sorted([f for f in os.listdir(buffer_path) if f.endswith(('.png', '.jpg'))])
-        print(f"\n--- FORENSIC AUDITOR RUN {ds_id} ---")
+        print(f"\n--- SIGNAL SENTINEL RUN {ds_id} ---")
         
         final_consensus = []
         for i in range(len(anchors) - 1):
             final_consensus.append(anchors[i])
-            s_f, e_f = anchors[i]['floor'], anchors[i+1]['floor']
-            
-            if (e_f - s_f) > 1:
-                print(f" Auditing Gap: F{s_f}->F{e_f}...")
+            if (anchors[i+1]['floor'] - anchors[i]['floor']) > 1:
+                print(f" Signal Mapping Gap: F{anchors[i]['floor']} -> F{anchors[i+1]['floor']}")
                 sys.stdout.flush()
-                # Enforce competitive rank-based healing
-                healed = solve_gap_forensically(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
+                healed = solve_gap_via_signal(buffer_path, frames, anchors[i], anchors[i+1], digit_map)
                 final_consensus.extend(healed)
                 for h in healed: save_healed_evidence(buffer_path, h, heal_path)
 
@@ -53,81 +48,54 @@ def run_forensic_auditor():
             json.dump(final_consensus, f, indent=4)
         perform_final_audit(ds_id, final_consensus)
 
-def solve_gap_forensically(path, frames, anc_s, anc_e, digit_map):
-    """Fills gap by ranking all digit templates and enforcing strict sequence order"""
+def solve_gap_via_signal(path, frames, anc_s, anc_e, digit_map):
+    """Uses physical pixel flux to find boundaries instead of unreliable OCR"""
     healed = []
-    current_search_start = anc_s['idx'] + 1
+    current_search_start = anc_s['idx']
     
     for target in range(anc_s['floor'] + 1, anc_e['floor']):
-        found_m = None
-        cand_f, cand_count = -1, 0
+        # 1. PROFILE PREVIOUS FLOOR END: Identify the 'Cliff'
+        # We look for the exact frame where the pixels move (Flux > 3.0)
+        cliff_idx = find_flux_cliff(path, frames, current_search_start, anc_e['idx'])
         
-        for i in range(current_search_start, anc_e['idx']):
-            gray = cv2.imread(os.path.join(path, frames[i]), 0)
-            
-            # 1. RANKED COMPETITION: Rank Header and Center readouts
-            h_val = get_competitive_ocr(gray[52:76, 100:142], digit_map)
-            c_val = get_competitive_ocr(gray[230:246, 250:281], digit_map)
-            
-            # RULE: Discard if sensors see the start anchor (Haven't reached new floor)
-            if h_val == anc_s['floor'] or c_val == anc_s['floor']:
-                cand_f, cand_count = -1, 0
-                continue
-            
-            # RULE: Discard if sensors see the end anchor (Overshot the target)
-            if h_val == anc_e['floor'] or c_val == anc_e['floor']:
-                cand_f, cand_count = -1, 0
-                continue
-
-            if h_val == target or c_val == target:
-                if target == cand_f: cand_count += 1
-                else: cand_f, cand_count = target, 1
-                if cand_count >= 4: # Persistence gate
-                    found_m = {'idx': i - 3, 'floor': target, 'frame': frames[i-3]}
-                    break
-            else:
-                cand_f, cand_count = -1, 0
-                
-        if not found_m:
-            # Fallback: Proportional spacing within the verified No-Man's-Land
-            found_m = nominate_safe_frame(path, frames, current_search_start, anc_e['idx'], target, anc_e['floor']-target)
-
-        print(f"   [F{target}] Confirmed: {found_m['frame']} (Idx: {found_m['idx']})")
+        # 2. FIND NEXT PLATEAU: Where pixels stop changing after a reset
+        # We target the center of the quiet zone immediately after the cliff
+        plateau_idx = find_next_stable_plateau(path, frames, cliff_idx, anc_e['idx'])
+        
+        # 3. ANCHOR: Use the plateau center as the floor evidence
+        found_m = {'idx': plateau_idx, 'floor': target, 'frame': frames[plateau_idx]}
+        print(f"   [F{target}] Signal Locked: {found_m['frame']} (Index: {found_m['idx']})")
         sys.stdout.flush()
+        
         healed.append(found_m)
-        current_search_start = found_m['idx'] + 1 
+        current_search_start = plateau_idx
         
     return healed
 
-def get_competitive_ocr(roi, digit_map):
-    """Ranks all templates and enforces geometric vetoes for 7/8/9"""
-    h_dim = roi.shape[0]
-    _, bin_roi = cv2.threshold(roi, 175, 255, cv2.THRESH_BINARY)
-    
-    results = []
-    for val, temps in digit_map.items():
-        max_conf = 0
-        for t in temps:
-            res = cv2.matchTemplate(bin_roi, t, cv2.TM_CCOEFF_NORMED)
-            max_conf = max(max_conf, res.max())
-        results.append((val, max_conf))
-        
-    # Sort by confidence
-    results.sort(key=lambda x: x[1], reverse=True)
-    winner = results[0][0]
-    
-    # GEOMETRIC TIE-BREAKER: 7 vs 8 vs 9
-    if winner in [8, 9, 0]:
-        # If middle-left is empty, it CANNOT be an 8/9/0. Promote 7.
-        if bin_roi[15, 5] == 0: return 7
-        
-    return winner
+def find_flux_cliff(path, frames, start, limit):
+    """Identifies the exact frame where the Stage box pixels move"""
+    prev_roi = cv2.imread(os.path.join(path, frames[start]), 0)[52:76, 100:142]
+    for i in range(start + 1, limit):
+        curr_roi = cv2.imread(os.path.join(path, frames[i]), 0)[52:76, 100:142]
+        # Match the ~6.8 jump found in the diagnostic CSV
+        if np.mean(cv2.absdiff(curr_roi, prev_roi)) > 3.5: 
+            return i
+        prev_roi = curr_roi
+    return start + 1
 
-def nominate_safe_frame(path, frames, start, end, floor, remaining):
-    gap = end - start
-    step = max(1, gap // (remaining + 1))
-    nom_idx = start + (step // 2)
-    return {'idx': nom_idx, 'floor': floor, 'frame': frames[nom_idx]}
+def find_next_stable_plateau(path, frames, start, limit):
+    """Hunts for a window of 3 frames with near-zero movement"""
+    for i in range(start, limit - 3):
+        jitter = []
+        for j in range(2):
+            f1 = cv2.imread(os.path.join(path, frames[i+j]), 0)[52:76, 100:142]
+            f2 = cv2.imread(os.path.join(path, frames[i+j+1]), 0)[52:76, 100:142]
+            jitter.append(np.mean(cv2.absdiff(f1, f2)))
+        
+        # Mathematically quiet plateau
+        if np.mean(jitter) < 0.5: 
+            return i + 1 
+    return start + 1
 
 def load_digit_map_final():
     d_map = {i: [] for i in range(10)}
@@ -141,15 +109,16 @@ def load_digit_map_final():
 
 def save_healed_evidence(path, milestone, heal_path):
     img = cv2.imread(os.path.join(path, milestone['frame']))
-    cv2.rectangle(img, (100, 52), (142, 76), (0, 0, 255), 2)
-    cv2.putText(img, f"AUDIT F{milestone['floor']}", (100, 48), 0, 0.4, (0, 0, 255), 1)
+    cv2.rectangle(img, (100, 52), (142, 76), (255, 0, 0), 2)
+    cv2.putText(img, f"SIGNAL F{milestone['floor']}", (100, 48), 0, 0.4, (255, 0, 0), 1)
     cv2.imwrite(os.path.join(heal_path, f"F{milestone['floor']}_{milestone['frame']}"), img)
 
 def perform_final_audit(run_id, milestones):
     found = sorted(list(set(m['floor'] for m in milestones)))
-    max_f = milestones[-1]['floor']; missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
+    max_f = milestones[-1]['floor']
+    missing = sorted(list(set(range(1, max_f + 1)) - set(found)))
     print(f"--- FINAL AUDIT RUN {run_id} ---")
     print(f" Found: {len(milestones)}/{max_f} | Missing: {missing}")
 
 if __name__ == "__main__":
-    run_forensic_auditor()
+    run_signal_sentinel()
