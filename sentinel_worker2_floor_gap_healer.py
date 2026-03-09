@@ -95,4 +95,4 @@ def solve_gap_absolute_verbose(path, frames, anc_s, anc_e, count):
     return healed
 
 if __name__ == "__main__":
-    run_final_healer()
+    run_final_sentinel()
