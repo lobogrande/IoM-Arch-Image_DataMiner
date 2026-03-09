@@ -7,7 +7,7 @@ import shutil
 import re
 import time
 
-# --- 1. MASTER BOSS DATA ---
+# --- 1. MASTER DATA SOURCES ---
 BOSS_DATA = {
     11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
     25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'},
@@ -51,24 +51,24 @@ BOSS_DATA = {
     }
 }
 
-# --- 2. VERIFIED COORDINATES ---
-DATASETS = ["0", "1", "2", "3", "4"] 
+# --- 2. VERIFIED CONSTANTS ---
+DATASETS = ["0", "1", "2", "3", "4"]
 DIGITS_DIR = "digits"
-TEMPLATE_DIR = "templates"
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 SHOW_HUD = True
 
-# AI ROIs (Y, X, H, W)
-HEADER_ROI = (58, 105, 12, 22)      
-DIG_STAGE_ROI = (233, 163, 13, 116) 
+# AI Scanning ROIs (Y, X, H, W)
+HEADER_SCAN_ROI = (58, 105, 12, 22)
+DIG_SCAN_ROI = (230, 250, 16, 31) # Narrow Digits-Only box
+
+# HUD Coordinates (X1, Y1, X2, Y2)
+HUD_STAGE = (103, 56, 129, 72)
+HUD_DIG_WIDE = (161, 231, 281, 248) # Wide context box
+HUD_DIG_NARROW = (250, 230, 281, 246) # Green box showing the AI's "Eyes"
 SLOT1_CENTER = (75, 261)
 X_STEP, Y_STEP = 59.1, 59.1
 
-# HUD Overlays (X1, Y1, X2, Y2)
-HUD_STAGE = (103, 56, 129, 72)
-HUD_DIG = (161, 231, 281, 248)
-
-def run_calibrated_sentinel():
+def run_consensus_sentinel():
     start_time = time.time()
     digit_map = load_digit_map_robust()
     if not os.path.exists(BASE_EVIDENCE_DIR): os.makedirs(BASE_EVIDENCE_DIR)
@@ -90,7 +90,7 @@ def run_calibrated_sentinel():
         commit_milestone(ds_id, 0, 1, frames[0], first_img, milestones, evidence_path)
         
         current_f = 1
-        leap_candidate = -1; leap_counter = 0
+        perf_timer = time.time()
 
         print(f"\n[START] Run {ds_id} | {len(frames)} frames")
         
@@ -99,39 +99,30 @@ def run_calibrated_sentinel():
             if img is None: continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # SENSORS
-            h_val = get_bitwise_number(gray[58:70, 105:127], digit_map)
-            d_val = get_bitwise_number(gray[233:246, 163:279], digit_map)
-            read_val = max(h_val, d_val)
+            # SENSOR PASS 1 (Raw Extraction)
+            h_val = get_bitwise_number(gray[58:70, 105:127], digit_map, 195)
+            d_val = get_bitwise_number(gray[230:246, 250:281], digit_map, 175) # Lower thresh for Dig blur
             
-            if read_val > current_f:
-                # 79-100 Stability Check
-                # If we see a big jump or an 80/90 number, require 2 frames of proof
-                if (read_val - current_f) > 10 or 79 <= read_val <= 100:
-                    if read_val == leap_candidate:
-                        leap_counter += 1
-                    else:
-                        leap_candidate = read_val
-                        leap_counter = 1
-                    
-                    if leap_counter >= 2: # High-confidence trigger
-                        commit_milestone(ds_id, i, read_val, frames[i], img, milestones, evidence_path)
-                        current_f = read_val
-                        leap_candidate = -1; leap_counter = 0
-                else:
-                    commit_milestone(ds_id, i, read_val, frames[i], img, milestones, evidence_path)
-                    current_f = read_val
-                    leap_candidate = -1; leap_counter = 0
+            # CONSENSUS LOGIC: Anchor only if they match or the Header makes a safe call
+            if h_val > current_f:
+                if h_val == d_val or d_val == -1:
+                    current_f = h_val
+                    commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
+            elif d_val > current_f and d_val == h_val:
+                current_f = d_val
+                commit_milestone(ds_id, i, current_f, frames[i], img, milestones, evidence_path)
             
             if i % 100 == 0:
-                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | Read: {read_val}")
+                fps = 100 / (time.time() - perf_timer)
+                sys.stdout.write(f"\r Run {ds_id} | {frames[i]} | Floor: {current_f} | H:{h_val} D:{d_val} | FPS: {fps:.1f}")
                 sys.stdout.flush()
+                perf_timer = time.time()
 
         with open(f"milestones_run_{ds_id}.json", 'w') as f:
             json.dump(milestones, f, indent=4)
         perform_gap_audit(ds_id, milestones, current_f)
 
-    print(f"\n\n--- ALL DATASETS PROCESSED IN {time.time()-start_time:.2f}s ---")
+    print(f"\n--- TOTAL PROCESS TIME: {time.time()-start_time:.2f}s ---")
 
 def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     milestones.append({'idx': idx, 'floor': floor, 'frame': f_name})
@@ -139,8 +130,11 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
     
     if SHOW_HUD:
         marked = img.copy()
+        # Purple HUD Context Boxes
         cv2.rectangle(marked, (HUD_STAGE[0], HUD_STAGE[1]), (HUD_STAGE[2], HUD_STAGE[3]), (255, 0, 255), 1)
-        cv2.rectangle(marked, (HUD_DIG[0], HUD_DIG[1]), (HUD_DIG[2], HUD_DIG[3]), (255, 0, 255), 1)
+        cv2.rectangle(marked, (HUD_DIG_WIDE[0], HUD_DIG_WIDE[1]), (HUD_DIG_WIDE[2], HUD_DIG_WIDE[3]), (255, 0, 255), 1)
+        # Green Box showing where the AI actually scanned
+        cv2.rectangle(marked, (HUD_DIG_NARROW[0], HUD_DIG_NARROW[1]), (HUD_DIG_NARROW[2], HUD_DIG_NARROW[3]), (0, 255, 0), 1)
         
         if floor in BOSS_DATA:
             for i in range(24):
@@ -149,11 +143,11 @@ def commit_milestone(ds_id, idx, floor, f_name, img, milestones, evidence_path):
                 cy = int(SLOT1_CENTER[1] + (row * Y_STEP))
                 cv2.rectangle(marked, (cx-24, cy-24), (cx+24, cy+24), (0, 255, 0), 1)
                 tier = BOSS_DATA[floor]['special'].get(i, BOSS_DATA[floor]['tier']) if 'special' in BOSS_DATA[floor] else BOSS_DATA[floor]['tier']
-                cv2.putText(marked, tier[:5], (cx-22, cy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+                cv2.putText(marked, tier[:5], (cx-22, hy+20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
         cv2.imwrite(out_file, marked)
     else:
         cv2.imwrite(out_file, img)
-    print(f"\n [RUN {ds_id}] Anchor: Floor {floor}")
+    print(f"\n [RUN {ds_id}] Anchor Saved: Floor {floor}")
 
 def load_digit_map_robust():
     d_map = {i: [] for i in range(10)}
@@ -162,12 +156,12 @@ def load_digit_map_robust():
             m = re.search(r'\d', f)
             if m:
                 v = int(m.group()); img = cv2.imread(os.path.join(DIGITS_DIR, f), 0)
-                _, b = cv2.threshold(img, 195, 255, cv2.THRESH_BINARY)
+                _, b = cv2.threshold(img, 175, 255, cv2.THRESH_BINARY)
                 d_map[v].append(b)
     return d_map
 
-def get_bitwise_number(gray_roi, digit_map, min_conf=0.88):
-    _, bin_h = cv2.threshold(gray_roi, 195, 255, cv2.THRESH_BINARY)
+def get_bitwise_number(gray_roi, digit_map, thresh_val, min_conf=0.82):
+    _, bin_h = cv2.threshold(gray_roi, thresh_val, 255, cv2.THRESH_BINARY)
     matches = []
     for val, temps in digit_map.items():
         for t in temps:
@@ -183,7 +177,7 @@ def perform_gap_audit(run_id, milestones, max_floor):
     found = set(m['floor'] for m in milestones)
     missing = sorted(list(set(range(1, max_floor + 1)) - found))
     print(f"\n--- GAP AUDIT RUN {run_id} ---")
-    print(f" Missing: {len(missing)} floors: {missing[:15]}...")
+    print(f" Found: {len(milestones)} | Missing: {len(missing)} floors: {missing[:15]}...")
 
 if __name__ == "__main__":
-    run_calibrated_sentinel()
+    run_consensus_sentinel()
