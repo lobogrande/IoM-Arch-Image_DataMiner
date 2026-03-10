@@ -1,31 +1,35 @@
 import cv2
+import numpy as np
 import os
-import shutil
+import json
 import glob
 
 # --- CONFIGURATION ---
 UNIFIED_ROOT = "Unified_Consensus_Inputs"
 
-def run_census_shifter():
-    print("--- ARCHAEOLOGY CENSUS SHIFTER (v1.0) ---")
+def run_census_shifter_sync():
+    print("--- ARCHAEOLOGY CENSUS SHIFTER & SYNC (v1.1) ---")
     
     # 1. Target Identification
     run_id = input("Which Run is shifted? (e.g., 3): ").strip()
     target_run_path = os.path.join(UNIFIED_ROOT, f"Run_{run_id}")
+    json_path = os.path.join(target_run_path, "final_sequence.json")
     
-    if not os.path.exists(target_run_path):
-        print(f"Error: Path {target_run_path} not found.")
+    if not os.path.exists(target_run_path) or not os.path.exists(json_path):
+        print(f"Error: Missing path or JSON at {target_run_path}")
         return
 
-    bad_floor_str = input("Which floor has the double/bad call? (e.g., 61): ").strip()
-    bad_floor = int(bad_floor_str)
+    bad_floor = int(input("Which floor has the double/bad call? (e.g., 61): ").strip())
 
-    # 2. File Discovery
-    # We look for files matching the pattern: F{floor}_frame_*.png
+    # 2. Load Sequence Data
+    with open(json_path, 'r') as f:
+        sequence = json.load(f)
+
+    # 3. File & Entry Discovery
     all_files = sorted(glob.glob(os.path.join(target_run_path, "F*_frame_*.png")), 
                        key=lambda x: int(os.path.basename(x).split('_')[0][1:]))
 
-    # Find the current and next floor images for review
+    # Find specific files for review
     current_f_img = [f for f in all_files if f.startswith(os.path.join(target_run_path, f"F{bad_floor}_"))]
     next_f_img = [f for f in all_files if f.startswith(os.path.join(target_run_path, f"F{bad_floor + 1}_"))]
 
@@ -33,15 +37,16 @@ def run_census_shifter():
         print("Could not find the floor sequence images. Check floor numbers.")
         return
 
-    # 3. Visual Verification
+    # 4. Visual Verification
     print(f"\nOpening Floor {bad_floor} and {bad_floor + 1} for review...")
     img1 = cv2.imread(current_f_img[0])
     img2 = cv2.imread(next_f_img[0])
     
-    # Show side-by-side for comparison
-    comparison = np.hstack((cv2.resize(img1, (400, 500)), cv2.resize(img2, (400, 500))))
+    # Side-by-side display
+    h, w = 500, 400
+    comparison = np.hstack((cv2.resize(img1, (w, h)), cv2.resize(img2, (w, h))))
     cv2.imshow(f"LEFT: F{bad_floor} | RIGHT: F{bad_floor+1}", comparison)
-    cv2.waitKey(1) # Refresh window
+    cv2.waitKey(1) 
 
     print("\n[VETO CHECK]")
     print(f" (1) Delete Floor {bad_floor} and shift everything else UP")
@@ -55,43 +60,56 @@ def run_census_shifter():
         print("Operation Aborted.")
         return
 
-    # 4. The Shift Logic
-    # Identify the specific file to delete
+    # 5. Execute Shift
+    target_del_floor = bad_floor if choice == '1' else bad_floor + 1
     file_to_delete = current_f_img[0] if choice == '1' else next_f_img[0]
-    start_shift_floor = bad_floor if choice == '1' else bad_floor + 1
     
+    # A. Delete Physical File
     print(f"Deleting: {os.path.basename(file_to_delete)}")
     os.remove(file_to_delete)
 
-    # Get remaining files that need renumbering
-    # Renaming must be done in REVERSE order if shifting up, 
-    # but here we are filling a gap, so we iterate forward.
-    remaining_files = [f for f in all_files if f != file_to_delete and int(os.path.basename(f).split('_')[0][1:]) >= start_shift_floor]
+    # B. Update JSON and Rename Remaining Files
+    new_sequence = []
     
-    print(f"Renaming {len(remaining_files)} subsequent files...")
-
-    for f_path in remaining_files:
-        filename = os.path.basename(f_path)
-        parts = filename.split("_")
-        old_floor_num = int(parts[0][1:])
-        new_floor_num = old_floor_num - 1
+    # We iterate through the existing JSON sequence
+    for entry in sequence:
+        f_num = entry['floor']
         
-        # Build new filename: F{new_num}_frame_...
-        new_filename = f"F{new_floor_num}_" + "_".join(parts[1:])
-        new_path = os.path.join(target_run_path, new_filename)
+        if f_num == target_del_floor:
+            # Skip the deleted entry
+            continue
         
-        os.rename(f_path, new_path)
-        if new_floor_num % 10 == 0:
-            print(f"  Fixed: Floor {old_floor_num} -> Floor {new_floor_num}")
+        if f_num > target_del_floor:
+            # This entry needs to be shifted up
+            old_f_num = f_num
+            new_f_num = f_num - 1
+            
+            # Identify the physical file for this entry
+            # Format: F{old_floor}_frame_{original_name}
+            old_prefix = f"F{old_f_num}_"
+            target_files = [f for f in all_files if os.path.basename(f).startswith(old_prefix)]
+            
+            if target_files:
+                f_path = target_files[0]
+                filename = os.path.basename(f_path)
+                parts = filename.split("_")
+                new_filename = f"F{new_f_num}_" + "_".join(parts[1:])
+                new_path = os.path.join(target_run_path, new_filename)
+                
+                os.rename(f_path, new_path)
+                entry['floor'] = new_f_num
+                
+            if new_f_num % 10 == 0:
+                print(f"  Synced: Floor {old_f_num} -> {new_f_num}")
 
-    # 5. Final JSON Adjustment
-    # Since the image filenames changed, the JSON 'frame' references might now be wrong
-    # We should alert the user that the JSON needs a rebuild or update.
-    print("\n--- SHIFT COMPLETE ---")
-    print("Renamed all files to the end of the dataset.")
-    print("[!] NOTE: You must now re-run the final_sequence.json generator for this Run")
-    print("    so that the JSON indices match the new file names.")
+        new_sequence.append(entry)
+
+    # C. Save Updated JSON
+    with open(json_path, 'w') as f:
+        json.dump(new_sequence, f, indent=4)
+
+    print("\n--- SHIFT & SYNC COMPLETE ---")
+    print(f"Updated {json_path} and renamed all subsequent images.")
 
 if __name__ == "__main__":
-    import numpy as np
-    run_census_shifter()
+    run_census_shifter_sync()
