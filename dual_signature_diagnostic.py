@@ -10,10 +10,10 @@ UNIFIED_ROOT = "Unified_Consensus_Inputs"
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
-# THE TRIPLE-GATE CALIBRATION
-D_GATE = 6      # Heatmap difference threshold
-C_GATE = 200    # Structural complexity (Laplacian Variance)
-O_GATE = 0.72   # Lowered to catch Dirt1 now that gates provide safety
+# THE CALIBRATED GATES
+D_GATE = 6      
+O_GATE = 0.72   
+PLAYER_REJECT_GATE = 0.78 # Slightly lowered to be more aggressive against the player
 
 def get_ui_text_mask(slot_id):
     mask = np.zeros((48, 48), dtype=np.uint8)
@@ -23,15 +23,31 @@ def get_ui_text_mask(slot_id):
         cv2.circle(mask, (24, 24), 18, 255, -1)
     return mask
 
-def run_signature_peak_audit():
-    # 1. Load Backgrounds (Stage 1)
+def get_wide_player_mask():
+    """A wide mask that covers almost the whole ROI to catch the offset player."""
+    mask = np.zeros((48, 48), dtype=np.uint8)
+    # We leave only a tiny border to avoid edge noise
+    cv2.rectangle(mask, (4, 4), (44, 44), 255, -1)
+    return mask
+
+def run_adaptive_negative_audit():
+    # 1. Load Backgrounds
     bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
                     for f in os.listdir("templates") if f.startswith("background")]
     
-    # 2. Load Ores (Stage 3)
+    # 2. Load ALL Player Templates
+    player_templates = []
+    p_mask = get_wide_player_mask()
+    for f in os.listdir("templates"):
+        if f.startswith("negative_player"):
+            img = cv2.imread(os.path.join("templates", f), 0)
+            if img is not None:
+                player_templates.append(cv2.resize(img, (48, 48)))
+
+    # 3. Load Ore Templates
     ore_templates = []
     for f in os.listdir("templates"):
-        if f.startswith("background"): continue
+        if f.startswith("background") or f.startswith("negative"): continue
         img = cv2.imread(os.path.join("templates", f), 0)
         if img is not None:
             ore_templates.append({'name': f, 'img': cv2.resize(img, (48, 48))})
@@ -40,7 +56,7 @@ def run_signature_peak_audit():
     with open(os.path.join(run_path, "final_sequence.json"), 'r') as f:
         sequence = {e['floor']: e for e in json.load(f)}
 
-    print(f"--- Running v1.7 Signature Peak Auditor (Triple-Gate Mode) ---")
+    print(f"--- Running v1.9.2 Adaptive Negative Auditor ---")
 
     for f_num in TARGET_FLOORS:
         if f_num not in sequence: continue
@@ -52,25 +68,33 @@ def run_signature_peak_audit():
             cx, cy = int(SLOT1_CENTER[0]+(col*STEP_X)), int(SLOT1_CENTER[1]+(row*STEP_Y))
             x1, y1, x2, y2 = cx-24, cy-24, cx+24, cy+24
             roi = gray[y1:y2, x1:x2]
+            slot_mask = get_ui_text_mask(slot)
 
-            # --- GATE 1: HEATMAP DIFFERENCE ---
+            # --- GATE 1: OCCUPANCY ---
             min_diff = min([np.sum(cv2.absdiff(roi, bg)) / (48*48) for bg in bg_templates])
             if min_diff <= D_GATE: continue
+            
+            # --- GATE 2: ADAPTIVE PLAYER REJECTION ---
+            is_player = False
+            for pt in player_templates:
+                # We use the wide mask here to find the player even if they are far to the right
+                p_res = cv2.matchTemplate(roi, pt, cv2.TM_CCORR_NORMED, mask=p_mask)
+                if p_res.max() > PLAYER_REJECT_GATE:
+                    is_player = True
+                    break
+            
+            if is_player:
+                # Magenta box to visually confirm we successfully 'Nuked' the player
+                cv2.rectangle(raw_img, (x1, y1), (x2, y2), (255, 0, 255), 1)
+                continue
 
-            # --- GATE 2: STRUCTURAL COMPLEXITY ---
-            # Player character is smooth/large; Ores are textured/jagged
-            complexity = cv2.Laplacian(roi, cv2.CV_64F).var()
-            if complexity < C_GATE: continue
-
-            # --- GATE 3: MASKED IDENTIFICATION ---
+            # --- GATE 3: ORE IDENTIFICATION ---
             best_o = 0
-            slot_mask = get_ui_text_mask(slot)
             for t in ore_templates:
                 res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=slot_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 if score > best_o: best_o = score
             
-            # --- FINAL VERDICT ---
             if best_o > O_GATE:
                 color = (0, 255, 0)
                 label = f"O:{best_o:.2f}"
@@ -78,8 +102,7 @@ def run_signature_peak_audit():
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (0,0,0), 2)
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (255,255,255), 1)
 
-        cv2.imwrite(f"Peak_F{f_num}.jpg", raw_img)
-        print(f" [+] Exported Floor {f_num}")
+        cv2.imwrite(f"AdaptiveNeg_F{f_num}.jpg", raw_img)
 
 if __name__ == "__main__":
-    run_signature_peak_audit()
+    run_multi_negative_audit() # Using the updated adaptive logic above
