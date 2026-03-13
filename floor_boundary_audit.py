@@ -8,33 +8,31 @@ import time
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_DIR = f"diagnostic_results/FloorDNA_v81_{datetime.now().strftime('%m%d_%H%M')}"
+OUTPUT_DIR = f"diagnostic_results/FloorDNA_v82_Buffered_{datetime.now().strftime('%m%d_%H%M')}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # GATES
-D_GATE = 8.5        
-FLOOR_SWAP_MIN = 10  
-BANNER_INTENSITY = 248 # Pure white/yellow banner text
+D_GATE = 8.0        
+FLOOR_SWAP_MIN = 12  # A real swap changes ~20+ bits; banners usually hit 5-8
+BANNER_INTENSITY = 248
 
 def is_banner_present(img_gray):
-    """Detects if high-intensity scrolling text is present in the grid area."""
-    # Check the central 'corridor' where banners scroll (y: 200 to 500)
+    """Detects scrolling banners in the critical grid 'airspace'."""
     corridor = img_gray[200:500, 50:400]
-    # If more than a tiny sliver is pure white, a banner is active
-    return np.sum(corridor >= BANNER_INTENSITY) > 50 
+    return np.sum(corridor >= BANNER_INTENSITY) > 40
 
 def get_existence_vector(img_gray, bg_templates):
+    """Calculates 24-bit DNA for the floor."""
     vector = []
     for slot in range(24):
         row, col = divmod(slot, 6)
         x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
         roi = img_gray[y1:y1+48, x1:x1+48]
-        
         diff = min([np.sum(cv2.absdiff(roi, bg)) / 2304 for bg in bg_templates])
         vector.append(1 if diff > D_GATE else 0)
     return vector
 
-def run_v81_shielded_audit():
+def run_v82_buffered_audit():
     bg_t = []
     for f in os.listdir("templates"):
         if f.startswith("background"):
@@ -44,59 +42,81 @@ def run_v81_shielded_audit():
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
     floor_library = []
     active_vector = None
-    last_frame_gray = None
+    last_processed_idx = 0
     
-    print(f"--- Running v8.1 Banner-Shielded Audit ---")
+    print(f"--- Running v8.2 Buffered Clean-State Audit ---")
     start_time = time.time()
 
-    for i, fname in enumerate(buffer_files):
-        if i % 250 == 0:
-            print(f"  > Scan Progress: {i}/{len(buffer_files)} frames...")
+    i = 0
+    while i < len(buffer_files):
+        if i % 500 == 0:
+            print(f"  > Frame {i}/{len(buffer_files)}... ({int(i/(time.time()-start_time))} FPS)")
 
-        curr_gray = cv2.imread(os.path.join(BUFFER_ROOT, fname), 0)
-        if curr_gray is None: continue
+        curr_bgr = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i]))
+        if curr_bgr is None: 
+            i += 1
+            continue
+        curr_gray = cv2.cvtColor(curr_bgr, cv2.COLOR_BGR2GRAY)
 
-        # 1. BANNER SHIELD: If a banner is detected, skip DNA updates
+        # 1. CLEAN CHECK: Skip if banner is present
         if is_banner_present(curr_gray):
-            # We skip this frame entirely to prevent banner text from being read as 'Ores'
+            i += 1
             continue
 
-        # 2. Baseline initialization
-        if active_vector is None:
-            active_vector = get_existence_vector(curr_gray, bg_t)
-            last_frame_gray = curr_gray
-            continue
-
-        # 3. PERFORMANCE TRIGGER (Stage UI check)
-        stage_roi = curr_gray[75:110, 80:150]
-        prev_stage_roi = last_frame_gray[75:110, 80:150]
-        if cv2.absdiff(stage_roi, prev_stage_roi).mean() < 2.5:
-            last_frame_gray = curr_gray
-            continue
-
-        # 4. TRANSITION CHECK
+        # 2. ANALYSIS
         new_vector = get_existence_vector(curr_gray, bg_t)
+        
+        if active_vector is None:
+            active_vector = new_vector
+            last_processed_idx = i
+            i += 1
+            continue
+
         diff_count = sum(1 for a, b in zip(active_vector, new_vector) if a != b)
 
+        # 3. POTENTIAL BOUNDARY
         if diff_count >= FLOOR_SWAP_MIN:
-            floor_num = len(floor_library) + 1
+            # We found a potential swap. Verify it's a STABLE NEW FLOOR.
+            # We scan forward to find the next 3 banner-free frames and see if DNA matches.
+            stable_count = 0
+            verification_idx = i + 1
             
-            # Save the 'Handshake'
-            p_frame = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i-1]))
-            c_frame = cv2.imread(os.path.join(BUFFER_ROOT, fname))
-            
-            cv2.putText(p_frame, f"END FLOOR {floor_num}", (40, 70), 0, 1.0, (0,0,255), 2)
-            cv2.putText(c_frame, f"START {floor_num+1}", (40, 70), 0, 1.0, (0,255,0), 2)
-            
-            cv2.imwrite(os.path.join(OUTPUT_DIR, f"Boundary_{floor_num:03}.jpg"), np.hstack((p_frame, c_frame)))
-            print(f" [!] Verified Stage {floor_num+1} at Frame {i} (Banner-Free)")
-            
+            while stable_count < 3 and verification_idx < len(buffer_files):
+                v_img = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[verification_idx]), 0)
+                if v_img is not None and not is_banner_present(v_img):
+                    v_vector = get_existence_vector(v_img, bg_t)
+                    if v_vector == new_vector:
+                        stable_count += 1
+                    else:
+                        break # DNA jittered, not a stable transition
+                verification_idx += 1
+
+            if stable_count >= 3:
+                # OFFICIAL BOUNDARY
+                floor_num = len(floor_library) + 1
+                
+                prev_frame = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[last_processed_idx]))
+                
+                cv2.putText(prev_frame, f"END FLOOR {floor_num}", (40, 70), 0, 1.0, (0,0,255), 2)
+                cv2.putText(curr_bgr, f"START {floor_num+1}", (40, 70), 0, 1.0, (0,255,0), 2)
+                
+                cv2.imwrite(os.path.join(OUTPUT_DIR, f"Boundary_{floor_num:03}.jpg"), np.hstack((prev_frame, curr_bgr)))
+                print(f" [!] Logged Floor {floor_num} -> {floor_num+1} at frame {i}")
+                
+                active_vector = new_vector
+                last_processed_idx = i
+                floor_library.append({"floor": floor_num, "idx": i, "frame": buffer_files[i]})
+                i = verification_idx # Skip ahead since we verified this window
+                continue
+
+        # If it wasn't a swap but there was a mining event, update active_vector
+        elif diff_count > 0:
             active_vector = new_vector
-            floor_library.append({"floor": floor_num, "idx": i, "frame": fname})
+            last_processed_idx = i
 
-        last_frame_gray = curr_gray
+        i += 1
 
-    print(f"\n[FINISH] Mapped {len(floor_library)} floors.")
+    print(f"\n[FINISH] Mapped {len(floor_library)} floors in {time.time()-start_time:.1f}s.")
 
 if __name__ == "__main__":
-    run_v81_shielded_audit()
+    run_v82_buffered_audit()
