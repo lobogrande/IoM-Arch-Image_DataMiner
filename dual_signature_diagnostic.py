@@ -4,7 +4,7 @@ import os
 import json
 from datetime import datetime
 
-# --- GROUND TRUTH DATA ---
+# --- GROUND TRUTH ---
 BOSS_DATA = {
     11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 
     25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 
@@ -26,107 +26,99 @@ ORE_RESTRICTIONS = {
 TARGET_RUN = "0"
 TARGET_FLOORS = range(1, 51)
 BUFFER_ROOT = "capture_buffer_0"
-TIMESTAMP = datetime.now().strftime('%m%d_%H%M')
-OUTPUT_DIR = f"diagnostic_results/Run_{TARGET_RUN}_{TIMESTAMP}"
+OUTPUT_DIR = f"diagnostic_results/Run_{TARGET_RUN}_v33_{datetime.now().strftime('%H%M')}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # GATES
-O_GATE, PLAYER_REJECT = 0.68, 0.88
+D_GATE, O_GATE, P_GATE, U_GATE = 6, 0.68, 0.88, 0.82
 
-def get_buffer_consensus(slot_coords, templates, current_frame_name, mask):
-    """
-    Actual implementation of the 'Temporal Scan'. 
-    Looks at neighboring frames in the capture buffer to verify identity.
-    """
-    buffer_files = sorted(os.listdir(BUFFER_ROOT))
-    try:
-        idx = buffer_files.index(current_frame_name)
-    except ValueError:
-        return 0, ""
-
-    # Scan offsets: -15, -10, +10, +15
-    test_indices = [idx-15, idx-10, idx+10, idx+15]
-    best_score, best_id = 0, ""
-
-    x1, y1, x2, y2 = slot_coords
-    
-    for t_idx in test_indices:
-        if 0 <= t_idx < len(buffer_files):
-            neighbor_img = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[t_idx]), 0)
-            if neighbor_img is None: continue
-            roi = neighbor_img[y1:y2, x1:x2]
-            
+def get_temporal_identity(coords, templates, frame_name, mask):
+    files = sorted(os.listdir(BUFFER_ROOT))
+    if frame_name not in files: return 0, ""
+    idx = files.index(frame_name)
+    best_s, best_n = 0, ""
+    for off in [-15, -10, 10, 15]:
+        if 0 <= idx+off < len(files):
+            img = cv2.imread(os.path.join(BUFFER_ROOT, files[idx+off]), 0)
+            if img is None: continue
+            roi = img[coords[1]:coords[3], coords[0]:coords[2]]
             for t in templates:
                 res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
-                if res.max() > best_score:
-                    best_score, best_id = res.max(), t['name']
-    
-    return best_score, best_id
+                if res.max() > best_s: best_s, best_n = res.max(), t['name']
+    return best_s, best_n
 
-def run_v321_qa_truth_audit():
-    # Asset Loading
-    ore_templates = []
+def run_restoration_audit():
+    # Load Templates
+    bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
+    player_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_player")]
+    ui_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_ui")]
+    all_ore_t = []
     for f in os.listdir("templates"):
         if any(x in f for x in ["background", "negative"]): continue
         img = cv2.imread(os.path.join("templates", f), 0)
-        if img is not None:
-            ore_templates.append({'name': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
-    
-    player_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_player")]
-    ui_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_ui")]
-    bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
+        if img is not None: all_ore_t.append({'name': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
 
     with open(f"Unified_Consensus_Inputs/Run_{TARGET_RUN}/final_sequence.json", 'r') as f:
-        sequence = {e['floor']: e for e in json.load(f)}
+        seq = {e['floor']: e for e in json.load(f)}
 
-    print(f"--- Running v3.2.1 Temporal Truth Audit (Surfing Enabled) ---")
+    print(f"--- Running v3.3 Restoration Suite ---")
 
     for f_num in TARGET_FLOORS:
-        if f_num not in sequence: continue
-        frame_name = sequence[f_num]['frame']
-        raw_img = cv2.imread(os.path.join(f"Unified_Consensus_Inputs/Run_{TARGET_RUN}", f"F{f_num}_{frame_name}"))
+        if f_num not in seq: continue
+        f_name = seq[f_num]['frame']
+        raw_img = cv2.imread(os.path.join(f"Unified_Consensus_Inputs/Run_{TARGET_RUN}", f"F{f_num}_{f_name}"))
         gray = cv2.cvtColor(raw_img, cv2.COLOR_BGR2GRAY)
         
         is_boss = f_num in BOSS_DATA
-        # Filter templates by floor restriction
-        valid_templates = [t for t in ore_templates if t['name'].lower() in ORE_RESTRICTIONS and ORE_RESTRICTIONS[t['name'].lower()][0] <= f_num <= ORE_RESTRICTIONS[t['name'].lower()][1]]
+        # Filter Ores by Floor
+        valid_ore_t = [t for t in all_ore_t if ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[0] <= f_num <= ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[1]]
 
         for slot in range(24):
             row, col = divmod(slot, 6)
             x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
-            roi_gray = gray[y1:y1+48, x1:x1+48]
-            mask = np.zeros((48, 48), dtype=np.uint8)
-            if slot < 6: cv2.rectangle(mask, (5, 18), (43, 45), 255, -1)
-            else: cv2.circle(mask, (24, 24), 16, 255, -1)
+            roi = gray[y1:y1+48, x1:x1+48]
+            ore_mask = np.zeros((48, 48), dtype=np.uint8)
+            if slot < 6: cv2.rectangle(ore_mask, (5, 18), (43, 45), 255, -1)
+            else: cv2.circle(ore_mask, (24, 24), 16, 255, -1)
 
+            # --- RESTORED GATE 1: OCCUPANCY ---
+            if min([np.sum(cv2.absdiff(roi, bg)) / (48*48) for bg in bg_t]) <= D_GATE: continue
+
+            # --- RESTORED GATE 2: PLAYER REJECTION (PURPLE) ---
+            best_p = max([cv2.matchTemplate(roi, pt, cv2.TM_CCORR_NORMED).max() for pt in player_t] + [0])
+            if best_p > P_GATE:
+                cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (255, 0, 255), 1)
+                continue
+
+            # --- RESTORED GATE 3: IDENTIFICATION ---
+            best_o, best_label = 0, ""
             if is_boss:
-                data = BOSS_DATA[f_num]
-                best_label, best_o = (data['special'][slot] if data['tier'] == 'mixed' else data['tier']), 1.0
+                best_label, best_o = (BOSS_DATA[f_num]['special'][slot] if BOSS_DATA[f_num]['tier'] == 'mixed' else BOSS_DATA[f_num]['tier']), 1.0
             else:
-                # 1. Primary Identification
-                best_o, best_label = 0, ""
-                for t in valid_templates:
-                    res = cv2.matchTemplate(roi_gray, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
+                for t in valid_ore_t:
+                    res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=ore_mask)
                     if res.max() > best_o: best_o, best_label = res.max(), t['name']
 
-                # 2. Rejection Logic (Player/Noise)
-                # ... [Player/UI checks same as v2.7] ...
+            # --- RESTORED GATE 4: UI REJECTION (CYAN) ---
+            if slot < 6:
+                best_u = max([cv2.matchTemplate(roi, ut, cv2.TM_CCORR_NORMED).max() for ut in ui_t] + [0])
+                if best_o < 0.85 and (best_u > U_GATE or np.max(roi[5:15, :]) > 242):
+                    cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (255, 255, 0), 1)
+                    continue
 
-                # 3. SURGICAL TEMPORAL SCAN
-                # Trigger if match is weak OR peak white is found (indicates crosshairs/noise)
-                if best_o < 0.78 or np.max(roi_gray) > 242:
-                    t_score, t_label = get_buffer_consensus((x1, y1, x1+48, y1+48), valid_templates, frame_name, mask)
-                    if t_score > best_o:
-                        best_o, best_label = t_score, t_label
+            # --- TEMPORAL SCAN (SURFING) ---
+            if best_o < 0.78 or np.max(roi) > 242:
+                t_score, t_label = get_temporal_identity((x1, y1, x1+48, y1+48), valid_ore_t, f_name, ore_mask)
+                if t_score > best_o: best_o, best_label = t_score, t_label
 
-            # Final Render
-            if best_o > 0.68:
+            # FINAL GREEN BOX
+            if best_o > O_GATE:
                 cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (0, 255, 0), 1)
                 (w, h), _ = cv2.getTextSize(best_label, 0, 0.3, 1)
                 cv2.rectangle(raw_img, (x1+2, y1+48-h-4), (x1+w+4, y1+48-2), (0,0,0), -1)
                 cv2.putText(raw_img, best_label, (x1+3, y1+48-4), 0, 0.3, (0, 255, 0), 1)
 
-        cv2.imwrite(os.path.join(OUTPUT_DIR, f"QA_v321_F{f_num}.jpg"), raw_img)
+        cv2.imwrite(os.path.join(OUTPUT_DIR, f"Restored_F{f_num}.jpg"), raw_img)
 
 if __name__ == "__main__":
-    run_v321_qa_truth_audit()
+    run_restoration_audit()
