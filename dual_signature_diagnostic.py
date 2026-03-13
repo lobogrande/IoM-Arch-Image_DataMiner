@@ -10,7 +10,7 @@ UNIFIED_ROOT = "Unified_Consensus_Inputs"
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
-# THE VALIDATED GATES
+# GATES
 D_GATE = 6      
 O_GATE = 0.68   
 PLAYER_GATE = 0.88 
@@ -19,14 +19,12 @@ DELTA_GATE = 0.05
 def get_precision_mask(slot_id, is_player_check=False):
     mask = np.zeros((48, 48), dtype=np.uint8)
     if not is_player_check and slot_id in [1, 2, 3, 4]:
-        # Keep masking the ORE search to ignore UI text
         cv2.rectangle(mask, (5, 18), (43, 45), 255, -1)
     else:
         cv2.circle(mask, (24, 24), 16, 255, -1)
     return mask
 
-def run_master_precision_audit():
-    # 1. Load Assets
+def run_final_anchor_audit():
     bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
                     for f in os.listdir("templates") if f.startswith("background")]
     player_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
@@ -42,7 +40,7 @@ def run_master_precision_audit():
     with open(os.path.join(run_path, "final_sequence.json"), 'r') as f:
         sequence = {e['floor']: e for e in json.load(f)}
 
-    print(f"--- Running v1.9.6 Master Precision Suite ---")
+    print(f"--- Running v1.9.7 Final Anchor Suite (White Peak Mode) ---")
 
     for f_num in TARGET_FLOORS:
         if f_num not in sequence: continue
@@ -73,29 +71,34 @@ def run_master_precision_audit():
 
             # --- GATE 3: IDENTIFICATION ---
             best_o = 0
+            best_name = ""
             for t in ore_templates:
                 res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=slot_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
-                if score > best_o: best_o = score
+                if score > best_o: 
+                    best_o = score
+                    best_name = t['name']
             
-            # Standard background match (No Mask) to maintain the 'Noise Floor'
             bg_match = max([cv2.matchTemplate(roi, bg, cv2.TM_CCOEFF_NORMED).max() for bg in bg_templates])
 
-            # UI Text Logic for Top Row
+            # WHITE PEAK UI REJECTION
             if slot in [1,2,3,4]:
-                # If the match is weak AND the top pixels are very bright, it's UI text
-                top_zone_brightness = np.mean(roi[5:15, :])
-                if best_o < 0.85 and top_zone_brightness > 180:
-                    continue # Reject UI text ghost
+                # If peak brightness in the UI zone is pure white (>230), it's text
+                max_brightness = np.max(roi[5:15, :])
+                if max_brightness > 230 and best_o < 0.88:
+                    continue 
 
-            if best_o > O_GATE and (best_o - bg_match > DELTA_GATE):
+            # STICKY DELTA FOR TOP ROW
+            row_delta = DELTA_GATE + (0.04 if slot < 6 else 0.0)
+
+            if best_o > O_GATE and (best_o - bg_match > row_delta):
                 cv2.rectangle(raw_img, (x1, y1), (x2, y2), (0, 255, 0), 1)
                 label = f"O:{best_o:.2f}"
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (0,0,0), 2)
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (255,255,255), 1)
 
-        cv2.imwrite(f"Fixed_F{f_num}.jpg", raw_img)
+        cv2.imwrite(f"Anchor_F{f_num}.jpg", raw_img)
         print(f" [+] Exported Floor {f_num}")
 
 if __name__ == "__main__":
-    run_master_precision_audit()
+    run_final_anchor_audit()
