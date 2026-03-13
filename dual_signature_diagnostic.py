@@ -8,17 +8,19 @@ from datetime import datetime
 TARGET_RUN = "0"
 TARGET_FLOORS = range(1, 51)
 UNIFIED_ROOT = "Unified_Consensus_Inputs"
-OUTPUT_DIR = f"diagnostic_results/Run_{TARGET_RUN}_{datetime.now().strftime('%m%d_%H%M')}"
+# Timestamped subfolder for organization
+TIMESTAMP = datetime.now().strftime('%m%d_%H%M')
+OUTPUT_DIR = f"diagnostic_results/Run_{TARGET_RUN}_{TIMESTAMP}"
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
-# THE VALIDATED GATES
+# THE VALIDATED GATES (v2.7 logic)
 D_GATE = 6      
 O_GATE = 0.68   
 PLAYER_REJECT_GATE = 0.88 
 UI_REJECT_GATE = 0.80
 DELTA_GATE = 0.05
-SUSPICION_THRESHOLD = 0.75 # Ores below this are flagged for manual audit
+SUSPICION_THRESHOLD = 0.75 # Ores below this are logged as 'shaky'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -30,7 +32,7 @@ def get_precision_mask(slot_id, mode='ore'):
         cv2.circle(mask, (24, 24), 16, 255, -1)
     return mask
 
-def run_qa_audit():
+def run_qa_truth_audit():
     # 1. Asset Loading
     bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
                     for f in os.listdir("templates") if f.startswith("background")]
@@ -44,7 +46,9 @@ def run_qa_audit():
         if f.startswith("background") or f.startswith("negative"): continue
         img = cv2.imread(os.path.join("templates", f), 0)
         if img is not None:
-            clean_name = f.split("_")[1].split(".")[0] if "_" in f else f.split(".")[0]
+            # FIX: Extract first prefix {ore type/tier}
+            # Handles 'Dirt1_act_none_0.png' -> 'Dirt1'
+            clean_name = f.split("_")[0] 
             ore_templates.append({'name': clean_name, 'img': cv2.resize(img, (48, 48))})
 
     run_path = os.path.join(UNIFIED_ROOT, f"Run_{TARGET_RUN}")
@@ -53,7 +57,7 @@ def run_qa_audit():
 
     suspicion_log = []
 
-    print(f"--- Running v2.9 QA Audit (Results -> {OUTPUT_DIR}) ---")
+    print(f"--- Running v2.9.1 QA Audit (Results -> {OUTPUT_DIR}) ---")
 
     for f_num in TARGET_FLOORS:
         if f_num not in sequence: continue
@@ -75,7 +79,7 @@ def run_qa_audit():
                 cv2.rectangle(raw_img, (x1, y1), (x2, y2), (255, 0, 255), 1)
                 continue
 
-            # GATE 3: Ore Identity & Competition
+            # GATE 3: Identification & Comparative Noise Check
             ore_mask = get_precision_mask(slot, mode='ore')
             best_o, best_label = 0, ""
             for t in ore_templates:
@@ -86,23 +90,22 @@ def run_qa_audit():
             best_u = max([cv2.matchTemplate(roi_gray, ut, cv2.TM_CCORR_NORMED).max() for ut in ui_templates] + [0])
             bg_match = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCOEFF_NORMED).max() for bg in bg_templates])
 
-            # Rejection Gate
-            if slot in [1, 2, 3, 4] and ((best_u > (best_o + 0.03)) or (best_o < 0.85 and np.max(roi_gray[5:15, :]) > 242)):
-                cv2.rectangle(raw_img, (x1, y1), (x2, y2), (255, 255, 0), 1)
-                continue
+            # Double-Verification (v2.7)
+            if slot in [1, 2, 3, 4]:
+                if (best_u > (best_o + 0.03)) or (best_o < 0.85 and np.max(roi_gray[5:15, :]) > 242):
+                    cv2.rectangle(raw_img, (x1, y1), (x2, y2), (255, 255, 0), 1)
+                    continue
 
-            # Successful Identification
+            # SUCCESSFUL IDENTIFICATION
             if best_o > O_GATE and (best_o - bg_match > DELTA_GATE):
-                # DRAW BOX
                 cv2.rectangle(raw_img, (x1, y1), (x2, y2), (0, 255, 0), 1)
                 
-                # INTERIOR LABEL (Bottom aligned)
-                label = f"{best_label}"
-                (w, h), _ = cv2.getTextSize(label, 0, 0.3, 1)
-                cv2.rectangle(raw_img, (x1+2, y2-h-4), (x1+w+4, y2-2), (0,0,0), -1) # Label background
-                cv2.putText(raw_img, label, (x1+3, y2-4), 0, 0.3, (0, 255, 0), 1)
+                # Interior Label Placement
+                (w, h), _ = cv2.getTextSize(best_label, 0, 0.3, 1)
+                cv2.rectangle(raw_img, (x1+2, y2-h-4), (x1+w+4, y2-2), (0,0,0), -1) # Contrast backing
+                cv2.putText(raw_img, best_label, (x1+3, y2-4), 0, 0.3, (0, 255, 0), 1)
 
-                # LOG SUSPICION
+                # Flag Suspicious hits for report
                 if best_o < SUSPICION_THRESHOLD or (best_o - bg_match < 0.08):
                     suspicion_log.append({
                         "floor": f_num, "slot": slot, "type": best_label, 
@@ -114,7 +117,7 @@ def run_qa_audit():
     with open(os.path.join(OUTPUT_DIR, "suspicion_report.json"), "w") as f:
         json.dump(suspicion_log, f, indent=4)
     
-    print(f" [+] Audit Complete. {len(suspicion_log)} ores flagged for review.")
+    print(f" [+] Audit Complete. {len(suspicion_log)} ores flagged in suspicion_report.json.")
 
 if __name__ == "__main__":
-    run_qa_audit()
+    run_qa_truth_audit()
