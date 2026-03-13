@@ -22,26 +22,23 @@ ORE_RESTRICTIONS = {
     'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
 }
 
-# --- TARGETED CONFIG ---
+# --- CONFIG ---
 TARGET_RUN = "0"
 PROBLEM_FLOORS = [2, 5, 6, 14, 24, 37]
 UNIFIED_ROOT = f"Unified_Consensus_Inputs/Run_{TARGET_RUN}"
 TIMESTAMP = datetime.now().strftime('%m%d_%H%M')
-OUTPUT_DIR = f"diagnostic_results/Issue1_v39_{TIMESTAMP}"
+OUTPUT_DIR = f"diagnostic_results/Part1_v392_{TIMESTAMP}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # GATES
 D_GATE = 6      
 O_GATE = 0.68   
 U_GATE = 0.80   
-P_GATE = 0.88   
 
-def run_issue1_v39_audit():
-    # 1. Load Assets
+def run_issue1_v392_audit():
+    # Load Assets
     bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
-    player_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_player")]
     ui_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_ui")]
-    
     all_ore_t = []
     for f in os.listdir("templates"):
         if any(x in f for x in ["background", "negative"]): continue
@@ -52,7 +49,7 @@ def run_issue1_v39_audit():
     with open(os.path.join(UNIFIED_ROOT, "final_sequence.json"), 'r') as f:
         seq = {e['floor']: e for e in json.load(f)}
 
-    print(f"--- Running Issue 1 Audit v3.9 (Direct Competitive Verification) ---")
+    print(f"--- Running Part 1: v3.9.2 Final Ghost Purge ---")
 
     for f_num in PROBLEM_FLOORS:
         if f_num not in seq: continue
@@ -66,47 +63,44 @@ def run_issue1_v39_audit():
             x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
             roi = gray[y1:y1+48, x1:x1+48]
 
-            # GATE 1: OCCUPANCY
+            # 1. PRIMARY OCCUPANCY (FULL ROI)
             if min([np.sum(cv2.absdiff(roi, bg)) / (2304) for bg in bg_t]) <= D_GATE: continue
 
-            # GATE 2: PLAYER (PURPLE)
-            best_p = max([cv2.matchTemplate(roi, pt, cv2.TM_CCORR_NORMED).max() for pt in player_t] + [0])
-            if best_p > P_GATE:
-                cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (255, 0, 255), 1)
-                continue
-
-            # GATE 3: IDENTIFICATION
+            # 2. IDENTIFICATION
             mask = np.zeros((48, 48), dtype=np.uint8)
-            if slot < 6: cv2.rectangle(mask, (5, 18), (43, 45), 255, -1)
+            if slot < 6: cv2.rectangle(mask, (5, 22), (43, 45), 255, -1) # Deep mask for top row
             else: cv2.circle(mask, (24, 24), 16, 255, -1)
 
             best_o, best_label = 0, ""
             for t in valid_templates:
                 res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
-                if res.max() > best_o:
-                    best_o, best_label = res.max(), t['name']
+                if res.max() > best_o: best_o, best_label = res.max(), t['name']
 
-            # GATE 4: HUD GHOST VERIFICATION (CYAN)
+            # 3. COMPETITIVE GHOST REJECTION
             if slot < 6:
                 best_u = max([cv2.matchTemplate(roi, ut, cv2.TM_CCORR_NORMED).max() for ut in ui_t] + [0])
-                bg_match = max([cv2.matchTemplate(roi, bg, cv2.TM_CCOEFF_NORMED).max() for bg in bg_t])
+                # ZONAL CHECK: Look at the bottom half of the slot.
+                # If there's no ore texture here, but a high match overall, it's a ghost.
+                bottom_roi = roi[24:48, :]
+                bottom_bg_diff = min([np.sum(cv2.absdiff(bottom_roi, bg[24:48, :])) / (48*24) for bg in bg_t])
                 
-                # REJECTION CRITERIA:
-                # 1. UI Text match is stronger than Ore match
-                # 2. Ore fails to beat background noise significantly (Delta < 0.06)
-                # 3. Peak white is present and Ore match is mediocre (<0.82)
-                if (best_u > best_o) or (best_o - bg_match < 0.06) or (np.max(roi[5:15, :]) > 242 and best_o < 0.82):
+                # REJECT IF:
+                # - UI match beats Ore match
+                # - Bottom of slot is essentially empty background gravel (diff < 5)
+                # - Peak white exists without elite confidence (>0.90)
+                if (best_u > best_o) or (bottom_bg_diff < 5.0) or (np.max(roi[5:15, :]) > 242 and best_o < 0.90):
                     cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (255, 255, 0), 1)
                     continue
 
-            # FINAL VERDICT (GREEN)
+            # 4. FINAL VERDICT
             if best_o > O_GATE:
                 cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (0, 255, 0), 1)
-                (w, h), _ = cv2.getTextSize(best_label, 0, 0.3, 1)
-                cv2.rectangle(raw_img, (x1+2, y1+48-h-4), (x1+w+4, y1+48-2), (0,0,0), -1)
-                cv2.putText(raw_img, best_label, (x1+3, y1+48-4), 0, 0.3, (0, 255, 0), 1)
+                label = f"{best_label} ({best_o:.2f})"
+                (tw, th), _ = cv2.getTextSize(label, 0, 0.3, 1)
+                cv2.rectangle(raw_img, (x1+2, y1+48-th-4), (x1+tw+4, y1+48-2), (0,0,0), -1)
+                cv2.putText(raw_img, label, (x1+3, y1+48-4), 0, 0.3, (0, 255, 0), 1)
 
-        cv2.imwrite(os.path.join(OUTPUT_DIR, f"v39_F{f_num}.jpg"), raw_img)
+        cv2.imwrite(os.path.join(OUTPUT_DIR, f"FinalPurge_F{f_num}.jpg"), raw_img)
 
 if __name__ == "__main__":
-    run_issue1_v39_audit()
+    run_issue1_v392_audit()
