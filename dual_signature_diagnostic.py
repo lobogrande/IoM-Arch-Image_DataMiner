@@ -10,7 +10,7 @@ UNIFIED_ROOT = "Unified_Consensus_Inputs"
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
-# GATES
+# CORE GATES
 D_GATE = 6      
 O_GATE = 0.68   
 PLAYER_GATE = 0.88 
@@ -24,7 +24,19 @@ def get_precision_mask(slot_id, is_player_check=False):
         cv2.circle(mask, (24, 24), 16, 255, -1)
     return mask
 
-def run_final_anchor_audit():
+def is_ui_text(roi):
+    """Analyzes brightness texture to distinguish flat text from jagged ores."""
+    ui_zone = roi[5:18, 5:43]
+    max_val = np.max(ui_zone)
+    if max_val < 220: return False # Not bright enough to be UI text
+    
+    # Calculate variance of the brightest pixels
+    # Text is very uniform (low std dev), ores are textured (high std dev)
+    _, thresh = cv2.threshold(ui_zone, 200, 255, cv2.THRESH_BINARY)
+    std_dev = np.std(ui_zone[thresh > 0]) if np.any(thresh > 0) else 0
+    return std_dev < 15 # If pixels are too 'similar', it's text
+
+def run_texture_suite_audit():
     bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
                     for f in os.listdir("templates") if f.startswith("background")]
     player_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
@@ -40,7 +52,7 @@ def run_final_anchor_audit():
     with open(os.path.join(run_path, "final_sequence.json"), 'r') as f:
         sequence = {e['floor']: e for e in json.load(f)}
 
-    print(f"--- Running v1.9.7 Final Anchor Suite (White Peak Mode) ---")
+    print(f"--- Running v1.9.8 Master Texture Suite ---")
 
     for f_num in TARGET_FLOORS:
         if f_num not in sequence: continue
@@ -69,36 +81,27 @@ def run_final_anchor_audit():
                 cv2.rectangle(raw_img, (x1, y1), (x2, y2), (255, 0, 255), 1)
                 continue
 
-            # --- GATE 3: IDENTIFICATION ---
+            # --- GATE 3: UI TEXT TEXTURE FILTER ---
+            if slot in [1, 2, 3, 4] and is_ui_text(roi):
+                continue
+
+            # --- GATE 4: IDENTIFICATION ---
             best_o = 0
-            best_name = ""
             for t in ore_templates:
                 res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=slot_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
-                if score > best_o: 
-                    best_o = score
-                    best_name = t['name']
+                if score > best_o: best_o = score
             
             bg_match = max([cv2.matchTemplate(roi, bg, cv2.TM_CCOEFF_NORMED).max() for bg in bg_templates])
 
-            # WHITE PEAK UI REJECTION
-            if slot in [1,2,3,4]:
-                # If peak brightness in the UI zone is pure white (>230), it's text
-                max_brightness = np.max(roi[5:15, :])
-                if max_brightness > 230 and best_o < 0.88:
-                    continue 
-
-            # STICKY DELTA FOR TOP ROW
-            row_delta = DELTA_GATE + (0.04 if slot < 6 else 0.0)
-
-            if best_o > O_GATE and (best_o - bg_match > row_delta):
+            if best_o > O_GATE and (best_o - bg_match > DELTA_GATE):
                 cv2.rectangle(raw_img, (x1, y1), (x2, y2), (0, 255, 0), 1)
                 label = f"O:{best_o:.2f}"
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (0,0,0), 2)
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (255,255,255), 1)
 
-        cv2.imwrite(f"Anchor_F{f_num}.jpg", raw_img)
+        cv2.imwrite(f"Texture_F{f_num}.jpg", raw_img)
         print(f" [+] Exported Floor {f_num}")
 
 if __name__ == "__main__":
-    run_final_anchor_audit()
+    run_texture_suite_audit()
