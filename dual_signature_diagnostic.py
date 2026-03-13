@@ -11,8 +11,8 @@ SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
 # REFINED GATES
-D_GATE = 7      # Slightly tightened anchor gate
-O_GATE = 0.82   # Raised identification threshold for higher precision
+O_GATE = 0.82   # High threshold for identification peak
+D_GATE = 7      # Minimum difference required IN THE MATCHING FRAME
 
 def get_ui_text_mask(slot_id):
     mask = np.zeros((48, 48), dtype=np.uint8)
@@ -22,7 +22,7 @@ def get_ui_text_mask(slot_id):
         cv2.circle(mask, (24, 24), 18, 255, -1)
     return mask
 
-def run_anchored_temporal_audit():
+def run_temporal_locker_audit():
     bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
                     for f in os.listdir("templates") if f.startswith("background")]
     
@@ -40,52 +40,48 @@ def run_anchored_temporal_audit():
     with open(os.path.join(run_path, "final_sequence.json"), 'r') as f:
         sequence = {e['floor']: e for e in json.load(f)}
 
-    print(f"--- Running v1.5 Anchored Temporal Suite (Precision Mode) ---")
+    print(f"--- Running v1.6 Temporal Locker Audit ---")
 
     for f_num in TARGET_FLOORS:
         if f_num not in sequence: continue
         anc_idx = sequence[f_num]['idx']
         raw_img = cv2.imread(os.path.join(run_path, f"F{f_num}_{sequence[f_num]['frame']}"))
-        gray_main = cv2.cvtColor(raw_img, cv2.COLOR_BGR2GRAY)
         
         for slot in range(24):
             row, col = divmod(slot, 6)
             cx, cy = int(SLOT1_CENTER[0]+(col*STEP_X)), int(SLOT1_CENTER[1]+(row*STEP_Y))
             x1, y1, x2, y2 = cx-24, cy-24, cx+24, cy+24
-            roi_main = gray_main[y1:y2, x1:x2]
-
-            # --- STEP 1: ANCHOR CHECK (Is it occupied NOW?) ---
-            # This prevents the 'ghosting' from player movement in other frames
-            min_diff_now = min([np.sum(cv2.absdiff(roi_main, bg)) / (48*48) for bg in bg_templates])
             
-            if min_diff_now <= D_GATE:
-                continue # If it's floor now, it's floor. Period.
-
-            # --- STEP 2: TEMPORAL IDENTIFICATION (What is it?) ---
-            best_o = 0
+            best_match = {'score': 0.0, 'diff': 0, 'frame_idx': -1}
             slot_mask = get_ui_text_mask(slot)
             
-            # Find the cleanest frame in the window to identify the ore
+            # --- STAGE 1: FIND THE CLEANEST PEAK ---
             for off in range(-10, 11):
                 idx = anc_idx + off
                 if not (0 <= idx < len(buffer_files)): continue
-                roi_temp = cv2.imread(os.path.join(buffer_path, buffer_files[idx]), 0)[y1:y2, x1:x2]
+                roi_gray = cv2.imread(os.path.join(buffer_path, buffer_files[idx]), 0)[y1:y2, x1:x2]
                 
                 for t in ore_templates:
-                    res = cv2.matchTemplate(roi_temp, t['img'], cv2.TM_CCORR_NORMED, mask=slot_mask)
+                    res = cv2.matchTemplate(roi_gray, t['img'], cv2.TM_CCORR_NORMED, mask=slot_mask)
                     _, score, _, _ = cv2.minMaxLoc(res)
-                    if score > best_o: best_o = score
+                    
+                    if score > best_match['score']:
+                        # --- STAGE 2: VERIFY OCCUPANCY IN THAT SPECIFIC FRAME ---
+                        # We only check D for the frame where the ore match was highest
+                        d_score = min([np.sum(cv2.absdiff(roi_gray, bg)) / (48*48) for bg in bg_templates])
+                        best_match = {'score': score, 'diff': d_score, 'frame_idx': idx}
             
-            # --- STEP 3: FINAL VERDICT ---
-            if best_o > O_GATE:
-                color = (0, 255, 0) # Found Valid Ore
-                label = f"O:{best_o:.2f}"
+            # --- FINAL VERDICT ---
+            # Object must look like an ore AND be physically present in its matching frame
+            if best_match['score'] > O_GATE and best_match['diff'] > D_GATE:
+                color = (0, 255, 0)
+                label = f"O:{best_match['score']:.2f}"
                 cv2.rectangle(raw_img, (x1, y1), (x2, y2), color, 1)
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (0,0,0), 2)
                 cv2.putText(raw_img, label, (x1+2, y2-4), 0, 0.35, (255,255,255), 1)
 
-        cv2.imwrite(f"Anchored_F{f_num}.jpg", raw_img)
+        cv2.imwrite(f"Locker_F{f_num}.jpg", raw_img)
         print(f" [+] Exported Floor {f_num}")
 
 if __name__ == "__main__":
-    run_anchored_temporal_audit()
+    run_temporal_locker_audit()
