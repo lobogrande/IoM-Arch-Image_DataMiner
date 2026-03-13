@@ -6,35 +6,38 @@ from datetime import datetime
 
 # --- CONFIG ---
 TARGET_RUN = "0"
-# Hard-coded list for validation, but logic is now dynamic
-TARGET_FLOORS = [6, 18, 30, 43, 67, 80]
+# Hard-coded for this validation pass as requested
+MANUAL_TARGETS = {
+    6:  [16, 19], # Crosshairs
+    18: [0],      # Player (should reveal blank)
+    30: [1, 15],  # Player and Crosshair
+    43: [1, 7],   # Player and Ore
+    67: [2],      # Fairy/Crosshair
+    80: [12, 13]  # Crosshair and Fairy
+}
+
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
 UNIFIED_ROOT = f"Unified_Consensus_Inputs/Run_{TARGET_RUN}"
-OUTPUT_DIR = f"diagnostic_results/Step3_V59_Forensics_{datetime.now().strftime('%H%M')}"
+OUTPUT_DIR = f"diagnostic_results/Surgical_Reconstruction_{datetime.now().strftime('%H%M')}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# GATES
-INTENSITY_THRES = 242 # Fairy/Crosshair/UI signature
-D_GATE = 6            # Occupancy delta
-
-def get_floor_fingerprint(gray_img, bg_templates):
-    """Creates a 24-bit map of which slots contain objects."""
-    map = []
+def get_occupancy_dna(img_gray, bg_templates):
+    """Creates a boolean map of the floor layout."""
+    dna = []
     for slot in range(24):
         row, col = divmod(slot, 6)
         x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
-        roi = gray_img[y1:y1+48, x1:x1+48]
+        roi = img_gray[y1:y1+48, x1:x1+48]
         diff = min([np.sum(cv2.absdiff(roi, bg)) / 2304 for bg in bg_templates])
-        map.append(diff > D_GATE)
-    return map
+        dna.append(diff > 6.0) # True if occupied
+    return dna
 
-def run_v59_visual_forensics():
-    # 1. Load Assets & Sequence
+def run_surgical_reconstruction():
+    # 1. Assets
     bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
-    player_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_player")]
     all_ore_t = []
     for f in os.listdir("templates"):
-        if any(x in f for x in ["background", "negative"]): continue
+        if any(x in f for x in ["background", "negative"]) or not f.endswith('.png'): continue
         img = cv2.imread(os.path.join("templates", f), 0)
         if img is not None: all_ore_t.append({'tier': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
 
@@ -42,85 +45,81 @@ def run_v59_visual_forensics():
         seq = {e['floor']: e for e in json.load(f)}
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
 
-    for f_num in TARGET_FLOORS:
+    print(f"--- Running v6.1 Bidirectional Surgical Reconstruction ---")
+
+    for f_num, target_slots in MANUAL_TARGETS.items():
         if f_num not in seq: continue
         f_idx = seq[f_num]['idx']
-        raw_bgr = cv2.imread(os.path.join(UNIFIED_ROOT, f"F{f_num}_{seq[f_num]['frame']}"))
-        if raw_bgr is None: continue
-        gray_main = cv2.cvtColor(raw_bgr, cv2.COLOR_BGR2GRAY)
         
-        # A. Create Floor Fingerprint (To prevent drifting to other floors)
-        origin_fingerprint = get_floor_fingerprint(gray_main, bg_t)
+        # Load anchor frame
+        anchor_bgr = cv2.imread(os.path.join(UNIFIED_ROOT, seq[f_num]['frame']))
+        if anchor_bgr is None: anchor_bgr = cv2.imread(os.path.join(UNIFIED_ROOT, f"F{f_num}_{seq[f_num]['frame']}"))
+        anchor_gray = cv2.cvtColor(anchor_bgr, cv2.COLOR_BGR2GRAY)
         
-        # B. Identify ALL Suspect Slots (Transient overlaps)
-        suspect_slots = []
-        for slot in range(24):
-            row, col = divmod(slot, 6)
-            x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
-            roi = gray_main[y1:y1+48, x1:x1+48]
-            
-            # Check for Player, Fairy, or Crosshair
-            best_p = max([cv2.matchTemplate(roi, pt, cv2.TM_CCORR_NORMED).max() for pt in player_t] + [0])
-            if best_p > 0.85 or np.max(roi) > INTENSITY_THRES:
-                suspect_slots.append(slot)
-                # Mark Suspect on HUD
-                cv2.rectangle(raw_bgr, (x1, y1), (x1+48, y1+48), (0, 255, 255), 2)
-                label = "PLAYER" if best_p > 0.85 else "X-HAIR/FAIRY"
-                cv2.putText(raw_bgr, label, (x1, y1-5), 0, 0.35, (0, 255, 255), 1)
+        # Lock the Floor DNA
+        floor_dna = get_occupancy_dna(anchor_gray, bg_t)
+        
+        recovered_data = {} # {slot_id: {'label': ID, 'b_idx': idx, 'f_idx': idx}}
 
-        if not suspect_slots: continue
-
-        # C. Temporal Surf with Guardrails
-        clean_results = {}
-        for slot_id in suspect_slots:
+        for slot_id in target_slots:
             row, col = divmod(slot_id, 6)
             x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
             
-            # Scan +/- 50 frames but BREAK if fingerprint changes
-            for direction in [-1, 1]:
-                for off in range(1, 51):
-                    idx = f_idx + (off * direction)
+            direction_hits = {'back': None, 'forward': None}
+            
+            for direction, step in [('back', -1), ('forward', 1)]:
+                for off in range(1, 150): # Deep search
+                    idx = f_idx + (off * step)
                     if not (0 <= idx < len(buffer_files)): break
                     
-                    # 1. Floor Boundary Guardrail
                     f_img = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[idx]), 0)
-                    if f_img is None: continue
-                    current_fingerprint = get_floor_fingerprint(f_img, bg_t)
-                    if current_fingerprint != origin_fingerprint: break # STOP: We left the floor!
-
-                    # 2. Check if Slot is now Clean
-                    f_roi = f_img[y1:y1+48, x1:x1+48]
-                    if np.max(f_roi) < INTENSITY_THRES:
-                        # Success: Identify the ore in this clean frame
-                        best_o, best_l = 0, "EMPTY"
+                    # Guardrail: Ensure floor layout hasn't changed
+                    if get_occupancy_dna(f_img, bg_t) != floor_dna: break
+                    
+                    roi = f_img[y1:y1+48, x1:x1+48]
+                    # Check for "Clearance" (No high-intensity Fairy/X-hair signal)
+                    if np.max(roi) < 240:
+                        # Identify
+                        best_o, best_l = 0, "BLANK"
                         for t in all_ore_t:
-                            res = cv2.matchTemplate(f_roi, t['img'], cv2.TM_CCORR_NORMED)
+                            res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED)
                             if res.max() > best_o: best_o, best_l = res.max(), t['tier']
                         
-                        if best_o < 0.75: best_l = "BLANK" # Below ore threshold
-                        
-                        clean_results[slot_id] = {'label': best_l, 'score': best_o, 'frame': buffer_files[idx]}
+                        direction_hits[direction] = (best_l, best_o, idx)
                         break
-                if slot_id in clean_results: break
+            
+            # Cross-Validation Logic
+            if direction_hits['back'] and direction_hits['forward']:
+                b_label, b_score, b_idx = direction_hits['back']
+                f_label, f_score, f_idx_hit = direction_hits['forward']
+                
+                if b_label == f_label: # Consensus reached
+                    recovered_data[slot_id] = {'label': b_label, 'score': b_score, 'idx': b_idx}
+                else:
+                    recovered_data[slot_id] = {'label': f"CONFLICT({b_label}/{f_label})", 'score': 0, 'idx': b_idx}
 
-        # D. Visual Export
-        # We find the 'best overall' clean frame to use for the right-side proof
-        best_clean_idx = -1
-        for res in clean_results.values():
-            best_clean_idx = buffer_files.index(res['frame'])
-            break
-        
-        if best_clean_idx != -1:
-            proof_bgr = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[best_clean_idx]))
-            for sid, data in clean_results.items():
-                row, col = divmod(sid, 6)
-                sx, sy = int(74+(col*59.1))-24, int(261+(row*59.1))-24
-                cv2.rectangle(proof_bgr, (sx, sy), (sx+48, sy+48), (0, 255, 0), 2)
-                cv2.putText(proof_bgr, f"RECOVERED: {data['label']}", (sx-10, sy+60), 0, 0.4, (0, 255, 0), 1)
+        # --- Visual Synthesis ---
+        # Draw Original with Suspects
+        left_panel = anchor_bgr.copy()
+        right_panel = anchor_bgr.copy() # We will patch in recovered crops
 
-            comparison = np.hstack((raw_bgr, proof_bgr))
-            cv2.imwrite(os.path.join(OUTPUT_DIR, f"F{f_num}_Validation.jpg"), comparison)
-            print(f" [+] Exported Forensic Recovery for Floor {f_num}")
+        for slot_id in target_slots:
+            row, col = divmod(slot_id, 6)
+            x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
+            cv2.rectangle(left_panel, (x1, y1), (x1+48, y1+48), (0, 255, 255), 2)
+            
+            if slot_id in recovered_data:
+                res = recovered_data[slot_id]
+                # Grab the clean crop from the buffer
+                clean_img = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[res['idx']]))
+                right_panel[y1:y1+48, x1:x1+48] = clean_img[y1:y1+48, x1:x1+48]
+                
+                cv2.rectangle(right_panel, (x1, y1), (x1+48, y1+48), (0, 255, 0), 2)
+                cv2.putText(right_panel, f"{res['label']}", (x1-10, y1+60), 0, 0.4, (0, 255, 0), 1)
+
+        comparison = np.hstack((left_panel, right_panel))
+        cv2.imwrite(os.path.join(OUTPUT_DIR, f"F{f_num}_Surgical_Consensus.jpg"), comparison)
+        print(f" [+] Verified Floor {f_num} via Bidirectional Consensus")
 
 if __name__ == "__main__":
-    run_v59_visual_forensics()
+    run_surgical_reconstruction()
