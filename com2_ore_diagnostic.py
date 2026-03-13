@@ -26,15 +26,15 @@ ORE_RESTRICTIONS = {
 TARGET_RUN = "0"
 UNIFIED_ROOT = f"Unified_Consensus_Inputs/Run_{TARGET_RUN}"
 TIMESTAMP = datetime.now().strftime('%m%d_%H%M')
-OUTPUT_DIR = f"diagnostic_results/FullRun0_v43_{TIMESTAMP}"
+OUTPUT_DIR = f"diagnostic_results/FullRun0_v44_{TIMESTAMP}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 D_GATE = 6      
 O_GATE = 0.68   
 P_GATE = 0.88   
 
-def run_v43_audit():
-    # Load Assets
+def run_v44_audit():
+    # 1. Assets
     bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
     player_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_player")]
     ui_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_ui")]
@@ -48,7 +48,7 @@ def run_v43_audit():
     with open(os.path.join(UNIFIED_ROOT, "final_sequence.json"), 'r') as f:
         full_sequence = json.load(f)
 
-    print(f"--- Running v4.3 Weighted Full-Run Audit ---")
+    print(f"--- Running v4.4 Identity-Tightened Full Audit ---")
 
     for entry in full_sequence:
         f_num = entry['floor']
@@ -75,12 +75,14 @@ def run_v43_audit():
             if not is_boss and min([np.sum(cv2.absdiff(roi, bg)) / (2304) for bg in bg_t]) <= D_GATE:
                 continue
 
-            # 3. IDENTIFICATION
+            # 3. COMPETITIVE IDENTIFICATION
             mask = np.zeros((48, 48), dtype=np.uint8)
             if slot < 6: cv2.rectangle(mask, (5, 22), (43, 45), 255, -1)
             else: cv2.circle(mask, (24, 24), 16, 255, -1)
 
             best_o, best_label = 0, ""
+            scores = {} # Track all matches for arbitration
+            
             if is_boss:
                 data = BOSS_DATA[f_num]
                 best_label = (data['special'][slot] if data['tier'] == 'mixed' else data['tier'])
@@ -88,23 +90,29 @@ def run_v43_audit():
             else:
                 for t in valid_templates:
                     res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
-                    if res.max() > best_o: best_o, best_label = res.max(), t['name']
+                    score = res.max()
+                    scores[t['name']] = max(scores.get(t['name'], 0), score)
+                    if score > best_o:
+                        best_o, best_label = score, t['name']
 
-            # 4. WEIGHTED GHOST REJECTION (Issue 2 Rescue)
+                # TIE-BREAKER: com2 vs rare1 conflict resolution
+                if 'com2' in scores and 'rare1' in scores:
+                    # If scores are within 0.04 and we are in Com2 dominant floors
+                    if abs(scores['com2'] - scores['rare1']) < 0.04 and 18 <= f_num <= 28:
+                        best_label, best_o = 'com2', scores['com2']
+
+            # 4. WEIGHTED GHOST REJECTION
             if not is_boss and slot < 6:
                 best_u = max([cv2.matchTemplate(roi, ut, cv2.TM_CCORR_NORMED).max() for ut in ui_t] + [0])
                 bottom_roi = roi[24:48, :]
                 bottom_bg_diff = min([np.sum(cv2.absdiff(bottom_roi, bg[24:48, :])) / (1152) for bg in bg_t])
                 
-                # UPDATED ARBITRATION:
-                # - Only Cyan if UI beats Ore by a margin of 0.05
-                # - OR if the bottom half is extremely similar to background (< 3.0)
-                # - This rescues high-confidence Ores (like your 0.915/0.922 scores)
+                # Rescued threshold for ores beating UI noise
                 if (best_u > (best_o + 0.05)) or (bottom_bg_diff < 3.0) or (np.max(roi[5:15, :]) > 242 and best_o < 0.85):
                     cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (255, 255, 0), 1)
                     continue
 
-            # 5. FINAL VERDICT
+            # 5. FINAL BOXING
             if best_o > O_GATE:
                 cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (0, 255, 0), 1)
                 label_text = f"{best_label} ({best_o:.2f})"
@@ -112,7 +120,7 @@ def run_v43_audit():
                 cv2.rectangle(raw_img, (x1+2, y1+48-th-4), (x1+tw+4, y1+48-2), (0,0,0), -1)
                 cv2.putText(raw_img, label_text, (x1+3, y1+48-4), 0, 0.3, (0, 255, 0), 1)
 
-        cv2.imwrite(os.path.join(OUTPUT_DIR, f"F{f_num}_v43Audit.jpg"), raw_img)
+        cv2.imwrite(os.path.join(OUTPUT_DIR, f"F{f_num}_v44Audit.jpg"), raw_img)
 
 if __name__ == "__main__":
-    run_v43_audit()
+    run_v44_audit()
