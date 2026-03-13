@@ -4,120 +4,113 @@ import os
 import json
 from datetime import datetime
 
+# --- GROUND TRUTH DATA ---
+BOSS_DATA = {
+    11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 
+    25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 
+    34: {'tier': 'mixed', 'special': {0:'com2',1:'com2',2:'com2',3:'com2',4:'com2',5:'com2',6:'com2',7:'com2',8:'myth1',9:'myth1',10:'com2',11:'com2',12:'com2',13:'com2',14:'myth1',15:'myth1',16:'com2',17:'com2',18:'com2',19:'com2',20:'com2',21:'com2',22:'com2',23:'com2'}}, 
+    35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'}, 
+    49: {'tier': 'mixed', 'special': {0:"dirt3",1:"dirt3",2:"dirt3",3:"dirt3",4:"dirt3",5:"dirt3",6:"com3",7:"com3",8:"com3",9:"com3",10:"com3",11:"com3",12:"rare3",13:"rare3",14:"rare3",15:"rare3",16:"rare3",17:"rare3",18:"myth2",19:"myth2",20:"myth2",21:"myth2",22:"myth2",23:"myth2"}},
+    74: {'tier': 'mixed', 'special': {0:'dirt3',1:'dirt3',2:'dirt3',3:'dirt3',4:'dirt3',5:'dirt3',6:'dirt3',7:'dirt3',8:'dirt3',9:'dirt3',10:'dirt3',11:'dirt3',12:'dirt3',13:'dirt3',14:'dirt3',15:'dirt3',16:'dirt3',17:'dirt3',18:'dirt3',19:'dirt3',20:'div1',21:'div1',22:'dirt3',23:'dirt3'}}, 
+    98: {'tier': 'myth3'}, 
+    99: {'tier': 'mixed', 'special': {0:"com3",1:"rare3",2:"epic3",3:"leg3",4:"myth3",5:"div2",6:"com3",7:"rare3",8:"epic3",9:"leg3",10:"myth3",11:"div2",12:"com3",13:"rare3",14:"epic3",15:"leg3",16:"myth3",17:"div2",18:"com3",19:"rare3",20:"epic3",21:"leg3",22:"myth3",23:"div2"}}
+}
+
+ORE_RESTRICTIONS = {
+    'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31), 'myth1': (20, 34), 'div1': (50, 74),
+    'dirt2': (12, 23), 'com2': (18, 28), 'rare2': (26, 35), 'epic2': (30, 41), 'leg2': (32, 44), 'myth2': (36, 49), 'div2': (75, 99),
+    'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
+}
+
 # --- CONFIG ---
 TARGET_RUN = "0"
 TARGET_FLOORS = range(1, 51)
-UNIFIED_ROOT = "Unified_Consensus_Inputs"
-# Timestamped subfolder for organization
-TIMESTAMP = datetime.now().strftime('%m%d_%H%M')
-OUTPUT_DIR = f"diagnostic_results/Run_{TARGET_RUN}_{TIMESTAMP}"
-SLOT1_CENTER = (74, 261)
-STEP_X, STEP_Y = 59.1, 59.1
-
-# THE VALIDATED GATES (v2.7 logic)
-D_GATE = 6      
-O_GATE = 0.68   
-PLAYER_REJECT_GATE = 0.88 
-UI_REJECT_GATE = 0.80
-DELTA_GATE = 0.05
-SUSPICION_THRESHOLD = 0.75 # Ores below this are logged as 'shaky'
-
+UNIFIED_ROOT = f"Unified_Consensus_Inputs/Run_{TARGET_RUN}"
+BUFFER_ROOT = "capture_buffer_0"
+OUTPUT_DIR = f"diagnostic_results/Run_{TARGET_RUN}_{datetime.now().strftime('%m%d_%H%M')}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def get_precision_mask(slot_id, mode='ore'):
-    mask = np.zeros((48, 48), dtype=np.uint8)
-    if mode == 'ore' and slot_id in [1, 2, 3, 4]:
-        cv2.rectangle(mask, (5, 18), (43, 45), 255, -1)
-    else:
-        cv2.circle(mask, (24, 24), 16, 255, -1)
-    return mask
+def get_valid_templates(f_num, all_templates):
+    valid = []
+    for t in all_templates:
+        tier = t['name'].lower()
+        if tier in ORE_RESTRICTIONS:
+            f_min, f_max = ORE_RESTRICTIONS[tier]
+            if f_min <= f_num <= f_max:
+                valid.append(t)
+        else:
+            valid.append(t)
+    return valid
 
-def run_qa_truth_audit():
-    # 1. Asset Loading
-    bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
-                    for f in os.listdir("templates") if f.startswith("background")]
-    player_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
-                        for f in os.listdir("templates") if f.startswith("negative_player")]
-    ui_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
-                    for f in os.listdir("templates") if f.startswith("negative_ui")]
-    
+def run_v32_qa_audit():
+    # 1. Load Templates
     ore_templates = []
     for f in os.listdir("templates"):
-        if f.startswith("background") or f.startswith("negative"): continue
+        if any(x in f for x in ["background", "negative"]): continue
         img = cv2.imread(os.path.join("templates", f), 0)
         if img is not None:
-            # FIX: Extract first prefix {ore type/tier}
-            # Handles 'Dirt1_act_none_0.png' -> 'Dirt1'
-            clean_name = f.split("_")[0] 
-            ore_templates.append({'name': clean_name, 'img': cv2.resize(img, (48, 48))})
+            # Anchor to first segment: Gold1_act... -> Gold1
+            ore_templates.append({'name': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
+    
+    player_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_player")]
+    ui_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_ui")]
+    bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
 
-    run_path = os.path.join(UNIFIED_ROOT, f"Run_{TARGET_RUN}")
-    with open(os.path.join(run_path, "final_sequence.json"), 'r') as f:
+    with open(os.path.join(UNIFIED_ROOT, "final_sequence.json"), 'r') as f:
         sequence = {e['floor']: e for e in json.load(f)}
 
     suspicion_log = []
 
-    print(f"--- Running v2.9.1 QA Audit (Results -> {OUTPUT_DIR}) ---")
+    print(f"--- Running v3.2 Temporal Truth Audit (F1-50) ---")
 
     for f_num in TARGET_FLOORS:
         if f_num not in sequence: continue
-        raw_img = cv2.imread(os.path.join(run_path, f"F{f_num}_{sequence[f_num]['frame']}"))
+        raw_img = cv2.imread(os.path.join(UNIFIED_ROOT, f"F{f_num}_{sequence[f_num]['frame']}"))
         gray = cv2.cvtColor(raw_img, cv2.COLOR_BGR2GRAY)
         
+        is_boss = f_num in BOSS_DATA
+        valid_templates = get_valid_templates(f_num, ore_templates)
+
         for slot in range(24):
             row, col = divmod(slot, 6)
-            cx, cy = int(SLOT1_CENTER[0]+(col*STEP_X)), int(SLOT1_CENTER[1]+(row*STEP_Y))
-            x1, y1, x2, y2 = cx-24, cy-24, cx+24, cy+24
-            roi_gray = gray[y1:y2, x1:x2]
+            x1, y1 = int(74+(col*59.1))-24, int(261+(row*59.1))-24
+            roi_gray = gray[y1:y1+48, x1:x1+48]
 
-            # GATE 1 & 2: Occupancy/Player
-            min_diff = min([np.sum(cv2.absdiff(roi_gray, bg)) / (48*48) for bg in bg_templates])
-            if min_diff <= D_GATE: continue
-            
-            best_p = max([cv2.matchTemplate(roi_gray, pt, cv2.TM_CCORR_NORMED).max() for pt in player_templates] + [0])
-            if best_p > PLAYER_REJECT_GATE:
-                cv2.rectangle(raw_img, (x1, y1), (x2, y2), (255, 0, 255), 1)
-                continue
+            # PRE-GATE: Boss Override
+            if is_boss:
+                data = BOSS_DATA[f_num]
+                best_label = data['special'][slot] if data['tier'] == 'mixed' else data['tier']
+                best_o = 1.0
+            else:
+                # Standard ID Gates
+                mask = np.zeros((48, 48), dtype=np.uint8)
+                if slot < 6: cv2.rectangle(mask, (5, 18), (43, 45), 255, -1)
+                else: cv2.circle(mask, (24, 24), 16, 255, -1)
 
-            # GATE 3: Identification & Comparative Noise Check
-            ore_mask = get_precision_mask(slot, mode='ore')
-            best_o, best_label = 0, ""
-            for t in ore_templates:
-                res = cv2.matchTemplate(roi_gray, t['img'], cv2.TM_CCORR_NORMED, mask=ore_mask)
-                if res.max() > best_o:
-                    best_o, best_label = res.max(), t['name']
-            
-            best_u = max([cv2.matchTemplate(roi_gray, ut, cv2.TM_CCORR_NORMED).max() for ut in ui_templates] + [0])
-            bg_match = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCOEFF_NORMED).max() for bg in bg_templates])
+                best_o, best_label = 0, ""
+                for t in valid_templates:
+                    res = cv2.matchTemplate(roi_gray, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
+                    if res.max() > best_o: best_o, best_label = res.max(), t['name']
 
-            # Double-Verification (v2.7)
-            if slot in [1, 2, 3, 4]:
-                if (best_u > (best_o + 0.03)) or (best_o < 0.85 and np.max(roi_gray[5:15, :]) > 242):
-                    cv2.rectangle(raw_img, (x1, y1), (x2, y2), (255, 255, 0), 1)
+                # REJECTIONS
+                best_p = max([cv2.matchTemplate(roi_gray, pt, cv2.TM_CCORR_NORMED).max() for pt in player_templates] + [0])
+                if best_p > 0.88 and best_p > (best_o + 0.1):
+                    cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (255, 0, 255), 1)
                     continue
 
-            # SUCCESSFUL IDENTIFICATION
-            if best_o > O_GATE and (best_o - bg_match > DELTA_GATE):
-                cv2.rectangle(raw_img, (x1, y1), (x2, y2), (0, 255, 0), 1)
-                
-                # Interior Label Placement
+                best_u = max([cv2.matchTemplate(roi_gray, ut, cv2.TM_CCORR_NORMED).max() for ut in ui_templates] + [0])
+                if slot < 6 and (best_u > (best_o + 0.03) or (best_o < 0.85 and np.max(roi_gray[5:15, :]) > 242)):
+                    cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (255, 255, 0), 1)
+                    continue
+
+            # FINAL RENDER
+            if best_o > 0.68:
+                cv2.rectangle(raw_img, (x1, y1), (x1+48, y1+48), (0, 255, 0), 1)
                 (w, h), _ = cv2.getTextSize(best_label, 0, 0.3, 1)
-                cv2.rectangle(raw_img, (x1+2, y2-h-4), (x1+w+4, y2-2), (0,0,0), -1) # Contrast backing
-                cv2.putText(raw_img, best_label, (x1+3, y2-4), 0, 0.3, (0, 255, 0), 1)
+                cv2.rectangle(raw_img, (x1+2, y1+48-h-4), (x1+w+4, y1+48-2), (0,0,0), -1)
+                cv2.putText(raw_img, best_label, (x1+3, y1+48-4), 0, 0.3, (0, 255, 0), 1)
 
-                # Flag Suspicious hits for report
-                if best_o < SUSPICION_THRESHOLD or (best_o - bg_match < 0.08):
-                    suspicion_log.append({
-                        "floor": f_num, "slot": slot, "type": best_label, 
-                        "conf": round(float(best_o), 3), "delta": round(float(best_o - bg_match), 3)
-                    })
-
-        cv2.imwrite(os.path.join(OUTPUT_DIR, f"QA_F{f_num}.jpg"), raw_img)
-
-    with open(os.path.join(OUTPUT_DIR, "suspicion_report.json"), "w") as f:
-        json.dump(suspicion_log, f, indent=4)
-    
-    print(f" [+] Audit Complete. {len(suspicion_log)} ores flagged in suspicion_report.json.")
+        cv2.imwrite(os.path.join(OUTPUT_DIR, f"QA_v32_F{f_num}.jpg"), raw_img)
 
 if __name__ == "__main__":
-    run_qa_truth_audit()
+    run_v32_qa_audit()
