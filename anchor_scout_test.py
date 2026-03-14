@@ -6,83 +6,87 @@ from datetime import datetime
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_DIR = f"diagnostic_results/AnchorScout_v31_{datetime.now().strftime('%m%d_%H%M')}"
+OUTPUT_DIR = f"diagnostic_results/AnchorScout_v42_Surgical_{datetime.now().strftime('%m%d_%H%M')}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# SURGICAL CONSTANTS (Based on your 40x60 templates)
-MATCH_THRESHOLD = 0.90  # High precision for static sprite
-OFFSET_X = 24           # Center-to-center offset
-T_W, T_H = 40, 60       # Your extracted template dimensions
+# SURGICAL CONSTANTS
+MATCH_THRESHOLD = 0.90 
+OFFSET_X = 24           
+D_GATE_LIVE = 8.5    # Threshold for Live Ore
+D_GATE_SHADOW = 4.0  # Threshold to detect Shadow Templates (lower delta than live)
 
-def run_v31_template_anchor():
-    # 1. Load your newly harvested template
+def get_slot_state(roi, bg_template):
+    """Returns: 0=Gravel, 1=Shadow, 2=Live Ore"""
+    diff = np.sum(cv2.absdiff(roi, bg_template[19:29, 19:29])) / 100
+    if diff > D_GATE_LIVE: return 2
+    if diff > D_GATE_SHADOW: return 1
+    return 0
+
+def run_v42_surgical_scout():
     player_right = cv2.imread("templates/player_right.png", 0)
     bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
-    
-    if player_right is None:
-        print("Error: templates/player_right.png not found!")
-        return
-
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
+    
     floor_library = []
-    frames_since_trigger = 500
+    frames_since_trigger = 100 
 
-    print(f"--- Running v3.1 Template Anchor (Run_{TARGET_RUN}) ---")
+    print(f"--- Running v4.2 High-Speed Surgical Scout ---")
 
     for i in range(len(buffer_files) - 1):
         frames_since_trigger += 1
         
-        # Explicitly handle the "Dataset Start" (No side-by-side needed)
         if i == 0:
             floor_library.append({"floor": 1, "idx": 0})
-            bgr_start = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[0]))
-            cv2.putText(bgr_start, "START OF RUN - FLOOR 1", (30, 50), 0, 0.7, (0,255,0), 2)
-            cv2.imwrite(os.path.join(OUTPUT_DIR, "START_Floor001.jpg"), bgr_start)
+            cv2.imwrite(os.path.join(OUTPUT_DIR, "START_Floor001.jpg"), cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[0])))
             continue
 
-        # Load N+1 for the 'Start' signature
         img_n1_gray = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]), 0)
         if img_n1_gray is None: continue
 
-        # 2. TEMPLATE MATCH (Searching the Top Row / Left Gutter area)
-        # Narrow Y band (200-350) and X gutter (0-150)
-        search_roi = img_n1_gray[200:350, 0:150]
+        # 1. SEEK PLAYER (Full Row 1 Band)
+        search_roi = img_n1_gray[230:310, 0:400]
         res = cv2.matchTemplate(search_roi, player_right, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-        # 3. VERIFICATION LOGIC
         if max_val > MATCH_THRESHOLD:
-            # Player center X relative to the full screen
-            # (max_loc[0] is X in ROI, + T_W//2 is center)
-            player_center_x = max_loc[0] + (T_W // 2)
+            # 2. CALCULATE ANCHOR COLUMN
+            player_center_x = max_loc[0] + 20 
+            target_col = round((player_center_x + OFFSET_X - 74) / 59.1)
             
-            # Calculate where the first ore SHOULD be
-            expected_ore_x = player_center_x + OFFSET_X
-            col = round((expected_ore_x - 74) / 59.1)
-            
-            if col in range(6) and frames_since_trigger > 60:
-                # Surgical check: Is there actually an ore at that slot?
-                cx, cy = int(74 + (col * 59.1)), 261
-                slot_roi = img_n1_gray[cy-5:cy+5, cx-5:cx+5]
-                diff = np.sum(cv2.absdiff(slot_roi, bg_t[0][19:29, 19:29])) / 100
+            if target_col in range(6):
+                # 3. SURGICAL SCAN OF ROW 1
+                cy = 261
                 
-                if diff > 8.5: # DNA confirms ore exists
-                    floor_num = len(floor_library) + 1
+                # Check Target Slot (Must be LIVE)
+                target_roi = img_n1_gray[cy-5:cy+5, int(74+(target_col*59.1))-5:int(74+(target_col*59.1))+5]
+                target_state = get_slot_state(target_roi, bg_t[0])
+                
+                if target_state == 2: # Target is a Live Ore
+                    # 4. NEGATIVE CONSTRAINT: Left slots must be GRAVEL (no shadows allowed)
+                    invalid_left = False
+                    for left_col in range(target_col):
+                        lcx = int(74 + (left_col * 59.1))
+                        left_roi = img_n1_gray[cy-5:cy+5, lcx-5:lcx+5]
+                        if get_slot_state(left_roi, bg_t[0]) > 0: # 1 (Shadow) or 2 (Live)
+                            invalid_left = True
+                            break
                     
-                    # Create the Handshake (Frame N vs Frame N+1)
-                    bgr_n = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i]))
-                    bgr_n1 = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]))
-                    
-                    cv2.putText(bgr_n, f"FRAME {i} (END)", (30, 50), 0, 0.7, (0,0,255), 2)
-                    cv2.putText(bgr_n1, f"FRAME {i+1} (START FLOOR {floor_num})", (30, 50), 0, 0.7, (0,255,0), 2)
-                    
-                    cv2.imwrite(os.path.join(OUTPUT_DIR, f"Anchor_{floor_num:03}.jpg"), np.hstack((bgr_n, bgr_n1)))
-                    floor_library.append({"floor": floor_num, "idx": i+1})
-                    
-                    print(f" [!] Floor {floor_num} Confirmed! (Match: {max_val:.2f})")
-                    frames_since_trigger = 0
+                    # 5. DYNAMIC TRIGGER
+                    # Trigger if (Player at Home) AND (No Ores/Shadows to Left)
+                    # Min 3-frame lockout to prevent double-counting the same teleport
+                    if not invalid_left and frames_since_trigger > 3:
+                        floor_num = len(floor_library) + 1
+                        bgr_n, bgr_n1 = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i])), cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]))
+                        
+                        cv2.putText(bgr_n, f"F{i} (END)", (30, 50), 0, 0.7, (0,0,255), 2)
+                        cv2.putText(bgr_n1, f"F{i+1} (START FLOOR {floor_num})", (30, 50), 0, 0.7, (0,255,0), 2)
+                        cv2.imwrite(os.path.join(OUTPUT_DIR, f"Anchor_{floor_num:03}.jpg"), np.hstack((bgr_n, bgr_n1)))
+                        
+                        floor_library.append({"floor": floor_num, "idx": i+1})
+                        print(f" [!] Floor {floor_num} Logged: Col {target_col} is First-Live")
+                        frames_since_trigger = 0
 
-    print(f"\n[SUCCESS] Mapped {len(floor_library)} floors using your surgical templates.")
+    print(f"\n[SUCCESS] v4.2 Scout mapped {len(floor_library)} floors.")
 
 if __name__ == "__main__":
-    run_v31_template_anchor()
+    run_v42_surgical_scout()
