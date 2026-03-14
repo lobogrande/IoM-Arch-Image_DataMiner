@@ -1,34 +1,29 @@
 import cv2
 import numpy as np
 
-def calibrate_character_home(image_path):
-    # Load frame in grayscale and color
+def calibrate_relative_offset(image_path):
     img_gray = cv2.imread(image_path, 0)
-    img_bgr = cv2.imread(image_path)
     
-    # 1. Define Search Area: The left gutter (X: 0-100, Y: 200-500)
-    search_area = img_gray[200:500, 0:100]
+    # 1. Slot 0 Center is known to be X=74, Y=350 (from our grid calibration)
+    slot_0_x = 74
     
-    # 2. Character Signature: The sprite is dark/grey. 
-    # We look for pixels in the 30-70 range.
+    # 2. Find Character Center in the left gutter
+    search_area = img_gray[300:400, 0:100] # Narrower Y-band
     _, character_mask = cv2.threshold(search_area, 75, 255, cv2.THRESH_BINARY_INV)
     _, noise_mask = cv2.threshold(search_area, 20, 255, cv2.THRESH_BINARY_INV)
     final_mask = cv2.bitwise_and(character_mask, cv2.bitwise_not(noise_mask))
     
-    # 3. Find the largest cluster (The Character)
     coords = cv2.findNonZero(final_mask)
     if coords is not None:
         x, y, w, h = cv2.boundingRect(coords)
-        # Adjust for the ROI offset
-        abs_x, abs_y = x, y + 200
-        print(f"--- CALIBRATION RESULTS ---")
-        print(f"Character Home Box: [Y:{abs_y}:{abs_y+h}, X:{abs_x}:{abs_x+w}]")
-        print(f"Center Point: ({abs_x + w//2}, {abs_y + h//2})")
-        
-        # Save a visual confirmation
-        cv2.rectangle(img_bgr, (abs_x, abs_y), (abs_x+w, abs_y+h), (0, 255, 0), 2)
-        cv2.imwrite("diagnostic_character_calibration.jpg", img_bgr)
-    else:
-        print("Character not found in search area.")
+        char_center_x = x + w//2
+        offset = slot_0_x - char_center_x
+        print(f"--- RELATIVE OFFSET CALIBRATED ---")
+        print(f"Character Center X: {char_center_x}")
+        print(f"Slot 0 Center X: {slot_0_x}")
+        print(f"Required Left-Offset: {offset} pixels")
+        return offset
+    return None
 
-calibrate_character_home("capture_buffer_0/frame_00000.png")
+# Run this on a frame where player is to the left of slot 0
+calibrate_relative_offset("capture_buffer_0/frame_20260306_231745_717968.png")
