@@ -6,31 +6,30 @@ import json
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_DIR = f"diagnostic_results/MasterAuditor_v62_Recall"
+OUTPUT_DIR = f"diagnostic_results/MasterAuditor_v64_Sub6"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# SENSITIVITY CONSTANTS
-MATCH_THRESHOLD = 0.82  # Aggressive seeking
+# RECALIBRATED SENSITIVITY
+MATCH_THRESHOLD = 0.85  
 OFFSET_X = 24           
-D_GATE_LIVE = 6.0       # Catch even the faintest Dirt1 pixels
+D_GATE_LIVE = 5.0       # <--- CRITICAL FIX: Lowered to catch 5.6-5.8 range
 
 def get_slot_state(roi, bg_template):
     diff = np.sum(cv2.absdiff(roi, bg_template[19:29, 19:29])) / 100
     return 2 if diff > D_GATE_LIVE else 0
 
-def run_v62_recall_audit():
+def run_v64_sub6_audit():
     player_right = cv2.imread("templates/player_right.png", 0)
     bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
     
     floor_library = [{"floor": 1, "idx": 0}]
-    # Force initial image
     bgr_start = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[0]))
     cv2.imwrite(os.path.join(OUTPUT_DIR, "Floor_001.jpg"), bgr_start)
     
     last_logged_row_dna = None
 
-    print(f"--- Running v6.2 High-Recall Auditor ---")
+    print(f"--- Running v6.4 Sub-6 Auditor ---")
 
     for i in range(len(buffer_files) - 1):
         if i % 100 == 0:
@@ -39,7 +38,7 @@ def run_v62_recall_audit():
         img_n1_gray = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]), 0)
         if img_n1_gray is None: continue
 
-        # 1. TEMPLATE SEARCH (Row 1 Focus)
+        # 1. TEMPLATE SEARCH
         search_roi = img_n1_gray[230:310, 0:450]
         res = cv2.matchTemplate(search_roi, player_right, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
@@ -57,15 +56,14 @@ def run_v62_recall_audit():
                     roi = img_n1_gray[cy-5:cy+5, cx-5:cx+5]
                     row_dna.append(get_slot_state(roi, bg_t[0]))
 
-                # 4. THE CORE TEST
-                # Is the player standing next to the LEFTMOST live ore?
+                # 4. THE CORE TEST: Are we next to the leftmost live ore?
                 try:
                     first_live_col = row_dna.index(2)
                 except ValueError:
-                    first_live_col = -1 # No live ores found in row 1
+                    first_live_col = -1
 
                 if target_col == first_live_col:
-                    # 5. PERSISTENCE (Ignore if row is identical to last capture)
+                    # 5. PERSISTENCE
                     if row_dna != last_logged_row_dna:
                         floor_num = len(floor_library) + 1
                         last_logged_row_dna = row_dna
@@ -80,4 +78,4 @@ def run_v62_recall_audit():
     print(f"\n[FINISH] Mapped {len(floor_library)} floors.")
 
 if __name__ == "__main__":
-    run_v62_recall_audit()
+    run_v64_sub6_audit()
