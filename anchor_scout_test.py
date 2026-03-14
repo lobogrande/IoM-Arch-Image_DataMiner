@@ -2,96 +2,76 @@ import cv2
 import numpy as np
 import os
 import json
-from datetime import datetime
 
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_DIR = f"diagnostic_results/MasterAuditor_v52_Forensic_{datetime.now().strftime('%m%d_%H%M')}"
+OUTPUT_DIR = f"diagnostic_results/MasterAuditor_v6_Elastic"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # SURGICAL CONSTANTS
-MATCH_THRESHOLD = 0.85  # Slightly lowered for troubleshooting
+MATCH_THRESHOLD = 0.88  # Slightly more elastic
 OFFSET_X = 24           
-D_GATE_LIVE = 6.5       # Ultra-sensitive for early Dirt1
-D_GATE_SHADOW = 3.5     
+D_GATE_LIVE = 6.5       # High sensitivity for Dirt1
 
 def get_slot_state(roi, bg_template):
     diff = np.sum(cv2.absdiff(roi, bg_template[19:29, 19:29])) / 100
-    if diff > D_GATE_LIVE: return 2
-    if diff > D_GATE_SHADOW: return 1
-    return 0
+    return 2 if diff > D_GATE_LIVE else 0
 
-def run_v52_forensic_audit():
+def run_v6_elastic_audit():
     player_right = cv2.imread("templates/player_right.png", 0)
     bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
     
-    floor_library = []
+    floor_library = [{"floor": 1, "idx": 0}]
     last_logged_dna = None
 
-    print(f"--- Running v5.2 Forensic Master Auditor ---")
-    print(f"Total Frames to scan: {len(buffer_files)}")
+    print(f"--- Running v6.0 Elastic Master Auditor ---")
 
     for i in range(len(buffer_files) - 1):
-        if i % 100 == 0:
-            print(f" [Heartbeat] Frame {i} | Floors Found: {len(floor_library)}", end='\r')
-
         img_n1_gray = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]), 0)
         if img_n1_gray is None: continue
 
-        # 1. TEMPLATE SEEK
-        search_roi = img_n1_gray[200:350, 0:450]
+        # 1. SCAN FOR PLAYER (Full Row 1 Band)
+        search_roi = img_n1_gray[230:310, 0:450] # Wide X-search
         res = cv2.matchTemplate(search_roi, player_right, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
         if max_val > MATCH_THRESHOLD:
-            # 2. ANCHOR LOGIC
-            player_center_x = max_loc[0] + 20 
-            target_col = round((player_center_x + OFFSET_X - 74) / 59.1)
+            # 2. IDENTIFY NEAREST SLOT
+            player_x = max_loc[0]
+            # Calculate which column the player is "guarding"
+            target_col = round((player_x + 20 + OFFSET_X - 74) / 59.1)
             
-            if target_col in range(6):
-                cy = 261
-                tx_start = int(74+(target_col*59.1))-5
-                target_roi = img_n1_gray[cy-5:cy+5, tx_start:tx_start+10]
-                target_state = get_slot_state(target_roi, bg_t[0])
-                
-                # REJECTION REASON 1: Target Slot is Empty
-                if target_state != 2:
-                    continue
+            if 0 <= target_col < 6:
+                # 3. DNA STATE SCAN
+                current_row_dna = []
+                for c in range(6):
+                    cx, cy = int(74 + (c * 59.1)), 261
+                    roi = img_n1_gray[cy-5:cy+5, cx-5:cx+5]
+                    current_row_dna.append(get_slot_state(roi, bg_t[0]))
 
-                # REJECTION REASON 2: Left Gutter is Dirty (Shadows/Ores exist)
-                left_is_clean = True
-                for l_col in range(target_col):
-                    lcx = int(74 + (l_col * 59.1))
-                    if get_slot_state(img_n1_gray[cy-5:cy+5, lcx-5:lcx+5], bg_t[0]) > 0:
-                        left_is_clean = False
-                        break
-                
-                if not left_is_clean:
-                    continue
-                
-                # REJECTION REASON 3: DNA Persistence (Same Floor)
-                # We check Row 1 only for the skip-logic to stay fast
-                current_row1_dna = [get_slot_state(img_n1_gray[cy-5:cy+5, int(74+(c*59.1))-5:int(74+(c*59.1))+5], bg_t[0]) for c in range(6)]
-                if current_row1_dna == last_logged_dna:
-                    continue
+                # 4. THE ELASTIC GATE
+                # A: Target slot MUST have a live ore (2)
+                # B: All slots to the LEFT MUST be empty (0)
+                if current_row_dna[target_col] == 2:
+                    left_gutter_clean = all(state == 0 for state in current_row_dna[:target_col])
+                    
+                    if left_gutter_clean:
+                        # 5. PERSISTENCE CHECK (Prevent duplicates)
+                        if current_row_dna != last_logged_dna:
+                            floor_num = len(floor_library) + 1
+                            last_logged_dna = current_row_dna
+                            
+                            # Log Handshake
+                            bgr_n = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i]))
+                            bgr_n1 = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]))
+                            cv2.imwrite(os.path.join(OUTPUT_DIR, f"Floor_{floor_num:03}.jpg"), np.hstack((bgr_n, bgr_n1)))
+                            
+                            floor_library.append({"floor": floor_num, "idx": i+1})
+                            print(f" [!] Floor {floor_num} Found | Frame {i+1} | Col {target_col} | Score {max_val:.3f}")
 
-                # --- SUCCESSFUL TRIGGER ---
-                floor_num = len(floor_library) + 1
-                last_logged_dna = current_row1_dna
-                
-                bgr_n = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i]))
-                bgr_n1 = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]))
-                cv2.putText(bgr_n, f"F{i} (END)", (30, 50), 0, 0.7, (0,0,255), 2)
-                cv2.putText(bgr_n1, f"F{i+1} (START FLOOR {floor_num})", (30, 50), 0, 0.7, (0,255,0), 2)
-                
-                cv2.imwrite(os.path.join(OUTPUT_DIR, f"Floor_{floor_num:03}.jpg"), np.hstack((bgr_n, bgr_n1)))
-                floor_library.append({"floor": floor_num, "idx": i+1, "score": round(max_val, 3)})
-                
-                print(f"\n [!] TRIGGER: Floor {floor_num} at Frame {i+1} | Col: {target_col} | Score: {max_val:.3f}")
-
-    print(f"\n[FINISH] Auditor mapped {len(floor_library)} floors.")
+    print(f"\n[FINISH] Mapped {len(floor_library)} floors.")
 
 if __name__ == "__main__":
-    run_v52_forensic_audit()
+    run_v6_elastic_audit()
