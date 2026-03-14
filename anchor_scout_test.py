@@ -1,78 +1,58 @@
 import cv2
 import numpy as np
 import os
-import json
 
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_DIR = f"diagnostic_results/MasterAuditor_v71_GPS"
+OUTPUT_DIR = f"diagnostic_results/GroundTruth_v72"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# THE SIX "HOME" ANCHORS
 VALID_ANCHORS = [11, 70, 129, 188, 247, 306]
-MATCH_THRESHOLD = 0.90
 
-def run_v71_gps_auditor():
+def run_v72_ground_truth():
     player_t = cv2.imread("templates/player_right.png", 0)
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
     
-    floor_library = [{"floor": 1, "idx": 0}]
-    last_logged_floor_idx = -100 # Prevent double-logging the same teleport
-
-    # Save Floor 1
-    cv2.imwrite(os.path.join(OUTPUT_DIR, "Floor_001.jpg"), cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[0])))
-
-    print(f"--- Running v7.1 Visual GPS Auditor ---")
+    print(f"--- Running v7.2 Ground Truth Scout ---")
 
     for i in range(len(buffer_files) - 1):
-        if i % 500 == 0: 
-            print(f" [Scanning] Frame {i} | Found: {len(floor_library)}", end='\r')
+        if i % 500 == 0: print(f" [Scanning] Frame {i}...", end='\r')
 
-        img_gray = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]), 0)
-        if img_gray is None: continue
+        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]))
+        if img_bgr is None: continue
+        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-        # 1. FIND PLAYER
-        search_roi = img_gray[230:310, 0:450]
+        # 1. WIDE SEARCH
+        search_roi_y1, search_roi_y2 = 200, 350
+        search_roi = img_gray[search_roi_y1:search_roi_y2, 0:480]
         res = cv2.matchTemplate(search_roi, player_t, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-        if max_val > MATCH_THRESHOLD:
-            current_x = max_loc[0]
+        if max_val > 0.88:
+            # Calculate Absolute Coordinates
+            abs_x = max_loc[0]
+            abs_y = max_loc[1] + search_roi_y1
             
-            # 2. PROXIMITY CHECK (Is the player within 5px of a Home Anchor?)
-            found_anchor = None
+            # DRAW SEARCH BOX (Blue)
+            cv2.rectangle(img_bgr, (0, search_roi_y1), (480, search_roi_y2), (255, 0, 0), 1)
+            
+            # DRAW PLAYER MATCH (Red)
+            cv2.rectangle(img_bgr, (abs_x, abs_y), (abs_x + 40, abs_y + 60), (0, 0, 255), 2)
+            
+            # DRAW VALID ANCHORS (Green Vertical Lines)
             for a in VALID_ANCHORS:
-                if abs(current_x - a) <= 5:
-                    found_anchor = a
-                    break
+                cv2.line(img_bgr, (a, 200), (a, 350), (0, 255, 0), 1)
             
-            # 3. PERMISSION GATE
-            if found_anchor is not None:
-                # Is the "Dig Stage" text pulse active?
-                text_roi = img_gray[130:175, 200:380]
-                text_active = np.mean(text_roi) > 35 
-                
-                # Only log if we haven't logged a floor in the last 5 frames
-                if text_active and (i - last_logged_floor_idx) > 5:
-                    floor_num = len(floor_library) + 1
-                    last_logged_floor_idx = i
-                    
-                    bgr_n = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i]))
-                    bgr_n1 = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i+1]))
-                    
-                    cv2.imwrite(os.path.join(OUTPUT_DIR, f"Floor_{floor_num:03}.jpg"), np.hstack((bgr_n, bgr_n1)))
-                    floor_library.append({"floor": floor_num, "idx": i+1})
-                    
-                    print(f"\n [!] TRIGGER: Floor {floor_num} at Frame {i+1} | Locked to Anchor: {found_anchor} (Real X: {current_x})")
+            # Label with info
+            cv2.putText(img_bgr, f"Score: {max_val:.3f} | X: {abs_x} | Y: {abs_y}", (20, 40), 0, 0.6, (0, 255, 0), 2)
             
-            # DIAGNOSTIC: If score is perfect but no anchor found
-            elif max_val > 0.93:
-                 # Uncomment the line below if it's still silent to see the "Off-Grid" X values
-                 # print(f" [Debug] Strong Match at Frame {i+1} but X={current_x} is not near an anchor.")
-                 pass
-
-    print(f"\n[FINISH] Mapped {len(floor_library)} floors.")
+            cv2.imwrite(os.path.join(OUTPUT_DIR, f"Truth_{i+1:05}.jpg"), img_bgr)
+            
+            # Stop after 30 images to keep it lean
+            if len(os.listdir(OUTPUT_DIR)) > 30:
+                print(f"\n[FINISH] Check {OUTPUT_DIR} to see if red box aligns with green lines.")
+                return
 
 if __name__ == "__main__":
-    run_v71_gps_auditor()
+    run_v72_ground_truth()
