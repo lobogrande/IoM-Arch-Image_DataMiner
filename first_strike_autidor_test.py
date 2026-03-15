@@ -6,7 +6,7 @@ import json
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_ROOT = f"diagnostic_results/Leapfrog_v103"
+OUTPUT_ROOT = f"diagnostic_results/Forensic_v104"
 FINAL_DIR = f"{OUTPUT_ROOT}/confirmed_floors"
 REJECT_DIR = f"{OUTPUT_ROOT}/rejection_audits"
 
@@ -18,18 +18,34 @@ ORE_SLOTS_X = [74, 133, 192, 251, 310, 369]
 ORE_Y = 261
 MATCH_THRESHOLD = 0.92
 
-def get_hud_pixels(img_gray):
-    """Isolates the 'Stage: XXX' number for identity checks."""
-    # Specific ROI for the numeric part of the Stage HUD
-    roi = img_gray[65:105, 135:200]
-    _, thresh = cv2.threshold(roi, 200, 255, cv2.THRESH_BINARY)
-    return thresh
+def get_stage_number(img_gray, digit_tpls):
+    """Uses template matching to read the Stage Number as an integer."""
+    roi = img_gray[65:105, 140:200]
+    _, thresh = cv2.threshold(roi, 210, 255, cv2.THRESH_BINARY)
+    
+    found_digits = []
+    # Simplified horizontal scan for digits
+    for x in range(0, thresh.shape[1]-10):
+        slice_roi = thresh[:, x:x+12]
+        if np.sum(slice_roi) < 50: continue
+        
+        best_val = -1
+        best_digit = None
+        for d, tpl in digit_tpls.items():
+            res = cv2.matchTemplate(slice_roi, tpl, cv2.TM_CCOEFF_NORMED)
+            _, val, _, _ = cv2.minMaxLoc(res)
+            if val > 0.85 and val > best_val:
+                best_val = val
+                best_digit = d
+        if best_digit is not None:
+            found_digits.append(str(best_digit))
+    
+    return "".join(dict.fromkeys(found_digits)) # Remove rapid duplicates
 
-def get_ore_identity(img_gray, slot_idx, templates):
-    """Samples ONLY the grid slot, never the player area."""
+def get_ore_prefix(img_gray, slot_idx, templates):
+    """Returns the prefix (e.g., 'epic2') of the ore in the slot."""
     cx = ORE_SLOTS_X[slot_idx]
-    # Crop a 40x40 area centered on the ORE, not the player
-    roi = img_gray[ORE_Y-20:ORE_Y+20, cx-20:cx+20]
+    roi = img_gray[ORE_Y-22:ORE_Y+22, cx-22:cx+22]
     
     best_name = "none"
     max_val = -1
@@ -38,91 +54,90 @@ def get_ore_identity(img_gray, slot_idx, templates):
         _, val, _, _ = cv2.minMaxLoc(res)
         if val > max_val:
             max_val = val
-            best_name = name
+            best_name = name.split('_')[0] # Take prefix before first underscore
+            
     return best_name if max_val > 0.65 else "empty"
 
-def run_v103_competitive_audit():
-    # 1. LOAD TEMPLATES
+def run_v104_forensic():
+    # 1. LOAD ALL TEMPLATES
     player_t = cv2.imread("templates/player_right.png", 0)
-    ore_tpls = {f.split('.')[0]: cv2.resize(cv2.imread(f"templates/{f}", 0), (40,40)) 
-                for f in os.listdir("templates") if f.endswith('.png') and 'player' not in f}
+    ore_tpls = {f.split('.')[0]: cv2.resize(cv2.imread(f"templates/{f}", 0), (44,44)) 
+                for f in os.listdir("templates") if f.endswith('.png') and 'player' not in f and not f[0].isdigit()}
+    digit_tpls = {int(f.split('.')[0]): cv2.resize(cv2.imread(f"templates/{f}", 0), (12,20))
+                  for f in os.listdir("templates") if f.endswith('.png') and f[0].isdigit()}
     
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
     
-    # 2. SEED INITIAL CANDIDATE (Floor 1)
+    # 2. SEED FLOOR 1
     f1_bgr = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[0]))
     f1_gray = cv2.cvtColor(f1_bgr, cv2.COLOR_BGR2GRAY)
     
     pending = {
         "num": 1, "idx": 0, "slot": 0, "img": f1_bgr.copy(),
-        "hud": get_hud_pixels(f1_gray), "ore": get_ore_identity(f1_gray, 0, ore_tpls)
+        "stage": get_stage_number(f1_gray, digit_tpls),
+        "prefix": get_ore_prefix(f1_gray, 0, ore_tpls)
     }
     
     confirmed_map = []
-    print(f"--- Running v10.3 Competitive Auditor ---")
+    print(f"--- Running v10.4 Forensic Auditor ---")
 
     for i in range(1, len(buffer_files)):
-        if i % 1000 == 0: print(f" [Scan] {i:05} | Confirmed: {len(confirmed_map)}", end='\r')
-
         img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i]))
         if img_bgr is None: continue
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-        # STEP A: PLAYER DETECTION (V1.0 Logic)
+        # FIND CANDIDATE
         search_roi = img_gray[200:350, 0:480]
-        res = cv2.matchTemplate(search_roi, player_t, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+        _, max_val, _, max_loc = cv2.minMaxLoc(cv2.matchTemplate(search_roi, player_t, cv2.TM_CCOEFF_NORMED))
 
         if max_val > MATCH_THRESHOLD:
             slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 3), None)
             
             if slot is not None:
-                # Shadow check: Is the row empty to the left?
+                # Shadow check
                 is_spawn = True
                 for s in range(slot):
                     if np.mean(img_gray[ORE_Y-5:ORE_Y+5, ORE_SLOTS_X[s]-5:ORE_SLOTS_X[s]+5]) > 60:
                         is_spawn = False; break
                 
                 if is_spawn and (i - pending['idx'] > 5):
-                    # We have a candidate boundary.
-                    cur_hud = get_hud_pixels(img_gray)
-                    cur_ore = get_ore_identity(img_gray, slot, ore_tpls)
+                    # NEW CANDIDATE FOUND
+                    cur_stage = get_stage_number(img_gray, digit_tpls)
+                    cur_prefix = get_ore_prefix(img_gray, slot, ore_tpls)
                     
                     is_miss_call = False
                     if slot == pending['slot']:
-                        # THE COMPETITIVE AUDIT: HUD and ORE must differ
-                        hud_diff = np.sum(cv2.absdiff(cur_hud, pending['hud']))
-                        ore_match = (cur_ore == pending['ore'])
+                        # COMPETITIVE AUDIT
+                        stage_match = (cur_stage == pending['stage']) and (cur_stage != "")
+                        prefix_match = (cur_prefix == pending['prefix']) and (cur_prefix != "empty")
                         
-                        if hud_diff < 150 and ore_match:
+                        if stage_match and prefix_match:
                             is_miss_call = True
-                            # Save Rejection Evidence
+                            # SAVE REJECTION EVIDENCE
                             canvas = np.hstack((cv2.resize(pending['img'], (400,500)), cv2.resize(img_bgr, (400,500))))
-                            cv2.putText(canvas, f"REJECT: Same HUD/Ore({cur_ore})", (20, 40), 0, 0.6, (0,0,255), 2)
-                            cv2.imwrite(os.path.join(REJECT_DIR, f"Reject_Frame_{i:05}.jpg"), canvas)
+                            cv2.putText(canvas, f"REJECT: Stage {cur_stage} | Ore {cur_prefix}", (10, 30), 0, 0.6, (0,0,255), 2)
+                            cv2.imwrite(os.path.join(REJECT_DIR, f"Reject_Stage{cur_stage}_Frame{i}.jpg"), canvas)
 
                     if not is_miss_call:
-                        # LEAPFROG COMMIT: Save the pending floor
+                        # CONFIRM PREVIOUS
                         f_num = pending['num']
                         out_img = pending['img']
-                        # Draw box on ORE slot, not player
                         ox = ORE_SLOTS_X[pending['slot']]
-                        cv2.rectangle(out_img, (ox-22, ORE_Y-22), (ox+22, ORE_Y+22), (255, 255, 0), 2)
-                        cv2.putText(out_img, f"Ore: {pending['ore']}", (ox-20, ORE_Y-30), 0, 0.5, (255,255,0), 1)
+                        cv2.rectangle(out_img, (ox-22, ORE_Y-22), (ox+22, ORE_Y+22), (0, 255, 255), 2)
+                        cv2.putText(out_img, f"Ore: {pending['prefix']} | S:{pending['stage']}", (20, 40), 0, 0.7, (0,255,255), 2)
                         
                         cv2.imwrite(os.path.join(FINAL_DIR, f"Floor_{f_num:03}_Frame_{pending['idx']:05}.jpg"), out_img)
-                        confirmed_map.append({"floor": f_num, "idx": pending['idx'], "ore": pending['ore']})
-                        
-                        print(f"\n [!] CONFIRMED F{f_num} at Frame {pending['idx']}")
+                        confirmed_map.append({"floor": f_num, "idx": pending['idx'], "stage": pending['stage'], "ore": pending['prefix']})
+                        print(f"\n [!] CONFIRMED F{f_num} | Stage {pending['stage']} | Frame {pending['idx']}")
 
-                        # Leapfrog: Current candidate becomes the new pending
+                        # LEAPFROG
                         pending = {
                             "num": f_num + 1, "idx": i, "slot": slot, 
-                            "img": img_bgr.copy(), "hud": cur_hud, "ore": cur_ore
+                            "img": img_bgr.copy(), "stage": cur_stage, "prefix": cur_prefix
                         }
 
-    with open(f"Run_0_FloorMap_v103.json", 'w') as f:
+    with open(f"Run_0_FloorMap_v104.json", 'w') as f:
         json.dump(confirmed_map, f, indent=4)
 
 if __name__ == "__main__":
-    run_v103_competitive_audit()
+    run_v104_forensic()
