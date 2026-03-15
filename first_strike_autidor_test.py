@@ -6,99 +6,105 @@ import json
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_ROOT = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_DIR = f"diagnostic_results/FirstStrike_v10"
+OUTPUT_DIR = f"diagnostic_results/FirstStrike_v101"
+REJECT_DIR = f"{OUTPUT_DIR}/rejection_audits"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(REJECT_DIR, exist_ok=True)
 
-# THE 6 VERIFIED GREEN-LINE ANCHORS
-# Player X positions matching Slot 0, 1, 2, 3, 4, 5
 VALID_ANCHORS = [11, 70, 129, 188, 247, 306]
-# Center X of Ores for "Shadow Check" (Slot 0, 1, 2, 3, 4, 5)
 ORE_SLOTS_X = [74, 133, 192, 251, 310, 369] 
-ORE_Y = 261 # Center of Row 1
-
+ORE_Y = 261
 MATCH_THRESHOLD = 0.92
 
-def is_slot_occupied(img_gray, slot_idx):
-    """Detects if any ore (shadow or active) exists in a specific slot."""
+def get_ore_id(img_gray, slot_idx, templates):
+    """Identifies the ore in the slot using template matching."""
     cx = ORE_SLOTS_X[slot_idx]
-    # Sample a 14x14 box at the center of the slot
-    roi = img_gray[ORE_Y-7:ORE_Y+7, cx-7:cx+7]
-    # If the average brightness is high, an ore is present
-    return np.mean(roi) > 60 
+    # Crop the specific slot area (slightly tight to avoid floor noise)
+    roi = img_gray[ORE_Y-20:ORE_Y+24, cx-24:cx+24]
+    
+    best_match = "unknown"
+    max_val = -1
+    
+    for name, tpl in templates.items():
+        res = cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED)
+        _, val, _, _ = cv2.minMaxLoc(res)
+        if val > max_val:
+            max_val = val
+            best_match = name
+    
+    return best_match if max_val > 0.65 else "empty"
 
-def run_v10_first_strike():
+def get_hud_hash(img_gray):
+    """Hashes the Stage Number box for identical-state detection."""
+    roi = img_gray[65:100, 140:200]
+    return hash(roi.tobytes())
+
+def run_v101_audit():
+    # Load Templates
     player_t = cv2.imread("templates/player_right.png", 0)
+    ore_tpls = {f.split('.')[0]: cv2.resize(cv2.imread(f"templates/{f}", 0), (40,40)) 
+                for f in os.listdir("templates") if f.endswith('.png') and 'player' not in f}
+    
     buffer_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
     
-    # 1. INITIALIZE FLOOR 1
-    floor_library = [{"floor": 1, "idx": 0, "anchor_slot": 0}]
-    img_f1 = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[0]))
-    cv2.imwrite(os.path.join(OUTPUT_DIR, "Floor_001_Frame_00000.jpg"), img_f1)
+    # Init Floor 1
+    f1_img = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[0]))
+    floor_library = [{"floor": 1, "idx": 0, "slot": 0, "ore": "start", "hash": get_hud_hash(cv2.cvtColor(f1_img, cv2.COLOR_BGR2GRAY))}]
+    cv2.imwrite(os.path.join(OUTPUT_DIR, "Floor_001_F00000.jpg"), f1_img)
 
-    print(f"--- Running v10.0 First-Strike Auditor ---")
-    
-    last_logged_idx = 0
+    print(f"--- Running v10.1 Double-Pass Auditor ---")
 
     for i in range(1, len(buffer_files)):
-        # Terminal Tracking
-        if i % 1000 == 0: 
-            print(f" [Scanning] Frame {i:05} | Floors Mapped: {len(floor_library)}", end='\r')
+        if i % 1000 == 0: print(f" [Scanning] Frame {i} | Found: {len(floor_library)}", end='\r')
 
         img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[i]))
         if img_bgr is None: continue
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-        # STEP 1: MATCH PLAYER ONLY IN TOP ROW
-        # ROI focused on the Row 1 player belt
+        # PASS 1: Player Position & Shadow Check
         search_roi = img_gray[200:350, 0:480]
-        res = cv2.matchTemplate(search_roi, player_t, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+        _, max_val, _, max_loc = cv2.minMaxLoc(cv2.matchTemplate(search_roi, player_t, cv2.TM_CCOEFF_NORMED))
 
         if max_val > MATCH_THRESHOLD:
             current_x = max_loc[0]
-            
-            # STEP 2: FIND WHICH SLOT PLAYER IS ANCHORED TO
-            anchor_slot = None
-            for idx, a in enumerate(VALID_ANCHORS):
-                if abs(current_x - a) <= 3:
-                    anchor_slot = idx
-                    break
+            anchor_slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(current_x - a) <= 3), None)
             
             if anchor_slot is not None:
-                # STEP 3: THE "LOOK LEFT" SHADOW CHECK
-                # If we are at Slot 2, check Slots 0 and 1.
-                is_first_frame = True
+                # Shadow check: No ores to the left
+                is_clean_spawn = True
                 for s in range(anchor_slot):
-                    if is_slot_occupied(img_gray, s):
-                        is_first_frame = False
-                        break
+                    cx = ORE_SLOTS_X[s]
+                    if np.mean(img_gray[ORE_Y-5:ORE_Y+5, cx-5:cx+5]) > 60:
+                        is_clean_spawn = False; break
                 
-                if is_first_frame:
-                    # COOLDOWN: Prevent logging the same teleport window multiple times
-                    if (i - last_logged_idx) > 20:
-                        floor_num = len(floor_library) + 1
-                        last_logged_idx = i
-                        
-                        # Output Image with Outline
-                        cv2.rectangle(img_bgr, (max_loc[0], max_loc[1]+200), 
-                                      (max_loc[0]+40, max_loc[1]+260), (0, 0, 255), 2)
-                        
-                        filename = f"Floor_{floor_num:03}_Frame_{i:05}.jpg"
-                        cv2.imwrite(os.path.join(OUTPUT_DIR, filename), img_bgr)
-                        
-                        floor_library.append({
-                            "floor": floor_num, 
-                            "idx": i, 
-                            "anchor_slot": anchor_slot
-                        })
-                        
-                        print(f"\n [!] NEW FLOOR: {floor_num} | Frame: {i} | Slot: {anchor_slot}")
+                if is_clean_spawn:
+                    # PASS 2: Double-Verification
+                    current_ore = get_ore_id(img_gray, anchor_slot, ore_tpls)
+                    current_hash = get_hud_hash(img_gray)
+                    last_call = floor_library[-1]
 
-    # FINAL EXPORT
-    with open(f"Run_0_FloorMap_v10.json", 'w') as f:
+                    # If player at same slot, verify Ore & HUD
+                    if anchor_slot == last_call['slot']:
+                        if current_ore == last_call['ore'] and current_hash == last_call['hash']:
+                            # REJECTED: Stationary Miss-call
+                            bgr_prev = cv2.imread(os.path.join(BUFFER_ROOT, buffer_files[last_call['idx']]))
+                            # Annotation
+                            cv2.putText(img_bgr, f"REJECT: Same Ore ({current_ore})", (20, 50), 0, 0.6, (0,0,255), 2)
+                            comparison = np.hstack((cv2.resize(bgr_prev, (480, 640)), cv2.resize(img_bgr, (480, 640))))
+                            cv2.imwrite(os.path.join(REJECT_DIR, f"Reject_F{len(floor_library)+1}_at_Frame_{i}.jpg"), comparison)
+                            continue
+
+                    # Confirmed New Floor
+                    floor_num = len(floor_library) + 1
+                    floor_library.append({"floor": floor_num, "idx": i, "slot": anchor_slot, "ore": current_ore, "hash": current_hash})
+                    
+                    cv2.rectangle(img_bgr, (max_loc[0], max_loc[1]+200), (max_loc[0]+40, max_loc[1]+260), (0,255,0), 2)
+                    cv2.putText(img_bgr, f"Ore: {current_ore}", (max_loc[0], max_loc[1]+190), 0, 0.5, (0,255,0), 1)
+                    cv2.imwrite(os.path.join(OUTPUT_DIR, f"Floor_{floor_num:03}_Frame_{i:05}.jpg"), img_bgr)
+                    print(f"\n [!] CONFIRMED: Floor {floor_num} | Frame {i} | Ore: {current_ore}")
+
+    with open(f"Run_0_FloorMap_v101.json", 'w') as f:
         json.dump(floor_library, f, indent=4)
 
-    print(f"\n[FINISH] Analysis complete. {len(floor_library)} floors mapped.")
-
 if __name__ == "__main__":
-    run_v10_first_strike()
+    run_v101_audit()
