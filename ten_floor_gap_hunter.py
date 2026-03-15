@@ -3,20 +3,18 @@ import numpy as np
 import os
 import json
 
-# --- VERIFIED CONSTANTS ---
+# --- CALIBRATED CONSTANTS ---
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 HEADER_ROI = (54, 74, 103, 138)
 VALID_ANCHORS = [11, 70, 129, 188, 247, 306]
-PLAYER_MATCH_THRESHOLD = 0.80 
-BG_MATCH_THRESHOLD = 0.88 
 
 ORE_RESTRICTIONS = {
     'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31)
 }
 
-def get_grid_dna_v16_6(img_gray):
-    """Bottom-right sampling to stay clear of damage text."""
+def get_grid_dna_v16_7(img_gray):
+    """Bottom-right sampling for noise-free DNA."""
     dna = ""
     for slot in range(24):
         row, col = divmod(slot, 6)
@@ -28,7 +26,7 @@ def get_grid_dna_v16_6(img_gray):
         dna += "1" if np.mean(roi) > 58 else "0"
     return dna
 
-def get_ore_id_v16_6(img_gray, slot_idx, current_floor, templates):
+def get_ore_id_v16_7(img_gray, slot_idx, current_floor, templates):
     cx = int(SLOT1_CENTER[0] + (slot_idx * STEP_X))
     cy = SLOT1_CENTER[1]
     roi = img_gray[cy-24:cy+24, cx-24:cx+24]
@@ -41,17 +39,15 @@ def get_ore_id_v16_6(img_gray, slot_idx, current_floor, templates):
                 res = cv2.matchTemplate(roi, t_img, cv2.TM_CCOEFF_NORMED)
                 score = cv2.minMaxLoc(res)[1]
                 if score > best['score']: best = {'tier': tier, 'score': score}
-    return best['tier'] if best['score'] > 0.78 else "empty"
+    return best['tier'] if best['score'] > 0.76 else "empty"
 
-def run_v16_6_player_anchored():
+def run_v16_7_pulse_hunter():
     buffer_root = "capture_buffer_0"
-    out_dir = "gap_hunter_v16_6"
+    out_dir = "gap_hunter_v16_7"
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
 
-    # 1. ASSET LOADING
-    bg_tpls = [cv2.resize(cv2.imread(f"templates/background_plain_{i}.png", 0), (48, 48)) for i in range(8)]
+    # Asset Loading
     player_t = cv2.imread("templates/player_right.png", 0)
-    
     ore_tpls = {'ore': {}}
     for f in os.listdir("templates"):
         if "_" in f and f.endswith(".png") and not f.startswith("background"):
@@ -65,60 +61,57 @@ def run_v16_6_player_anchored():
     
     # SEED ANCHOR
     f1_gray = cv2.imread(os.path.join(buffer_root, files[0]), 0)
+    res_init = cv2.matchTemplate(f1_gray[150:420, 0:480], player_t, cv2.TM_CCOEFF_NORMED)
+    _, _, _, max_loc_init = cv2.minMaxLoc(res_init)
+    
     anchor = {
-        "num": 1, "idx": 0, "slot": 0, "img": cv2.imread(os.path.join(buffer_root, files[0])),
+        "num": 1, "idx": 0, "pos": max_loc_init, "img": cv2.imread(os.path.join(buffer_root, files[0])),
         "hud": f1_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]],
-        "ore": get_ore_id_v16_6(f1_gray, 0, 1, ore_tpls),
-        "dna": get_grid_dna_v16_6(f1_gray)
+        "ore": get_ore_id_v16_7(f1_gray, 0, 1, ore_tpls),
+        "dna": get_grid_dna_v16_7(f1_gray)
     }
     confirmed = []
 
-    print("--- Running v16.6 Player-Anchored Early Hunter ---")
+    print("--- Running v16.7 Pulse-Hunter Early Auditor ---")
 
     for i in range(1, 173):
         img_gray = cv2.imread(os.path.join(buffer_root, files[i]), 0)
         
-        # TRIGGER 1: PLAYER SPRITE (The Master Anchor)
+        # 1. SEEKER: Get player position regardless of confidence
         res = cv2.matchTemplate(img_gray[150:420, 0:480], player_t, cv2.TM_CCOEFF_NORMED)
         _, max_v, _, max_loc = cv2.minMaxLoc(res)
+        
+        # 2. PULSE: Did the player jump spatially?
+        dist = np.sqrt((max_loc[0] - anchor['pos'][0])**2 + (max_loc[1] - anchor['pos'][1])**2)
+        
+        cur_hud = img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+        mae = np.mean(cv2.absdiff(cur_hud, anchor['hud']))
+        cur_dna = get_grid_dna_v16_7(img_gray)
 
-        if max_v > PLAYER_MATCH_THRESHOLD:
-            slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 12), None)
+        # TRIGGER: Spatial Jump OR HUD Change OR DNA Change
+        if (dist > 30 or mae > 2.0 or cur_dna != anchor['dna']) and (i - anchor['idx'] > 2):
+            slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 18), 0)
             
-            if slot is not None:
-                # VALIDATION 1: BACKGROUND CHECK (Is this a fresh floor?)
-                all_clear = True
-                for s in range(slot):
-                    roi = img_gray[261-24:261+24, int(SLOT1_CENTER[0]+s*STEP_X)-24:int(SLOT1_CENTER[0]+s*STEP_X)+24]
-                    if cv2.matchTemplate(roi, bg_tpls[0], cv2.TM_CCOEFF_NORMED).max() < BG_MATCH_THRESHOLD:
-                        all_clear = False; break
+            # COMMIT
+            f_num = anchor['num']
+            cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
+            confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
+            print(f" [COMMIT] Floor {f_num} at Index {anchor['idx']}")
+            
+            # NEW ANCHOR
+            target_f = f_num + 1
+            anchor = {
+                "num": target_f, "idx": i, "pos": max_loc, 
+                "img": cv2.imread(os.path.join(buffer_root, files[i])), 
+                "hud": cur_hud.copy(), 
+                "ore": get_ore_id_v16_7(img_gray, slot, target_f, ore_tpls),
+                "dna": cur_dna
+            }
 
-                if all_clear:
-                    cur_hud = img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-                    cur_dna = get_grid_dna_v16_6(img_gray)
-                    mae = np.mean(cv2.absdiff(cur_hud, anchor['hud']))
-
-                    # TRIGGER 2: IDENTITY PERSISTENCE
-                    # Commit if the HUD shifted OR the Grid layout changed
-                    if (mae > 2.5 or cur_dna != anchor['dna']) and (i - anchor['idx'] > 2):
-                        
-                        f_num = anchor['num']
-                        cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
-                        confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
-                        print(f" [OK] Stage {f_num} Confirmed at Index {anchor['idx']}")
-                        
-                        target_floor = f_num + 1
-                        anchor = {
-                            "num": target_floor, "idx": i, "slot": slot, 
-                            "img": cv2.imread(os.path.join(buffer_root, files[i])), 
-                            "hud": cur_hud, "ore": get_ore_id_v16_6(img_gray, slot, target_floor, ore_tpls),
-                            "dna": cur_dna
-                        }
-
-    # COMMIT FINAL
+    # FINAL COMMIT
     cv2.imwrite(f"{out_dir}/confirmed/F{anchor['num']:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
     confirmed.append({"floor": anchor['num'], "idx": anchor['idx'], "ore": anchor['ore']})
     print(f"\n[FINISH] Verified {len(confirmed)} floors.")
 
 if __name__ == "__main__":
-    run_v16_6_player_anchored()
+    run_v16_7_pulse_hunter()
