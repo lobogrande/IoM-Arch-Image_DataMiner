@@ -3,13 +3,13 @@ import numpy as np
 import os
 import json
 
-# --- VERIFIED CONSTANTS ---
+# --- VERIFIED HARD CONSTANTS ---
 SLOT1_CENTER = (74, 261)
 STEP_X = 59.1
 AI_DIM = 48
 HEADER_ROI = (54, 74, 103, 138)
 VALID_ANCHORS = [11, 70, 129, 188, 247, 306]
-MATCH_THRESHOLD = 0.92
+MATCH_THRESHOLD = 0.90 # Lowered to ensure we catch high-energy Frame 63 snaps
 
 def get_spatial_mask():
     mask = np.zeros((AI_DIM, AI_DIM), dtype=np.uint8)
@@ -35,9 +35,10 @@ def get_ore_id(img_gray, slot_idx, templates, mask):
                     best_ore = {'tier': tier, 'score': score}
     return best_ore['tier'] if best_ore['score'] > 0.80 else "empty"
 
-def run_v11_5_anchor_lock():
+def run_v11_7_state_lock():
     mask = get_spatial_mask()
     player_t = cv2.imread("templates/player_right.png", 0)
+    
     ore_tpls = {'ore': {}, 'bg': []}
     for f in os.listdir("templates"):
         img = cv2.imread(f"templates/{f}", 0)
@@ -51,12 +52,12 @@ def run_v11_5_anchor_lock():
             if state in ['act', 'sha']: ore_tpls['ore'][tier][state].append(img)
 
     BUFFER_ROOT = "capture_buffer_0"
-    OUT = "diagnostic_results/AnchorLock_v11_5"
+    OUT = "diagnostic_results/StateLock_v11_7"
     for d in ["confirmed", "rejects"]: os.makedirs(f"{OUT}/{d}", exist_ok=True)
     
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
 
-    # 1. INITIAL FLOOR ANCHOR (Start of Run)
+    # 1. INITIAL ANCHOR
     f1_gray = cv2.imread(os.path.join(BUFFER_ROOT, files[0]), 0)
     f1_bytes, f1_roi = get_hud_state(f1_gray)
     anchor = {
@@ -66,67 +67,60 @@ def run_v11_5_anchor_lock():
     }
 
     confirmed = []
-    diff_maturity = 0 
-
-    print("--- Running v11.5 Immutable Anchor Auditor ---")
+    
+    print("--- Running v11.7 High-Res State Lock Auditor ---")
 
     for i in range(1, len(files)):
+        if i % 1000 == 0: print(f" [Scan] {i:05}...", end='\r')
+        
         img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, files[i]))
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-        # CANDIDATE DETECTION
-        res = cv2.matchTemplate(img_gray[200:350, 0:480], player_t, cv2.TM_CCOEFF_NORMED)
+        # WIDER SEARCH AREA
+        res = cv2.matchTemplate(img_gray[180:360, 0:480], player_t, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
         if max_val > MATCH_THRESHOLD:
-            slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 3), None)
+            slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 4), None)
             if slot is not None:
-                # Shadow Check (Row 1 Lock)
+                # Shadow Check
                 is_spawn = True
                 for s in range(slot):
                     cx = int(SLOT1_CENTER[0] + (s * STEP_X))
                     if np.mean(img_gray[261-7:261+7, cx-7:cx+7]) > 55: is_spawn = False; break
                 
-                if is_spawn and (i - anchor['idx'] > 4):
+                if is_spawn and (i - anchor['idx'] > 2): # Reduced buffer to catch 63 early
                     cur_bytes, cur_roi = get_hud_state(img_gray)
                     cur_ore = get_ore_id(img_gray, slot, ore_tpls, mask)
                     
-                    # THE ANCHOR COMPARISON
-                    # If this candidate matches the current floor anchor, it is rejected immediately.
-                    is_clone = (cur_bytes == anchor['hud_bytes'] and cur_ore == anchor['ore'] and slot == anchor['slot'])
-
-                    if is_clone:
-                        diff_maturity = 0 
+                    # LOGIC: If HUD is identical to anchor, it IS a duplicate.
+                    if cur_bytes == anchor['hud_bytes'] and cur_ore == anchor['ore']:
                         canvas = np.hstack((cv2.resize(anchor['hud_visual'], (160, 100)), cv2.resize(cur_roi, (160, 100))))
-                        cv2.putText(canvas, "STILL ON ANCHOR", (10, 20), 0, 0.4, (0,0,255), 1)
+                        cv2.putText(canvas, "LOCK REJECT", (10, 20), 0, 0.4, (0,0,255), 1)
                         cv2.imwrite(f"{OUT}/rejects/Reject_Idx_{i:05}.jpg", canvas)
-                        continue
+                        continue 
 
                     else:
-                        # VALIDATE STATE CHANGE
-                        # A new candidate must remain different for 3 frames to confirm the previous floor was clear.
-                        diff_maturity += 1
-                        if diff_maturity >= 3:
-                            # COMMIT PREVIOUS ANCHOR
-                            f_num = anchor['num']
-                            out_img = anchor['img']
-                            cx_box = int(SLOT1_CENTER[0] + (anchor['slot'] * STEP_X))
-                            cv2.rectangle(out_img, (cx_box-24, 261-24), (cx_box+24, 261+24), (0,255,255), 2)
-                            cv2.putText(out_img, f"Ore:{anchor['ore']}", (20, 50), 0, 0.7, (255,255,255), 2)
-                            cv2.imwrite(f"{OUT}/confirmed/Floor_{f_num:03}_Frame_{anchor['idx']:05}.jpg", out_img)
-                            
-                            confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
-                            print(f" [COMMIT] F{f_num} (Anchor Index {anchor['idx']})")
+                        # NEW FLOOR DETECTED
+                        # Commit the OLD locked anchor
+                        f_num = anchor['num']
+                        out_img = anchor['img']
+                        cx_box = int(SLOT1_CENTER[0] + (anchor['slot'] * STEP_X))
+                        cv2.rectangle(out_img, (cx_box-24, 261-24), (cx_box+24, 261+24), (0,255,255), 2)
+                        cv2.putText(out_img, f"Ore:{anchor['ore']}", (20, 50), 0, 0.7, (255,255,255), 2)
+                        cv2.imwrite(f"{OUT}/confirmed/Floor_{f_num:03}_Frame_{anchor['idx']:05}.jpg", out_img)
+                        
+                        confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
+                        print(f" [OK] Locked F{f_num} at Frame {anchor['idx']}")
 
-                            # LOCK NEW ANCHOR
-                            anchor = {
-                                "num": f_num + 1, "idx": i, "slot": slot, "img": img_bgr.copy(),
-                                "hud_bytes": cur_bytes, "hud_visual": cur_roi, "ore": cur_ore
-                            }
-                            diff_maturity = 0
+                        # LOCK NEW ANCHOR (the very first frame of the new state)
+                        anchor = {
+                            "num": f_num + 1, "idx": i, "slot": slot, "img": img_bgr.copy(),
+                            "hud_bytes": cur_bytes, "hud_visual": cur_roi, "ore": cur_ore
+                        }
 
-    with open("Run_0_FloorMap_v11_5.json", 'w') as f:
+    with open("Run_0_FloorMap_v11_7.json", 'w') as f:
         json.dump(confirmed, f, indent=4)
 
 if __name__ == "__main__":
-    run_v11_5_anchor_lock()
+    run_v11_7_state_lock()
