@@ -3,7 +3,7 @@ import numpy as np
 import os
 import json
 
-# --- PRODUCTION CONSTANTS ---
+# --- BASELINE V18.0 CONSTANTS ---
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 HEADER_ROI = (54, 74, 103, 138)
@@ -58,9 +58,9 @@ def get_ore_id_v18(img_gray, slot_idx, current_floor, templates):
                 if score > best['score']: best = {'tier': tier, 'score': score}
     return best['tier'] if best['score'] > 0.77 else "empty"
 
-def run_v18_production_audit():
+def run_v18_1_production_audit():
     buffer_root = "capture_buffer_0"
-    out_dir = "production_audit_v18"
+    out_dir = "production_audit_v18_1"
     for d in ["confirmed", "debug"]: os.makedirs(f"{out_dir}/{d}", exist_ok=True)
 
     # 1. ASSET LOADING
@@ -92,7 +92,7 @@ def run_v18_production_audit():
     }
     confirmed = []
 
-    print("--- Running v18.0 Production Auditor ---")
+    print("--- Running v18.1 Production Auditor with First-Row Player Enforcement ---")
 
     for i in range(1, len(files)):
         if i % 1000 == 0: print(f" Auditing {i}/{len(files)}...", end='\r')
@@ -111,38 +111,54 @@ def run_v18_production_audit():
         cur_dna = get_grid_dna_v18(img_gray)
         dna_diff = sum(1 for a, b in zip(cur_dna, anchor['dna']) if a != b)
 
-        # C. HIERARCHICAL TRIGGER
+        # C. HIERARCHICAL TRIGGER WITH ENFORCEMENT
         commit_reason = None
         if (i - anchor['idx'] > 2):
             if mae > 3.5: commit_reason = "HUD"
             elif dist > 50 and dna_diff >= 4: commit_reason = "STEALTH"
 
         if commit_reason:
-            slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 15), 0)
+            slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 15), None)
             
-            # COMMIT PREVIOUS
-            f_num = anchor['num']
-            out_img = anchor['img']
-            cv2.putText(out_img, f"F{f_num} {anchor['ore']}", (20, 50), 0, 0.7, (255,255,255), 2)
-            cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{anchor['idx']:05}.jpg", out_img)
-            confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
-            
-            # UPDATE ANCHOR
-            target_f = f_num + 1
-            anchor = {
-                "num": target_f, "idx": i, "pos": max_loc, "slot": slot,
-                "img": img_bgr.copy(), "hud": cur_hud.copy(), 
-                "ore": get_ore_id_v18(img_gray, slot, target_f, ore_tpls),
-                "dna": cur_dna
-            }
+            # --- VALIDATION ENFORCEMENT ---
+            # If a slot is found, enforce that it must be in the first row (slots 0-5)
+            # Row = slot // 6. Row 0 means Row == 0.
+            if slot is not None and (slot // 6 == 0):
+                # COMMIT PREVIOUS
+                f_num = anchor['num']
+                out_img = anchor['img']
+                cv2.putText(out_img, f"F{f_num} {anchor['ore']}", (20, 50), 0, 0.7, (255,255,255), 2)
+                cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{anchor['idx']:05}.jpg", out_img)
+                confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
+                
+                # UPDATE ANCHOR
+                target_f = f_num + 1
+                anchor = {
+                    "num": target_f, "idx": i, "pos": max_loc, "slot": slot,
+                    "img": img_bgr.copy(), "hud": cur_hud.copy(), 
+                    "ore": get_ore_id_v18(img_gray, slot, target_f, ore_tpls),
+                    "dna": cur_dna
+                }
+            elif slot is not None:
+                # Debug log: user wanted to reject these, but AI wanted to accept them.
+                # We save a debug image to show why we are NOT advancing.
+                reason = "rejected_row_constraint"
+                cv2.imwrite(f"{out_dir}/debug/rejected_F{anchor['num'] + 1}_Idx{i:05}_{reason}.png", img_bgr)
+            else:
+                # This should only happen if the player sprite is lost (blurry).
+                # Save a debug image to investigate the player loss.
+                reason = "player_sprite_not_found"
+                cv2.imwrite(f"{out_dir}/debug/rejected_F{anchor['num'] + 1}_Idx{i:05}_{reason}.png", img_bgr)
 
     # COMMIT FINAL
-    cv2.imwrite(f"{out_dir}/confirmed/F{anchor['num']:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
-    confirmed.append({"floor": anchor['num'], "idx": anchor['idx'], "ore": anchor['ore']})
+    # We add a final check to the seed anchor just in case the final frame had a valid player in row 0.
+    if anchor['slot'] is not None and (anchor['slot'] // 6 == 0):
+        cv2.imwrite(f"{out_dir}/confirmed/F{anchor['num']:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
+        confirmed.append({"floor": anchor['num'], "idx": anchor['idx'], "ore": anchor['ore']})
 
-    with open("Final_FloorMap_v18.json", "w") as f:
+    with open("Final_FloorMap_v18_1.json", "w") as f:
         json.dump(confirmed, f, indent=4)
     print(f"\n[FINISH] Verified {len(confirmed)} floors.")
 
 if __name__ == "__main__":
-    run_v18_production_audit()
+    run_v18_1_production_audit()
