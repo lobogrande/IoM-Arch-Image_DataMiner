@@ -3,7 +3,7 @@ import numpy as np
 import os
 import json
 
-# --- PRECISION CONSTANTS ---
+# --- PROJECT CONSTANTS ---
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 HEADER_ROI = (54, 74, 103, 138)
@@ -13,7 +13,7 @@ ORE_RESTRICTIONS = {
     'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31)
 }
 
-def get_grid_dna_v17_2(img_gray):
+def get_grid_dna_v17_3(img_gray):
     dna = ""
     for slot in range(24):
         row, col = divmod(slot, 6)
@@ -25,7 +25,7 @@ def get_grid_dna_v17_2(img_gray):
         dna += "1" if np.mean(roi) > 60 else "0"
     return dna
 
-def get_ore_id_v17_2(img_gray, slot_idx, current_floor, templates):
+def get_ore_id_v17_3(img_gray, slot_idx, current_floor, templates):
     cx = int(SLOT1_CENTER[0] + (slot_idx * STEP_X))
     cy = SLOT1_CENTER[1]
     roi = img_gray[cy-24:cy+24, cx-24:cx+24]
@@ -40,9 +40,9 @@ def get_ore_id_v17_2(img_gray, slot_idx, current_floor, templates):
                 if score > best['score']: best = {'tier': tier, 'score': score}
     return best['tier'] if best['score'] > 0.76 else "empty"
 
-def run_v17_2_stage_sync():
+def run_v17_3_triangulated():
     buffer_root = "capture_buffer_0"
-    out_dir = "gap_hunter_v17_2"
+    out_dir = "gap_hunter_v17_3"
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
 
     player_t = cv2.imread("templates/player_right.png", 0)
@@ -60,56 +60,63 @@ def run_v17_2_stage_sync():
     f1_gray = cv2.imread(os.path.join(buffer_root, files[0]), 0)
     res_init = cv2.matchTemplate(f1_gray[150:420, 0:480], player_t, cv2.TM_CCOEFF_NORMED)
     max_loc_init = cv2.minMaxLoc(res_init)[3]
-    init_slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc_init[0] - a) <= 10), 0)
     
     anchor = {
-        "num": 1, "idx": 0, "slot": init_slot, "img": cv2.imread(os.path.join(buffer_root, files[0])),
+        "num": 1, "idx": 0, "pos": max_loc_init, "img": cv2.imread(os.path.join(buffer_root, files[0])),
         "hud": f1_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]],
-        "ore": get_ore_id_v17_2(f1_gray, init_slot, 1, ore_tpls),
-        "dna": get_grid_dna_v17_2(f1_gray)
+        "ore": get_ore_id_v17_3(f1_gray, 0, 1, ore_tpls),
+        "dna": get_grid_dna_v17_3(f1_gray)
     }
     confirmed = []
 
-    print("--- Running v17.2 Stage-Sync Auditor ---")
+    print("--- Running v17.3 Triangulated Auditor ---")
 
     for i in range(1, 173):
         img_gray = cv2.imread(os.path.join(buffer_root, files[i]), 0)
         res = cv2.matchTemplate(img_gray[150:420, 0:480], player_t, cv2.TM_CCOEFF_NORMED)
         _, max_v, _, max_loc = cv2.minMaxLoc(res)
         
-        cur_slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 10), -1)
+        # 1. Calculate the Three Votes
+        # Vote A: Spatial Pulse (Teleport)
+        dist = np.sqrt((max_loc[0] - anchor['pos'][0])**2 + (max_loc[1] - anchor['pos'][1])**2)
+        spatial_vote = (dist > 35)
+
+        # Vote B: DNA Shift (World Change)
+        cur_dna = get_grid_dna_v17_3(img_gray)
+        dna_diff = sum(1 for a, b in zip(cur_dna, anchor['dna']) if a != b)
+        dna_vote = (dna_diff >= 2)
+
+        # Vote C: HUD Variance (Stage Change)
         cur_hud = img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
         mae = np.mean(cv2.absdiff(cur_hud, anchor['hud']))
-        cur_dna = get_grid_dna_v17_2(img_gray)
-        dna_diff = sum(1 for a, b in zip(cur_dna, anchor['dna']) if a != b)
+        hud_vote = (mae > 2.5)
 
-        # THE SYNC GATES
-        # 1. Did the HUD Stage text change significantly?
-        hud_shift = (mae > 4.5) 
-        # 2. Did the player move to a new slot with a major grid change?
-        world_refresh = (cur_slot != anchor['slot'] and cur_slot != -1 and dna_diff >= 5)
-
-        if (i - anchor['idx'] > 3) and (hud_shift or world_refresh):
+        # 2. Majority Vote Logic (2-out-of-3)
+        votes = [spatial_vote, dna_vote, hud_vote]
+        if sum(votes) >= 2 and (i - anchor['idx'] > 2):
+            
+            slot = next((idx for idx, a in enumerate(VALID_ANCHORS) if abs(max_loc[0] - a) <= 15), 0)
+            
             # Commit Anchor
             f_num = anchor['num']
             cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
             confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
-            print(f" [OK] F{f_num} Locked (Idx {anchor['idx']})")
+            print(f" [OK] Stage {f_num} Locked (Idx {anchor['idx']}, Votes: {sum(votes)}/3)")
             
             # New Anchor
             target_f = f_num + 1
             anchor = {
-                "num": target_f, "idx": i, "slot": cur_slot, 
+                "num": target_f, "idx": i, "pos": max_loc, 
                 "img": cv2.imread(os.path.join(buffer_root, files[i])), 
                 "hud": cur_hud.copy(), 
-                "ore": get_ore_id_v17_2(img_gray, cur_slot, target_f, ore_tpls),
+                "ore": get_ore_id_v17_3(img_gray, slot, target_f, ore_tpls),
                 "dna": cur_dna
             }
 
     # Final Commit
     cv2.imwrite(f"{out_dir}/confirmed/F{anchor['num']:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
     confirmed.append({"floor": anchor['num'], "idx": anchor['idx'], "ore": anchor['ore']})
-    print(f"\n[FINISH] Verified {len(confirmed)} floors.")
+    print(f"\n[FINISH] Verified {len(confirmed)} stages.")
 
 if __name__ == "__main__":
-    run_v17_2_stage_sync()
+    run_v17_3_triangulated()
