@@ -4,7 +4,7 @@ import os
 import json
 
 # --- DEBUG CONTROL ---
-TARGET_FLOOR_LIMIT = 25  # Script will stop after this many transitions
+TARGET_FLOOR_LIMIT = 25  
 
 # --- THE "STABLE" COORDINATES (v21 REBASE) ---
 SLOT1_CENTER = (74, 261)
@@ -12,34 +12,28 @@ STEP_X, STEP_Y = 59.1, 59.1
 HUD_STAGE_ROI = (54, 74, 103, 138) 
 VALID_X_ANCHORS = [11, 70, 129, 188, 247, 306]
 
-def is_slot_clean_v28(img_gray, slot_idx, row_idx, templates, is_sliver=False, side='left'):
+def is_slot_clean_v28_1(img_gray, slot_idx, row_idx, templates, is_sliver=False, side='left'):
     cx = int(SLOT1_CENTER[0] + (slot_idx * STEP_X))
     cy = int(SLOT1_CENTER[1] + (row_idx * STEP_Y))
     
     if is_sliver:
-        # side='left': Right-moving player, check LEFT edge of slot
-        # side='right': Left-moving player, check RIGHT edge of slot
         roi = img_gray[cy-24:cy+24, cx-24:cx-12] if side == 'left' else img_gray[cy-24:cy+24, cx+12:cx+24]
     else:
         roi = img_gray[cy-24:cy+24, cx-24:cx+24]
 
-    # Full Tile = 0.70 threshold, Sliver = 0.77
     thresh = 0.77 if is_sliver else 0.70
     for tier in templates['ore']:
         for state in ['act', 'sha']:
             for t_img in templates['ore'][tier][state]:
-                # Slice template to match ROI
                 t_roi = (t_img[:, :12] if side == 'left' else t_img[:, 36:]) if is_sliver else t_img
                 if cv2.matchTemplate(roi, t_roi, cv2.TM_CCOEFF_NORMED).max() > thresh:
                     return False
     return True
 
-def get_ore_id_v28(img_gray, slot_idx, row_idx, current_floor, templates):
+def get_ore_id_v28_1(img_gray, slot_idx, row_idx, current_floor, templates):
     cx = int(SLOT1_CENTER[0] + (slot_idx * STEP_X))
     cy = int(SLOT1_CENTER[1] + (row_idx * STEP_Y))
     roi = img_gray[cy-24:cy+24, cx-24:cx+24]
-    
-    # Range limit logic for ores
     best = {'tier': 'empty', 'score': 0.0}
     for tier, types in templates['ore'].items():
         for state in ['act', 'sha']:
@@ -49,14 +43,13 @@ def get_ore_id_v28(img_gray, slot_idx, row_idx, current_floor, templates):
                 if score > best['score']: best = {'tier': tier, 'score': score}
     return best['tier'] if best['score'] > 0.77 else "empty"
 
-def run_v28_sanctity_audit():
+def run_v28_1_stable_audit():
     buffer_root = "capture_buffer_0"
-    out_dir = "production_audit_v28"
+    out_dir = "production_audit_v28_1"
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
 
     p_right = cv2.imread("templates/player_right.png", 0)
     p_left = cv2.imread("templates/player_left.png", 0)
-    
     ore_tpls = {'ore': {}}
     for f in os.listdir("templates"):
         if "_" in f and f.endswith(".png") and not f.startswith("background"):
@@ -76,11 +69,10 @@ def run_v28_sanctity_audit():
         "num": 1, "idx": 0, "img": f0_bgr.copy(), 
         "hud": f0_hud.copy(), "pos": (0, 0), "ore": "empty"
     }
-    # Save F1 immediately so user knows script is working
     cv2.imwrite(f"{out_dir}/confirmed/F001_Idx00000.jpg", anchor['img'])
     confirmed = [{"floor": 1, "idx": 0}]
 
-    print(f"--- Running v28.0: Sanctity Rebase (F1 seeded from {files[0]}) ---")
+    print(f"--- Running v28.1: Stabilized Rebase (F1 seeded) ---")
 
     for i in range(1, len(files)):
         if len(confirmed) >= TARGET_FLOOR_LIMIT: break
@@ -88,21 +80,20 @@ def run_v28_sanctity_audit():
         img_bgr = cv2.imread(os.path.join(buffer_root, files[i]))
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        # 1. SCAN MODE SELECTION
-        # Check if the whole top row is empty
-        row1_clean_precheck = all(is_slot_clean_v28(img_gray, s, 0, ore_tpls) for s in range(6))
+        # 1. SCAN MODE SELECTION (Fixed Syntax)
+        row1_is_empty = all(is_slot_clean_v28_1(img_gray, s, 0, ore_tpls) for s in range(6))
         
-        mode, player_loc, actual_y, tpl = None, None, 0, None
-        if not row1_is_empty := row1_clean_precheck:
-            # NORMAL MODE: Right-moving
+        mode, player_loc, actual_y = None, None, 0
+        if not row1_is_empty:
+            # ROW 1 (Priority)
             res = cv2.matchTemplate(img_gray[150:320, 0:480], p_right, cv2.TM_CCOEFF_NORMED)
             v, _, _, loc = cv2.minMaxLoc(res)
-            if v > 0.80: mode, player_loc, actual_y, tpl = 'ROW1', loc, loc[1]+150, p_right
+            if v > 0.80: mode, player_loc, actual_y = 'ROW1', loc, loc[1]+150
         else:
-            # FALLBACK MODE: Left-moving (Row 2)
+            # ROW 2 (Fallback)
             res = cv2.matchTemplate(img_gray[300:450, 0:480], p_left, cv2.TM_CCOEFF_NORMED)
             v, _, _, loc = cv2.minMaxLoc(res)
-            if v > 0.80: mode, player_loc, actual_y, tpl = 'ROW2', loc, loc[1]+300, p_left
+            if v > 0.80: mode, player_loc, actual_y = 'ROW2', loc, loc[1]+300
 
         if not mode: continue
 
@@ -114,29 +105,26 @@ def run_v28_sanctity_audit():
             n_slot = next((idx for idx, a in enumerate(VALID_X_ANCHORS) if abs(player_loc[0] - a) <= 15), None)
             if n_slot is None: continue
 
-            # 3. PATH AUDIT (Strict Mirrored Implementation)
+            # 3. PATH AUDIT
             path_is_clean = True
             if mode == 'ROW1':
-                # Check Sliver at N-1 (Left), then Full Tiles 0 to N-2
-                if n_slot > 0 and not is_slot_clean_v28(img_gray, n_slot-1, 0, ore_tpls, True, 'left'): path_is_clean = False
+                if n_slot > 0 and not is_slot_clean_v28_1(img_gray, n_slot-1, 0, ore_tpls, True, 'left'): path_is_clean = False
                 if path_is_clean and n_slot >= 2:
                     for s in range(n_slot-1): 
-                        if not is_slot_clean_v28(img_gray, s, 0, ore_tpls, False): path_is_clean = False; break
-            else: # ROW 2 (Right-to-Left)
-                # Check Sliver at N+1 (Right), then Full Tiles N+2 to 5
-                if n_slot < 5 and not is_slot_clean_v28(img_gray, n_slot+1, 1, ore_tpls, True, 'right'): path_is_clean = False
+                        if not is_slot_clean_v28_1(img_gray, s, 0, ore_tpls, False): path_is_clean = False; break
+            else: # ROW 2
+                if n_slot < 5 and not is_slot_clean_v28_1(img_gray, n_slot+1, 1, ore_tpls, True, 'right'): path_is_clean = False
                 if path_is_clean and n_slot <= 3:
                     for s in range(n_slot+2, 6):
-                        if not is_slot_clean_v28(img_gray, s, 1, ore_tpls, False): path_is_clean = False; break
+                        if not is_slot_clean_v28_1(img_gray, s, 1, ore_tpls, False): path_is_clean = False; break
 
             if path_is_clean:
                 f_num = anchor['num']
                 target_f = f_num + 1
                 r_idx = 0 if mode == 'ROW1' else 1
                 
-                # COMMIT CURRENT ANCHOR AS PREVIOUS FLOOR
-                anchor['ore'] = get_ore_id_v28(img_gray, n_slot, r_idx, target_f, ore_tpls)
-                # Save the new anchor as the current floor start
+                # COMMIT PREVIOUS
+                anchor['ore'] = get_ore_id_v28_1(img_gray, n_slot, r_idx, target_f, ore_tpls)
                 anchor = {
                     "num": target_f, "idx": i, "pos": (player_loc[0], actual_y),
                     "img": img_bgr.copy(), "hud": cur_hud.copy()
@@ -145,7 +133,7 @@ def run_v28_sanctity_audit():
                 confirmed.append({"floor": target_f, "idx": i})
                 print(f" [OK] F{target_f} ({mode}) locked at Index {i}")
 
-    print(f"\n[FINISH] Verified {len(confirmed)} floors.")
+    print(f"\n[FINISH] Scanned {len(files)} frames. Total confirmed: {len(confirmed)}.")
 
 if __name__ == "__main__":
-    run_v28_sanctity_audit()
+    run_v28_1_stable_audit()
