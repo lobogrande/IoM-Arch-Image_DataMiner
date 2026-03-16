@@ -3,6 +3,10 @@ import numpy as np
 import os
 import time
 
+# --- DEBUG CONTROL ---
+TARGET_FLOOR_LIMIT = 25  # Script stops after this many floors are found
+SCAN_LIMIT = 20000
+
 # --- PRODUCTION CONSTANTS ---
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
@@ -12,6 +16,7 @@ VALID_X_ANCHORS = [11, 70, 129, 188, 247, 306]
 PLAYER_ROI_Y = (120, 420)
 ROW_1_Y_ZONE = (150, 320)
 ROW_0_MAX_Y = 300 
+HEARTBEAT_INTERVAL = 250
 
 ORE_RESTRICTIONS = {
     'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31), 'myth1': (20, 34), 'div1': (50, 74),
@@ -19,7 +24,8 @@ ORE_RESTRICTIONS = {
     'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
 }
 
-# --- HELPERS FROM v4.56 ---
+# --- HELPERS ---
+
 def get_combined_mask(is_text_heavy_slot=False):
     mask = np.zeros((AI_DIM, AI_DIM), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
@@ -51,9 +57,8 @@ def get_slot_status_v456(roi_gray, full_img_bgr, rect, mask, templates, prev_bit
     is_dirty = (delta > 0.065 if is_row1 else delta > 0.04) or (bg_s < 0.82)
     return "1" if is_dirty else "0"
 
-# --- HELPERS FROM v35.0 ---
 def is_slot_clean_v35(img_gray, slot_idx, templates, is_sliver=False):
-    cx, cy = int(SLOT1_CENTER[0] + (slot_idx * STEP_X)), SLOT1_CENTER[1]
+    cx, cy = int(SLOT1_CENTER[0] + (slot_idx * STEP_X)), int(SLOT1_CENTER[1])
     roi = img_gray[cy-24:cy+24, cx-24:cx-12] if is_sliver else img_gray[cy-24:cy+24, cx-24:cx+24]
     for tier, types in templates['ore'].items():
         for state in ['act', 'sha']:
@@ -64,7 +69,7 @@ def is_slot_clean_v35(img_gray, slot_idx, templates, is_sliver=False):
     return True
 
 def get_ore_id_v21(img_gray, slot_idx, current_floor, templates):
-    cx, cy = int(SLOT1_CENTER[0] + (slot_idx * STEP_X)), SLOT1_CENTER[1]
+    cx, cy = int(SLOT1_CENTER[0] + (slot_idx * STEP_X)), int(SLOT1_CENTER[1])
     roi = img_gray[cy-24:cy+24, cx-24:cx+24]
     audit_roi = roi[12:, :] if slot_idx in [2, 3] else roi
     allowed = [p for p, (m, x) in ORE_RESTRICTIONS.items() if m <= current_floor <= x]
@@ -77,42 +82,60 @@ def get_ore_id_v21(img_gray, slot_idx, current_floor, templates):
                 if score > best['score']: best = {'tier': tier, 'score': score}
     return best['tier'] if best['score'] > 0.77 else "empty"
 
-def run_v5_hybrid_auditor():
+# --- MAIN ENGINE ---
+
+def run_v5_03_hybrid_master():
     buffer_root, out_dir = "capture_buffer_0", "production_audit_HYBRID"
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
     
-    # LOAD TEMPLATES
     p_right, p_left = cv2.imread("templates/player_right.png", 0), cv2.imread("templates/player_left.png", 0)
     ore_tpls = {'ore': {}, 'bg': []}
     for f in os.listdir("templates"):
         img = cv2.imread(os.path.join("templates", f), 0)
         if img is None: continue
-        img = cv2.resize(img, (48, 48))
-        if f.startswith("background"): ore_tpls['bg'].append(img)
-        elif "_" in f:
-            tier, state = f.split("_")[0], f.split("_")[1].replace(".png","")
-            if tier not in ore_tpls['ore']: ore_tpls['ore'][tier] = {'act': [], 'sha': []}
+        if f.startswith("background"): 
+            ore_tpls['bg'].append(cv2.resize(img, (48, 48)))
+            continue
+        if "_" not in f: continue
+        
+        parts = f.replace(".png", "").split("_")
+        tier, state = parts[0], parts[1]
+        if tier not in ore_tpls['ore']: ore_tpls['ore'][tier] = {'act': [], 'sha': []}
+        if state in ['act', 'sha']:
+            img = cv2.resize(img, (48, 48))
             m5 = cv2.getRotationMatrix2D((24, 24), 5, 1.0)
             ore_tpls['ore'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
 
     files = sorted([f for f in os.listdir(buffer_root) if f.lower().endswith(('.png', '.jpg'))])
     std_mask, text_mask = get_combined_mask(False), get_combined_mask(True)
     
-    # INITIAL ANCHOR
-    f1_gray = cv2.imread(os.path.join(buffer_root, files[0]), 0)
-    anchor = {
-        "num": 1, "idx": 0, "hud": f1_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]],
-        "dna": None
-    }
-    dna_memory = ["0"] * 24
+    # --- ROOT ANCHOR (FORCE FLOOR 1) ---
+    f1_bgr = cv2.imread(os.path.join(buffer_root, files[0]))
+    f1_gray = cv2.cvtColor(f1_bgr, cv2.COLOR_BGR2GRAY)
+    initial_ore = get_ore_id_v21(f1_gray, 0, 1, ore_tpls)
     
-    print(f"--- Running v5.0: Hybrid Logic Auditor ---")
+    anchor = {
+        "num": 1, "idx": 0, "dna": None, "ore": initial_ore,
+        "hud": f1_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
+    }
+    # Save Floor 1 immediately
+    cv2.imwrite(f"{out_dir}/confirmed/F001_Idx00000_ROOT.jpg", f1_bgr)
+    
+    dna_memory = ["0"] * 24
+    confirmed_count = 1
+    start_time = time.time()
+
+    print(f"--- Running v5.03: Hybrid Auditor (Floor Limit: {TARGET_FLOOR_LIMIT}) ---")
 
     for i in range(1, len(files)):
+        if confirmed_count >= TARGET_FLOOR_LIMIT: break
+        if i % HEARTBEAT_INTERVAL == 0:
+            print(f" [PROGRESS] {i:05} | Total Floors: {confirmed_count} | Time: {time.time()-start_time:.1f}s")
+
         img_bgr = cv2.imread(os.path.join(buffer_root, files[i]))
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-        # --- LOGIC 1: v4.56 VACUUM GATE (For mid-row starts) ---
+        # 1. PRIMARY: [VACUUM] Logic
         if not is_player_present_v456(img_gray[PLAYER_ROI_Y[0]:PLAYER_ROI_Y[1], :], p_right, p_left):
             current_bits, row1_clean = [], True
             for c in range(6):
@@ -123,7 +146,6 @@ def run_v5_hybrid_auditor():
                 if bit == "1": row1_clean = False; break
             
             if row1_clean:
-                # Profiling for DNA Stability
                 for s_idx in range(6, 24):
                     r, c = divmod(s_idx, 6)
                     x1, y1 = int(SLOT1_CENTER[0]+(c*STEP_X))-24, int(SLOT1_CENTER[1])+(r*int(STEP_Y))-24
@@ -133,36 +155,32 @@ def run_v5_hybrid_auditor():
                     dna_memory[s_idx] = bit
                 
                 this_dna = "".join(current_bits)
-                if this_dna != anchor['dna'] or (i > anchor['idx'] + 25):
-                    # COMMIT & SYNC
-                    f_num = anchor['num']
-                    cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{i:05}.jpg", img_bgr)
-                    print(f" [VACUUM] Floor {f_num} detected via DNA at Index {i}")
-                    anchor = {"num": f_num + 1, "idx": i, "hud": img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]], "dna": this_dna}
+                if this_dna != anchor['dna'] or (i > anchor['idx'] + 40):
+                    f_num = anchor['num'] + 1
+                    cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{i:05}_VAC.jpg", img_bgr)
+                    print(f" >>> [VACUUM] F{f_num:03} at {i:05} | DNA: {'|'.join([this_dna[k:k+6] for k in range(0,24,6)])}")
+                    anchor = {"num": f_num, "idx": i, "hud": img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]], "dna": this_dna, "ore": "multi"}
+                    confirmed_count += 1
                 continue
 
-        # --- LOGIC 2: v35.0 PATH AUDIT FALLBACK (Standard floors) ---
+        # 2. SECONDARY: [STRIKE] Logic
         res = cv2.matchTemplate(img_gray[150:500, 0:480], p_right, cv2.TM_CCOEFF_NORMED)
         _, max_v, _, max_loc = cv2.minMaxLoc(res)
-        actual_y = max_loc[1] + 150
-        
-        if actual_y <= ROW_0_MAX_Y:
+        if (max_loc[1] + 150) <= ROW_0_MAX_Y:
             cur_hud = img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
-            if np.mean(cv2.absdiff(cur_hud, anchor['hud'])) > 3.5:
+            if np.mean(cv2.absdiff(cur_hud, anchor['hud'])) > 3.8: # Slightly raised for banner noise
                 n_slot = next((idx for idx, a in enumerate(VALID_X_ANCHORS) if abs(max_loc[0] - a) <= 15), None)
                 if n_slot is not None:
-                    path_clean = True
-                    if n_slot > 0 and not is_slot_clean_v35(img_gray, n_slot - 1, ore_tpls, True): path_clean = False
-                    if path_clean and n_slot >= 2:
-                        for s_idx in range(n_slot - 1):
-                            if not is_slot_clean_v35(img_gray, s_idx, ore_tpls, False): path_clean = False; break
-                    
-                    if path_clean:
-                        f_num = anchor['num']
-                        cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{i:05}.jpg", img_bgr)
-                        print(f" [STRIKE] Floor {f_num} detected via Path at Index {i}")
-                        anchor = {"num": f_num + 1, "idx": i, "hud": cur_hud.copy(), "dna": None}
+                    if is_slot_clean_v35(img_gray, n_slot-1, ore_tpls, True) if n_slot > 0 else True:
+                        f_num = anchor['num'] + 1
+                        ore_id = get_ore_id_v21(img_gray, n_slot, f_num, ore_tpls)
+                        cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{i:05}_STRK.jpg", img_bgr)
+                        print(f" >>> [STRIKE] F{f_num:03} at {i:05} ({ore_id})")
+                        anchor = {"num": f_num, "idx": i, "hud": cur_hud.copy(), "dna": None, "ore": ore_id}
+                        confirmed_count += 1
                         dna_memory = ["0"] * 24
 
+    print(f"\n[FINISH] Verified {confirmed_count} floors.")
+
 if __name__ == "__main__":
-    run_v5_hybrid_auditor()
+    run_v5_03_hybrid_master()
