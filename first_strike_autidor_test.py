@@ -3,6 +3,9 @@ import numpy as np
 import os
 import json
 
+# --- DEBUG CONTROL ---
+TARGET_FLOOR_LIMIT = 25  # Script stops after this many positive transitions
+
 # --- PRODUCTION CONSTANTS ---
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
@@ -51,14 +54,16 @@ def get_ore_id_v21(img_gray, slot_idx, current_floor, templates):
         if tier not in allowed: continue
         for state in ['act', 'sha']:
             for t_img in types[state]:
-                res = cv2.matchTemplate(roi, t_img, cv2.TM_CCOEFF_NORMED)
+                # Dynamic template cropping for slot 2/3 comparison
+                t_audit = t_img[12:, :] if slot_idx in [2, 3] else t_img
+                res = cv2.matchTemplate(audit_roi, t_audit, cv2.TM_CCOEFF_NORMED)
                 score = cv2.minMaxLoc(res)[1]
                 if score > best['score']: best = {'tier': tier, 'score': score}
     return best['tier'] if best['score'] > 0.77 else "empty"
 
-def run_v21_production():
+def run_v35_authentic_rebase():
     buffer_root = "capture_buffer_0"
-    out_dir = "production_audit_v21"
+    out_dir = "production_audit_v35"
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
 
     player_t = cv2.imread("templates/player_right.png", 0)
@@ -85,9 +90,13 @@ def run_v21_production():
     }
     confirmed = []
 
-    print("--- Running v21.0: Systematic N-Relative Auditor ---")
+    print(f"--- Running v35.0: Authentic v21 Rebase with Floor Cap: {TARGET_FLOOR_LIMIT} ---")
 
     for i in range(1, len(files)):
+        # Exit condition for targeted debugging
+        if len(confirmed) >= TARGET_FLOOR_LIMIT:
+            break
+
         img_bgr = cv2.imread(os.path.join(buffer_root, files[i]))
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
@@ -137,7 +146,7 @@ def run_v21_production():
 
     # FINAL COMMIT
     cv2.imwrite(f"{out_dir}/confirmed/F{anchor['num']:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
-    print(f"\n[FINISH] Verified {len(confirmed)} floors.")
+    print(f"\n[FINISH] Verified {len(confirmed)+1} floors.")
 
 if __name__ == "__main__":
-    run_v21_production()
+    run_v35_authentic_rebase()
