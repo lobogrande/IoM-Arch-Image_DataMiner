@@ -6,90 +6,76 @@ import cv2
 # --- CONFIGURATION ---
 CSV_PATH = "global_stability_report_v2.csv"
 BUFFER_ROOT = "capture_buffer_0"
-OUTPUT_DIR = "grand_audit_v543_results"
+OUTPUT_DIR = "grand_audit_v544_pulse_results"
 
-def run_v5_43_grand_audit():
+def run_v5_44_pulse_audit():
     # 1. SETUP DIRECTORIES
     image_dir = os.path.join(OUTPUT_DIR, "floor_starts")
-    leads_dir = os.path.join(OUTPUT_DIR, "missing_leads")
     os.makedirs(image_dir, exist_ok=True)
-    os.makedirs(leads_dir, exist_ok=True)
     
-    print(f"--- Launching v5.43: FIXED Grand Audit Engine ---")
+    print(f"--- Launching v5.44: PULSE Grand Audit Engine ---")
     
     if not os.path.exists(CSV_PATH):
         print(f"Error: {CSV_PATH} not found.")
         return
 
-    # 2. LOAD & CLEAN DATA
+    # 2. LOAD DATA
     df = pd.read_csv(CSV_PATH, dtype={'r1_bits': str})
     df['r1_bits'] = df['r1_bits'].fillna('000000').apply(lambda x: str(x).zfill(6))
-    df['r1_count'] = df['r1_bits'].apply(lambda x: x.count('1'))
-    
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
 
-    # --- 3. PEAK ISOLATION ---
-    # We filter for frames with signal FIRST, then group them.
-    peaks = df[(df['hud_diff'] > 4.5) | (df['hamming'] >= 5)].copy()
+    # --- 3. PULSE DETECTION LOGIC ---
+    # Trigger on a combined spike of HUD change AND Board change
+    # Thresholds are tuned to your 10-frame floors (43, 53, 63)
+    df['is_spike'] = (df['hud_diff'] > 4.5) & (df['hamming'] >= 4)
     
-    if peaks.empty:
-        print("Error: No peaks found in CSV. Check your thresholds.")
-        return
-
-    # Group the peaks (if gaps between peaks > 25 frames, it's a new floor)
-    peaks['event_group'] = (peaks['idx'].diff() > 25).cumsum()
+    # 4. ITERATIVE EXTRACTION (The Pulse Gate)
+    # Instead of clustering, we walk the data and enforce a 9-frame lockout
+    floor_indices = [0] # Frame 0 is always Floor 1
+    last_idx = -100
     
-    # 4. MANIFEST GENERATION
-    # For each peak group, we want the most 'stable' frame at the start
-    manifest = peaks.groupby('event_group').agg({
-        'idx': 'min',
-        'hud_diff': 'max',
-        'hamming': 'max',
-        'r1_bits': 'first',
-        'r1_count': 'min'
-    }).reset_index()
+    # Filter for candidates to speed up the loop
+    candidates = df[df['is_spike']].to_dict('records')
+    
+    for cand in candidates:
+        idx = int(cand['idx'])
+        if idx > last_idx + 9: # The 9-frame "Pulse" Window
+            floor_indices.append(idx)
+            last_idx = idx
 
-    # --- 5. IMAGE EXPORT: DETECTED FLOORS ---
-    print(f"Exporting {len(manifest)} detected floor images...")
-    for i, row in manifest.iterrows():
-        idx = int(row['idx'])
+    # --- 5. MANIFEST & IMAGE EXPORT ---
+    manifest_data = []
+    print(f"Exporting {len(floor_indices)} floor pulse images...")
+    
+    for i, idx in enumerate(floor_indices):
         if idx < len(files):
             img = cv2.imread(os.path.join(BUFFER_ROOT, files[idx]))
             if img is not None:
-                # F1 is Frame 0. So the first detected group is Floor 2.
-                out_name = f"Floor_{i+2:03}_Idx_{idx:05}_H{int(row['hamming'])}.jpg"
+                # Floor 1 = Frame 0, Floor 2 = Frame 43, etc.
+                out_name = f"Floor_{i+1:03}_Idx_{idx:05}.jpg"
                 cv2.imwrite(os.path.join(image_dir, out_name), img)
+                
+                # Capture metadata for the CSV
+                row = df.iloc[idx]
+                manifest_data.append({
+                    'floor': i + 1,
+                    'idx': idx,
+                    'hud_diff': row['hud_diff'],
+                    'hamming': row['hamming'],
+                    'r1_bits': row['r1_bits']
+                })
 
-    # --- 6. MISSING LEAD DETECTION ---
-    # Identify pristine boards (count <= 1) that occur AWAY from detected floors
-    detected_indices = set(manifest['idx'].tolist())
+    # --- 6. OUTPUT ---
+    manifest_df = pd.DataFrame(manifest_data)
+    manifest_df['frame_gap'] = manifest_df['idx'].diff()
+    manifest_df.to_csv(os.path.join(OUTPUT_DIR, "floor_manifest_v544_pulse.csv"), index=False)
     
-    # Find candidates
-    leads_df = df[(df['r1_count'] <= 1) & (df['hud_diff'] < 1.0)].copy()
-    # Filter out Frame 0 (it's always a lead) and frames already in the manifest
-    leads_df = leads_df[(leads_df['idx'] > 10) & (~leads_df['idx'].isin(detected_indices))]
+    print(f"\n[GLOBAL PULSE SUMMARY]")
+    print(f"Total Floors Found:      {len(manifest_df)} / 110")
+    print(f"Average Floor Life:      {manifest_df['frame_gap'].mean():.1f} frames")
+    print(f"Minimum Floor Life:      {manifest_df['frame_gap'].min():.1f} frames")
     
-    if not leads_df.empty:
-        missing_groups = leads_df.groupby((leads_df['idx'].diff() > 50).cumsum()).first()
-        print(f"Exporting {len(missing_groups)} potential missing floor images...")
-        for _, row in missing_groups.iterrows():
-            idx = int(row['idx'])
-            if idx < len(files):
-                img = cv2.imread(os.path.join(BUFFER_ROOT, files[idx]))
-                if img is not None:
-                    cv2.imwrite(os.path.join(leads_dir, f"Missing_Lead_Idx_{idx:05}.jpg"), img)
-
-    # --- 7. VELOCITY & REPORTS ---
-    manifest['frame_gap'] = manifest['idx'].diff()
-    manifest.to_csv(os.path.join(OUTPUT_DIR, "floor_manifest_v543.csv"), index=False)
-    
-    print(f"\n[GLOBAL AUDIT SUMMARY]")
-    print(f"Total Frames:            {len(df)}")
-    print(f"Detected Transitions:    {len(manifest)} / 110")
-    print(f"Missing Leads Found:     {len(missing_groups) if not leads_df.empty else 0}")
-    print(f"Avg Frame Gap:           {manifest['frame_gap'].mean():.1f}")
-    
-    print(f"\nAudit complete. Check '{OUTPUT_DIR}/floor_starts' for the visual manifest.")
+    print(f"\nAudit complete. Visual manifest saved to '{OUTPUT_DIR}/floor_starts'.")
 
 if __name__ == "__main__":
-    run_v5_43_grand_audit()
+    run_v5_44_pulse_audit()
