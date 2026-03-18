@@ -1,13 +1,13 @@
 import cv2
 import numpy as np
 import os
-from concurrent.futures import ThreadPoolExecutor
 
 # --- TARGET FRAMES (Ground Truth Provided by User) ---
+# We are testing if the script can "see" these signatures through the text
 TARGET_FRAMES = {
-    43: "101100", # F2 Start (Adjusted based on your image analysis)
-    53: "000010", # F3 Start
-    63: "101010", # F4 Start
+    43: "001000", # F2 Start (Ore in Slot 2, player in Slot 1)
+    53: "000010", # F3 Start (Ore in Slot 4, player in Slot 3)
+    63: "101010", # F4 Start (Ores in 0, 2, 4)
     82: "101010", # F5 Start
     92: "100010"  # F6 Start
 }
@@ -25,47 +25,70 @@ ORE_RESTRICTIONS = {
 
 # --- HELPERS ---
 
-def get_combined_mask(is_text_heavy_slot=False, aggression_level=0):
+def get_combined_mask(is_text_heavy_slot=False):
+    """
+    Creates the circular mask. 
+    For Slots 2 & 3, we black out the top portion where 'Dig Stage' text sits.
+    """
     mask = np.zeros((AI_DIM, AI_DIM), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
     if is_text_heavy_slot:
-        # Testing different vertical cutoffs to see through "Dig Stage" text
-        cutoff = 15 + (aggression_level * 2)
-        mask[cutoff:34, :] = 0 
+        # Aggressively mask out the top half of the circle where text overlaps
+        mask[0:20, :] = 0 
     return mask
 
-def get_slot_status_debug(args):
-    roi_gray, mask, templates, is_row1, delta_thresh = args
-    bg_s = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
+def get_slot_status_debug(roi_gray, mask, templates, delta_thresh):
+    # Background match
+    bg_matches = [cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']]
+    bg_s = max(bg_matches) if bg_matches else 0
     
+    # Ore match
     ore_s = 0.0
-    for t_list in templates['active']:
-        s = cv2.matchTemplate(roi_gray, t_list[0], cv2.TM_CCORR_NORMED, mask=mask).max()
+    for t_img in templates['active']:
+        # Ensure template matches mask size (48x48)
+        s = cv2.matchTemplate(roi_gray, t_img, cv2.TM_CCORR_NORMED, mask=mask).max()
         if s > ore_s: ore_s = s
 
     delta = ore_s - bg_s
-    return "1" if (delta > delta_thresh or bg_s < 0.85) else "0"
+    # If the ore is significantly stronger than background, or background is very weak
+    return "1" if (delta > delta_thresh or bg_s < 0.80) else "0"
 
 # --- FORENSIC ENGINE ---
 
 def run_row1_transparency_audit():
+    if not os.path.exists(BUFFER_ROOT):
+        print(f"Error: {BUFFER_ROOT} not found.")
+        return
+
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
+    # 1. LOAD TEMPLATES (With Mac-file protection)
     raw_tpls = {'ore': {}, 'bg': []}
-    for f in os.listdir("templates"):
-        img = cv2.imread(os.path.join("templates", f), 0)
-        if img is None or "_" not in f: continue
-        img = cv2.resize(img, (48, 48))
-        if f.startswith("background"): raw_tpls['bg'].append(img)
-        else:
-            parts = f.replace(".png", "").split("_")
-            tier, state = parts[0], parts[1]
-            if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = {'act': []}
-            if state == 'act': raw_tpls['ore'][tier]['act'].append(img)
+    if not os.path.exists("templates"):
+        print("Error: 'templates' folder not found.")
+        return
 
-    print(f"--- Row-1 Transparency Audit (Aggression Testing) ---")
+    for f in os.listdir("templates"):
+        if f.startswith('.') or not f.lower().endswith('.png'): continue # Ignore .DS_Store etc.
+        
+        img = cv2.imread(os.path.join("templates", f), 0)
+        if img is None: continue
+        img = cv2.resize(img, (AI_DIM, AI_DIM))
+        
+        if f.startswith("background"):
+            raw_tpls['bg'].append(img)
+        elif "_" in f:
+            tier = f.split("_")[0]
+            if tier in KNOWN_TIERS or any(tier.startswith(t) for t in KNOWN_TIERS):
+                if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = []
+                raw_tpls['ore'][tier].append(img)
+
+    print(f"--- Row-1 Transparency Audit (Text-Overlap Focus) ---")
     print(f"{'Idx':<6} | {'Truth':<10} | {'D=0.04':<10} | {'D=0.06':<10} | {'D=0.08'}")
-    print("-" * 60)
+    print("-" * 62)
+
+    std_mask = get_combined_mask(False)
+    txt_mask = get_combined_mask(True)
 
     for idx, truth in TARGET_FRAMES.items():
         img_gray = cv2.imread(os.path.join(BUFFER_ROOT, files[idx]), 0)
@@ -73,18 +96,25 @@ def run_row1_transparency_audit():
         # Build templates for Floor 1-6 range
         active_list = []
         for tier in ['dirt1', 'com1', 'rare1']:
-            if tier in raw_tpls['ore']: active_list.extend(raw_tpls['ore'][tier]['act'])
+            if tier in raw_tpls['ore']:
+                active_list.extend(raw_tpls['ore'][tier])
+        
         runtime_tpls = {'active': active_list, 'bg': raw_tpls['bg']}
 
         results = []
         for d_val in [0.04, 0.06, 0.08]:
             bits = []
-            for c in range(6): # Only checking Row 1
-                r, col = 0, c
-                x1, y1 = int(SLOT1_CENTER[0]+(col*STEP_X))-24, int(SLOT1_CENTER[1])-24
+            for c in range(6): 
+                # Calculate ROI coordinates
+                x1 = int(SLOT1_CENTER[0] + (c * STEP_X)) - 24
+                y1 = int(SLOT1_CENTER[1]) - 24
                 roi = img_gray[y1:y1+48, x1:x1+48]
-                mask = get_combined_mask(c in [2,3], aggression_level=1)
-                bits.append(get_slot_status_debug((roi, mask, runtime_tpls, True, d_val)))
+                
+                # Use text mask for slots 2 and 3
+                current_mask = txt_mask if c in [2, 3] else std_mask
+                
+                bit = get_slot_status_debug(roi, current_mask, runtime_tpls, d_val)
+                bits.append(bit)
             results.append("".join(bits))
 
         print(f"{idx:<6} | {truth:<10} | {results[0]:<10} | {results[1]:<10} | {results[2]}")
