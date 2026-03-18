@@ -5,7 +5,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURATION ---
-CSV_PATH = "global_stability_report.csv"
+CSV_PATH = "global_stability_report_v2.csv"
 BUFFER_ROOT = "capture_buffer_0"
 CHECK_WINDOW = (2450, 2550) 
 SLOT1_CENTER = (74, 261)
