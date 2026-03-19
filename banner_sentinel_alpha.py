@@ -3,139 +3,146 @@ import numpy as np
 import os
 import pandas as pd
 
-# --- CONFIGURATION ---
+# --- CALIBRATED CONSTANTS ---
 BUFFER_ROOT = "capture_buffer_0"
-OUT_DIR = "sentinel_eta_debug"
+OUT_DIR = "sentinel_theta_debug"
 TARGET_FILENAME = "frame_20260306_231817_939420.png"
 
-# --- GEOMETRIC CONSTRAINTS ---
-SCAN_Y_START = 40   
-SCAN_Y_END = 450     
+# SEARCH AREA (User calibrated to the 40-450 game zone)
+SCAN_Y_START = 40
+SCAN_Y_END = 450
+BANNER_H = 45
 
-# --- DYNAMIC THRESHOLDS ---
-# We use Hysteresis: 
-# A "Seed" must be very dark to START a banner.
-# A "Bridge" can be lighter to KEEP the banner connected.
-SEED_THRESH = 18.0    
-BRIDGE_THRESH = 32.0  
-MIN_BANNER_H = 20     
-MAX_BANNER_H = 95
-EXPECTED_VELOCITY = 10 # Pixels/frame
+# MOTION PARAMETERS
+# The banner moves up (decreases Y) by roughly 8-12 pixels per frame
+MIN_VELOCITY = 5   
+MAX_VELOCITY = 18  
+COAST_LIMIT = 8    # How many frames to "guess" the path if the signal is lost
 
-class BannerTracker:
-    def __init__(self, top, bot):
-        self.top = top
-        self.bot = bot
-        self.center = (top + bot) // 2
-        self.frames_active = 1
-        self.velocity = 0
-        self.lost_frames = 0
-
-class SentinelEta:
+class TrajectorySentinel:
     def __init__(self):
-        self.active_trackers = []
-        self.stationary_blacklist = [] # List of Y-centers that don't move
+        self.lock = None # {'y_top': y, 'lost_count': 0, 'velocity': 10}
+        self.stationary_blacklist = set()
 
-    def process_frame(self, img_gray):
+    def find_top_candidates(self, intensities):
+        """Finds the 5 darkest 45px windows in the scan zone."""
+        candidates = []
+        for y in range(SCAN_Y_START, SCAN_Y_END - BANNER_H):
+            avg = np.mean(intensities[y : y + BANNER_H])
+            candidates.append({'y_top': y, 'avg': avg})
+        # Sort by intensity (darkest first)
+        candidates.sort(key=lambda x: x['avg'])
+        return candidates[:8]
+
+    def update(self, img_gray):
         h, w = img_gray.shape
+        # Focus on center strip to avoid side-ore noise
         c1, c2 = int(w * 0.35), int(w * 0.65)
         intensities = np.mean(img_gray[:, c1:c2], axis=1)
         
-        # 1. GENERATE HYSTERESIS MASK
-        # Seeds are the dark "cores" of the banner
-        seeds = (intensities < SEED_THRESH).astype(np.uint8)
-        # Bridges are the rows that can contain text/icons
-        bridges = (intensities < BRIDGE_THRESH).astype(np.uint8)
+        candidates = self.find_top_candidates(intensities)
         
-        # Use Morphological Reconstruction logic:
-        # We only keep bridge segments that contain at least one seed.
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(bridges, connectivity=8)
-        
-        candidates = []
-        for i in range(1, num_labels):
-            y_start = stats[i, cv2.CC_STAT_TOP]
-            y_end = y_start + stats[i, cv2.CC_STAT_HEIGHT]
+        if self.lock is None:
+            # SEARCH MODE: Look for a dark window that appears in the nucleation zone (Y > 250)
+            for cand in candidates:
+                if cand['y_top'] > 250 and cand['avg'] < 42.0:
+                    self.lock = {'y_top': cand['y_top'], 'lost_count': 0, 'velocity': 10}
+                    return self.lock, intensities
+            return None, intensities
+        else:
+            # TRACK MODE: Find the candidate that moved UP at the correct speed
+            best_match = None
+            min_err = 999
             
-            # Constraint: Must be in scan zone and have a seed row inside it
-            if SCAN_Y_START <= y_start and y_end <= SCAN_Y_END:
-                if np.any(seeds[y_start:y_end] == 1):
-                    if MIN_BANNER_H <= (y_end - y_start) <= MAX_BANNER_H:
-                        candidates.append({'top': y_start, 'bot': y_end, 'center': (y_start+y_end)//2})
-
-        # 2. TEMPORAL ASSOCIATION (The "Lock")
-        confirmed = []
-        new_trackers = []
-        
-        for cand in candidates:
-            matched = False
-            for trk in self.active_trackers:
-                # Predictive window: Where we expect the banner to be based on velocity
-                expected_y = trk.center - (trk.velocity if trk.velocity > 0 else EXPECTED_VELOCITY)
-                if abs(cand['center'] - expected_y) < 25:
-                    # Update Tracker
-                    old_center = trk.center
-                    trk.top, trk.bot = cand['top'], cand['bot']
-                    trk.center = cand['center']
-                    trk.velocity = old_center - trk.center
-                    trk.frames_active += 1
-                    trk.lost_frames = 0
-                    
-                    # Stationary Check: If it hasn't moved 5 pixels in 5 frames, it's UI.
-                    if trk.frames_active > 5 and abs(trk.velocity) < 1:
-                        if trk.center not in self.stationary_blacklist:
-                            self.stationary_blacklist.append(trk.center)
-                    
-                    if trk.center not in self.stationary_blacklist:
-                        new_trackers.append(trk)
-                        confirmed.append({'top': trk.top, 'bot': trk.bot, 'id': id(trk)})
-                    matched = True
-                    break
+            for cand in candidates:
+                velocity = self.lock['y_top'] - cand['y_top']
+                if MIN_VELOCITY <= velocity <= MAX_VELOCITY:
+                    # Prefer candidates moving at our expected 10px/frame
+                    err = abs(velocity - self.lock['velocity'])
+                    if err < min_err:
+                        min_err = err
+                        best_match = cand
             
-            if not matched:
-                # Start a new potential tracker
-                if not any(abs(cand['center'] - b_y) < 10 for b_y in self.stationary_blacklist):
-                    new_trackers.append(BannerTracker(cand['top'], cand['bot']))
+            if best_match:
+                # Update lock with new position and smooth the velocity
+                new_v = self.lock['y_top'] - best_match['y_top']
+                self.lock = {
+                    'y_top': best_match['y_top'], 
+                    'lost_count': 0, 
+                    'velocity': (self.lock['velocity'] + new_v) // 2
+                }
+                return self.lock, intensities
+            else:
+                # COAST MODE: If no match, predict where it should be
+                self.lock['y_top'] -= self.lock['velocity']
+                self.lock['lost_count'] += 1
+                
+                # If it exits the scan zone or stays lost too long, break lock
+                if self.lock['y_top'] < SCAN_Y_START or self.lock['lost_count'] > COAST_LIMIT:
+                    self.lock = None
+                return self.lock, intensities
 
-        self.active_trackers = new_trackers
-        return confirmed, intensities
+def draw_pixel_ruler(img):
+    for y in range(0, img.shape[0], 50):
+        cv2.line(img, (0, y), (15, y), (200, 200, 200), 1)
+        cv2.putText(img, str(y), (20, y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+    return img
 
-def run_sentinel_eta():
+def draw_telemetry(img, intensities, lock):
+    h, w, _ = img.shape
+    gx = w - 120
+    cv2.rectangle(img, (gx, 0), (w, h), (20, 20, 20), -1)
+    for y in range(1, h):
+        x1 = int(gx + (intensities[y-1]/100)*100)
+        x2 = int(gx + (intensities[y]/100)*100)
+        cv2.line(img, (x1, y-1), (x2, y), (0, 255, 0), 1)
+    if lock:
+        cv2.rectangle(img, (gx, lock['y_top']), (w, lock['y_top']+BANNER_H), (0, 0, 255), 2)
+    return img
+
+def run_sentinel_theta():
     if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
     try: target_idx = all_files.index(TARGET_FILENAME)
     except: target_idx = 1170
 
-    eta = SentinelEta()
+    ts = TrajectorySentinel()
     manifest = []
     
-    for i in range(target_idx - 20, target_idx + 60):
-        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
+    # Analyze the window frame-by-frame
+    for i in range(target_idx - 20, target_idx + 80):
+        fname = all_files[i]
+        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, fname))
         if img_bgr is None: continue
         
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        zones, intensities = eta.process_frame(img_gray)
+        lock, intensities = ts.update(img_gray)
         
         overlay = img_bgr.copy()
-        for z in zones:
-            # All confirmed moving banners are Red
-            cv2.rectangle(overlay, (0, z['top']), (img_bgr.shape[1], z['bot']), (0, 0, 255), -1)
-            manifest.append({"idx": i, "y_top": z['top'], "y_bot": z['bot']})
-            
+        if lock:
+            # Check if this is a "Coasted" frame or a "Real" frame
+            color = (0, 255, 255) if lock['lost_count'] > 0 else (0, 0, 255)
+            cv2.rectangle(overlay, (0, lock['y_top']), (img_bgr.shape[1], lock['y_top']+BANNER_H), color, -1)
+            manifest.append({"idx": i, "y_top": lock['y_top'], "y_bot": lock['y_top']+BANNER_H, "coasted": lock['lost_count']})
+        
         cv2.addWeighted(overlay, 0.4, img_bgr, 0.6, 0, img_bgr)
         
-        # Ruler and Telemetry Drawing
-        for y in range(0, img_bgr.shape[0], 50):
-            cv2.line(img_bgr, (0, y), (15, y), (200, 200, 200), 1)
-            cv2.putText(img_bgr, str(y), (20, y+5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+        # Add Search Limit Lines
+        cv2.line(img_bgr, (0, SCAN_Y_START), (img_bgr.shape[1], SCAN_Y_START), (255, 128, 0), 1)
+        cv2.line(img_bgr, (0, SCAN_Y_END), (img_bgr.shape[1], SCAN_Y_END), (255, 128, 0), 1)
         
-        cv2.putText(img_bgr, f"ETA F:{i} | BANNERS: {len(zones)}", (20, 30),
+        img_bgr = draw_pixel_ruler(img_bgr)
+        img_bgr = draw_telemetry(img_bgr, intensities, lock)
+        
+        status = "TRACKING" if lock and lock['lost_count'] == 0 else "COASTING" if lock else "SEARCHING"
+        cv2.putText(img_bgr, f"THETA F:{i} | {status}", (20, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
-        cv2.imwrite(os.path.join(OUT_DIR, f"eta_{i:05}.png"), img_bgr)
+        cv2.imwrite(os.path.join(OUT_DIR, f"theta_{i:05}.png"), img_bgr)
 
-    pd.DataFrame(manifest).to_csv("sentinel_eta_manifest.csv", index=False)
-    print(f"Sentinel Eta complete. Stationary blacklist: {eta.stationary_blacklist}")
+    pd.DataFrame(manifest).to_csv("sentinel_theta_manifest.csv", index=False)
+    print("Sentinel Theta complete. Path manifest saved.")
 
 if __name__ == "__main__":
-    run_sentinel_eta()
+    run_sentinel_theta()
