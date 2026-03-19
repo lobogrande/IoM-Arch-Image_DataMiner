@@ -3,160 +3,175 @@ import numpy as np
 import os
 import pandas as pd
 
-# --- CONFIGURATION ---
+# --- CALIBRATED CONSTANTS ---
 BUFFER_ROOT = "capture_buffer_0"
-OUT_DIR = "sentinel_theta_debug"
+OUT_DIR = "sentinel_iota_debug"
 START_F, END_F = 2000, 4000 
 
 # GEOMETRY
 SCAN_Y_START, SCAN_Y_END = 40, 450
 BANNER_H = 45
 DRAW_OFFSET = -12 
-LOCK_ZONE_Y = 200 # Higher lock zone for stability
+LOCK_ZONE_Y = 200
 
-# KINEMATIC LAWS
+# KINEMATIC & CHROMA LAWS
 EXPECTED_V = 10.1
-CONSISTENCY_WINDOW = 10 
-MIN_V, MAX_V = 7.0, 15.0
-MIN_VALID_DISPLACEMENT = 40.0 
-NUCLEATION_ZONE = 250
+CONSISTENCY_WINDOW = 12 
+MIN_V, MAX_V = 4.0, 18.0
+MIN_FILL_RATE = 0.55 # Replaces the undefined RELAXED_FILL
+MIN_BANNER_WIDTH = 500
 
-class SiblingClusterTheta:
+class SiblingClusterIota:
     def __init__(self, tops, frame_idx):
-        self.tops = sorted(tops)
+        self.tops = sorted(tops) 
         self.v = EXPECTED_V
         self.age = 0
         self.consistency_score = 0
-        self.dist_moved = 0.0
-        self.v_window = [] # Store recent velocities for terminal lock
+        self.v_history = []
         self.is_validated = False 
         self.active = True
         self.id = np.random.randint(1000, 9999)
         self.history = []
-        self._record(frame_idx)
+        self._record(frame_idx, is_init=True)
 
-    def _record(self, f):
-        for t in self.tops:
-            self.history.append({"frame": f, "id": self.id, "y": t, "v": self.v, "valid": self.is_validated})
+    def _record(self, f, is_init=False):
+        """Captures full spatial footprint for the manifest."""
+        for idx, t in enumerate(self.tops):
+            self.history.append({
+                "frame": f, 
+                "id": self.id, 
+                "sibling_idx": idx, # 0=Top banner, 1=Bottom banner
+                "y_top": t,
+                "y_bottom": t + BANNER_H,
+                "x_start": 40, 
+                "x_end": 1240, 
+                "v": self.v, 
+                "valid": self.is_validated,
+                "is_inertial": is_init
+            })
 
     def update(self, new_tops, f):
         self.age += 1
-        
-        # 1. INERTIAL LOCK LOGIC
-        # If validated and high, we "Lock" and only allow Micro-Snaps
         is_locked = self.is_validated and (self.tops[0] < LOCK_ZONE_Y)
-        
         target = self.tops[0] - self.v
         matches = [t for t in new_tops if abs(t - target) < 15]
         
+        visual_match = False
         if is_locked:
-            # GATED MICRO-SNAP: We only snap if the visual is very close to our momentum
             if matches:
                 best = min(matches, key=lambda t: abs(t - target))
-                # Only snap if correction is < 3 pixels
-                if abs(best - target) < 3.0:
+                if abs(best - target) < 3.0: # Gated Micro-Snap
                     self.tops = [best] + [best + (self.tops[i]-self.tops[0]) for i in range(1, len(self.tops))]
-                else:
-                    self.tops = [t - self.v for t in self.tops]
-            else:
+                    visual_match = True
+            if not visual_match:
                 self.tops = [t - self.v for t in self.tops]
         else:
-            # NORMAL TRACKING
             if matches:
                 best = min(matches, key=lambda t: abs(t - target))
                 actual_v = self.tops[0] - best
-                
                 if MIN_V <= actual_v <= MAX_V:
                     self.consistency_score += 1
-                    self.dist_moved += actual_v
-                    self.v = (self.v * 0.6) + (actual_v * 0.4)
-                    
-                    # Log to terminal window (last 5 frames)
-                    self.v_window.append(actual_v)
-                    if len(self.v_window) > 5: self.v_window.pop(0)
-                    
+                    self.v = (self.v * 0.7) + (actual_v * 0.3)
+                    self.v_history.append(actual_v)
+                    if len(self.v_history) > 5: self.v_history.pop(0)
                     self.tops = [best] + [best + (self.tops[i]-self.tops[0]) for i in range(1, len(self.tops))]
-                else:
-                    self.consistency_score = max(0, self.consistency_score - 1)
-            else:
+                    visual_match = True
+            
+            if not visual_match:
                 self.tops = [t - self.v for t in self.tops]
-                self.dist_moved += self.v
-                self.consistency_score = max(0, self.consistency_score - 2)
+                self.consistency_score = max(0, self.consistency_score - 1)
 
-        # TRIGGER VALIDATION: Consistency AND Displacement
-        if not self.is_validated:
-            if self.consistency_score >= CONSISTENCY_WINDOW and self.dist_moved >= MIN_VALID_DISPLACEMENT:
-                self.is_validated = True
-                # LOCK TERMINAL VELOCITY: Use average of last 5 good frames
-                if len(self.v_window) > 0:
-                    self.v = sum(self.v_window) / len(self.v_window)
-                for item in self.history: item['valid'] = True
+        if not self.is_validated and self.consistency_score >= CONSISTENCY_WINDOW:
+            self.is_validated = True
+            if self.v_history: self.v = sum(self.v_history) / len(self.v_history)
+            for item in self.history: item['valid'] = True
 
-        self._record(f)
-
-        if self.age > 50 and self.consistency_score < 2 and not is_locked: 
-            self.active = False
-        if self.tops[0] < -60: self.active = False
+        self._record(f, is_init=not visual_match)
+        if self.age > 40 and self.consistency_score < 2 and not is_locked: self.active = False
+        if self.tops[0] < -50: self.active = False
         return self.active
 
-class SentinelTheta:
+class SentinelIota:
     def __init__(self):
         self.clusters = []
-        self.final_manifest = []
+        self.master_history = []
 
-    def check_ensemble(self, img_gray, t):
-        h, w = img_gray.shape
+    def check_chroma_and_structure(self, img_bgr, t):
+        """Filters out high-red damage numbers."""
+        h, w, _ = img_bgr.shape
         y_probe = int(t + 15)
         if y_probe >= h: return False
-        x_start, x_end = int(w * 0.1), int(w * 0.9)
-        row_strip = img_gray[y_probe, x_start:x_end]
-        fill_rate = np.mean(row_strip < 75)
-        variance = np.var(row_strip.astype(float))
-        return (fill_rate > 0.55) and (variance > 12.0)
+        
+        row_bgr = img_bgr[y_probe, int(w*0.1):int(w*0.9)]
+        row_gray = cv2.cvtColor(row_bgr.reshape(1, -1, 3), cv2.COLOR_BGR2GRAY).flatten()
+        
+        # 1. Fill Rate
+        fill_rate = np.mean(row_gray < 75)
+        if fill_rate < MIN_FILL_RATE: return False
+        
+        # 2. Chroma Check (R vs G balance)
+        r_avg = np.mean(row_bgr[:, 2])
+        g_avg = np.mean(row_bgr[:, 1])
+        if r_avg > (g_avg + 30): return False # Too red = Damage Number
+        
+        return True
 
-    def process_frame(self, img_gray, f_idx):
+    def process_frame(self, img_bgr, f_idx):
+        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         w = img_gray.shape[1]
         center_ints = np.mean(img_gray[:, int(w*0.4):int(w*0.6)], axis=1)
         grad = np.diff(center_ints.astype(float))
         tops = np.where(grad < -8.0)[0]
         
-        valid_tops = [t for t in tops if SCAN_Y_START <= t <= SCAN_Y_END and self.check_ensemble(img_gray, t)]
+        valid_tops = [t for t in tops if SCAN_Y_START <= t <= SCAN_Y_END and self.check_chroma_and_structure(img_bgr, t)]
         
         for c in self.clusters:
-            was_v = c.is_validated
-            if c.update(valid_tops, f_idx):
-                if c.is_validated and not was_v: self.final_manifest.extend(c.history)
-                elif c.is_validated: self.final_manifest.append(c.history[-1])
-        
+            if not c.update(valid_tops, f_idx):
+                self.master_history.extend(c.history)
+                
         birth = [t for t in valid_tops if t > NUCLEATION_ZONE]
         birth = [bt for bt in birth if not any(abs(bt - t) < 50 for c in self.clusters for t in c.tops)]
-        if birth: self.clusters.append(SiblingClusterTheta(birth, f_idx))
+        if birth: self.clusters.append(SiblingClusterIota(birth, f_idx))
         
         self.clusters = [c for c in self.clusters if c.active]
-        return self.clusters
 
-def run_sentinel_theta():
+    def finalize_manifest(self):
+        for c in self.clusters: self.master_history.extend(c.history)
+        df = pd.DataFrame(self.master_history)
+        if df.empty: return df
+        # Pruning: Only validated and non-inertial frames
+        df = df[df['valid'] & ~df['is_inertial']]
+        # Sort and clean
+        df = df.sort_values(by=['frame', 'id', 'sibling_idx']).drop_duplicates(subset=['frame', 'id', 'sibling_idx'])
+        return df
+
+def run_sentinel_iota():
     if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
-    st = SentinelTheta()
+    iota = SentinelIota()
     
+    print("PHASE 1: Scanning frames...")
     for i in range(START_F, min(END_F, len(all_files))):
         img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
-        if img_bgr is None: continue
-        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        clusters = st.process_frame(img_gray, i)
+        if img_bgr is not None: iota.process_frame(img_bgr, i)
+    
+    manifest = iota.finalize_manifest()
+    manifest.to_csv("sentinel_iota_manifest.csv", index=False)
+    print(f"Manifest complete. {len(manifest)} valid data points found.")
+    
+    print("PHASE 2: Generating 'Pristine' Overlays...")
+    for i in range(START_F, min(END_F, len(all_files))):
+        frame_data = manifest[manifest['frame'] == i]
+        if frame_data.empty: continue
         
+        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
         overlay = img_bgr.copy()
-        for c in clusters:
-            if c.is_validated:
-                for t in c.tops:
-                    y_draw = int(t + DRAW_OFFSET)
-                    cv2.rectangle(overlay, (0, max(0, y_draw)), (img_bgr.shape[1], max(0, y_draw + BANNER_H)), (0, 0, 255), -1)
+        for _, row in frame_data.iterrows():
+            y_draw = int(row['y_top'] + DRAW_OFFSET)
+            cv2.rectangle(overlay, (int(row['x_start']), y_draw), (int(row['x_end']), y_draw + BANNER_H), (0, 0, 255), -1)
         
         cv2.addWeighted(overlay, 0.4, img_bgr, 0.6, 0, img_bgr)
-        cv2.imwrite(os.path.join(OUT_DIR, f"theta_{i:05}.png"), img_bgr)
-    
-    pd.DataFrame(st.final_manifest).to_csv("sentinel_theta_manifest.csv", index=False)
+        cv2.imwrite(os.path.join(OUT_DIR, f"iota_{i:05}.png"), img_bgr)
 
 if __name__ == "__main__":
-    run_sentinel_theta()
+    run_sentinel_iota()
