@@ -3,147 +3,139 @@ import numpy as np
 import os
 import pandas as pd
 
-# --- CONFIGURATION ---
+# --- CALIBRATED CONSTANTS ---
 BUFFER_ROOT = "capture_buffer_0"
-OUT_DIR = "sentinel_lambda_v2_debug"
-# Targeting the user-identified double event at frame 2014
-TARGET_IDX = 2014 
+OUT_DIR = "sentinel_mu_debug"
+# Target frames for the double event identified by user
+START_F, END_F = 2010, 2070 
 
-# --- GEOMETRIC CONSTRAINTS ---
 SCAN_Y_START, SCAN_Y_END = 40, 450
-BANNER_H_TARGET = 45
-
-# --- CALIBRATED THRESHOLDS ---
-INTENSITY_THRESH = 38.0  # Max average darkness
-HUC_VAR_THRESH = 450.0   # Max horizontal variance (The "Uniformity Floor")
+INTENSITY_THRESH = 40.0
+HUC_VAR_THRESH = 500.0  # Allow slightly more noise during nucleation
 GLOBAL_VELOCITY = 10.0
-VELOCITY_SMOOTHING = 0.90 
 
-class MultiTracker:
-    def __init__(self, y_top):
-        self.y_top = float(y_top)
+class SiblingCluster:
+    def __init__(self, centers):
+        self.centers = sorted(centers) # [y_top_banner, y_bot_banner]
+        self.age = 0
         self.v = GLOBAL_VELOCITY
-        self.lost = 0
+        self.locked_spacing = None
         self.active = True
-        self.id = np.random.randint(100, 999)
+        self.id = np.random.randint(1000, 9999)
 
-class SentinelLambdaV2:
+    def update(self, new_candidates):
+        self.age += 1
+        # Predict where the centroid should be
+        centroid = sum(self.centers) / len(self.centers)
+        target_centroid = centroid - self.v
+        
+        # 1. EXPANSION PHASE (Age < 4)
+        if self.age < 4:
+            # Look for ANY two candidates close to the last centroid
+            # that are "separating"
+            best_pair = None
+            min_dist = 50
+            for i in range(len(new_candidates)):
+                for j in range(i + 1, len(new_candidates)):
+                    pair_centroid = (new_candidates[i] + new_candidates[j]) / 2
+                    if abs(pair_centroid - target_centroid) < min_dist:
+                        best_pair = [new_candidates[i], new_candidates[j]]
+                        min_dist = abs(pair_centroid - target_centroid)
+            
+            if best_pair:
+                self.centers = sorted(best_pair)
+                return True
+        
+        # 2. SYNC PHASE (Age >= 4)
+        if self.locked_spacing is None:
+            self.locked_spacing = self.centers[1] - self.centers[0]
+            
+        # Move the cluster as a single unit
+        target_leader = self.centers[0] - self.v
+        best_leader = None
+        min_err = 25
+        for cand in new_candidates:
+            if abs(cand - target_leader) < min_err:
+                best_leader = cand
+                min_err = abs(cand - target_leader)
+        
+        if best_leader:
+            measured_v = self.centers[0] - best_leader
+            self.v = (self.v * 0.8) + (measured_v * 0.2)
+            self.centers = [best_leader, best_leader + self.locked_spacing]
+            return True
+            
+        return False # Lost tracking
+
+class SentinelMu:
     def __init__(self):
-        self.trackers = []
+        self.clusters = []
 
-    def get_huc_candidates(self, img_gray):
-        """Identifies rows that are both dark AND horizontally uniform."""
+    def get_raw_candidates(self, img_gray):
         h, w = img_gray.shape
-        # Focus on the center 60% of the screen for horizontal uniformity
         c1, c2 = int(w * 0.2), int(w * 0.8)
+        ints = np.mean(img_gray[:, c1:c2], axis=1)
+        vars = np.var(img_gray[:, c1:c2], axis=1)
         
-        # Calculate Row Stats
-        intensities = np.mean(img_gray[:, c1:c2], axis=1)
-        # HUC: Variance along the row
-        huc_variances = np.var(img_gray[:, c1:c2], axis=1)
+        mask = ((ints < INTENSITY_THRESH) & (vars < HUC_VAR_THRESH)).astype(np.uint8)
+        # Dilate slightly to connect fragmented text rows
+        mask = cv2.dilate(mask, np.ones((5, 1), np.uint8))
         
-        # Binary mask: Row must be DARK and UNIFORM
-        mask = np.zeros(h, dtype=np.uint8)
-        for y in range(SCAN_Y_START, SCAN_Y_END):
-            if intensities[y] < INTENSITY_THRESH and huc_variances[y] < HUC_VAR_THRESH:
-                mask[y] = 1
-        
-        # Bridge text gaps (Closing)
-        kernel = np.ones((40, 1), np.uint8)
-        closed = cv2.morphologyEx(mask.reshape(-1, 1), cv2.MORPH_CLOSE, kernel).flatten()
-        
-        # Extract contiguous blocks
-        candidates = []
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(closed, connectivity=8)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        cands = []
         for i in range(1, num_labels):
-            y_top = stats[i, cv2.CC_STAT_TOP]
-            h_comp = stats[i, cv2.CC_STAT_HEIGHT]
-            if 30 <= h_comp <= 70:
-                candidates.append({'y_top': y_top, 'y_bot': y_top + h_comp})
-        return candidates, intensities, huc_variances
+            y_top, height = stats[i, cv2.CC_STAT_TOP], stats[i, cv2.CC_STAT_HEIGHT]
+            # Banners start narrow, so we accept heights from 15 to 80
+            if 15 <= height <= 80 and SCAN_Y_START <= y_top <= SCAN_Y_END:
+                cands.append(y_top + height // 2)
+        return cands, ints
 
-    def update(self, img_gray):
-        candidates, intensities, huc_vars = self.get_huc_candidates(img_gray)
+    def run_frame(self, img_gray):
+        cands, intensities = self.get_raw_candidates(img_gray)
         
-        # 1. Update existing trackers with velocity-damped matching
-        for trk in self.trackers:
-            target_y = trk.y_top - trk.v
-            best_match = None
-            min_err = 35 
-            
-            for i, cand in enumerate(candidates):
-                err = abs(cand['y_top'] - target_y)
-                if err < min_err:
-                    min_err = err
-                    best_match = i
-            
-            if best_match is not None:
-                match = candidates.pop(best_match)
-                measured_v = trk.y_top - match['y_top']
-                # Damp the velocity to keep sync
-                trk.v = (trk.v * VELOCITY_SMOOTHING) + (measured_v * (1.0 - VELOCITY_SMOOTHING))
-                trk.y_top = float(match['y_top'])
-                trk.lost = 0
-            else:
-                trk.y_top -= trk.v
-                trk.lost += 1
-            
-            if (trk.y_top + BANNER_H_TARGET) < SCAN_Y_START or trk.lost > 12:
-                trk.active = False
+        # Update existing clusters
+        for cluster in self.clusters:
+            if not cluster.update(cands):
+                cluster.active = False
+        
+        # Check for NEW clusters (Nucleation)
+        # If we see 2+ candidates near each other in the Birth Zone (>250)
+        birth_zone_cands = [c for c in cands if c > 250]
+        if len(birth_zone_cands) >= 2:
+            # If they aren't already tracked
+            if not any(abs(sum(cluster.centers)/2 - sum(birth_zone_cands[:2])/2) < 40 for cluster in self.clusters):
+                self.clusters.append(SiblingCluster(birth_zone_cands[:2]))
+        
+        self.clusters = [c for c in self.clusters if c.active and c.centers[0] > SCAN_Y_START]
+        return self.clusters, intensities
 
-        # 2. Spawn new trackers (only in Nucleation zone Y > 250)
-        for cand in candidates:
-            if cand['y_top'] > 250:
-                # Prevent duplicate trackers on the same object
-                if not any(abs(t.y_top - cand['y_top']) < 50 for t in self.trackers):
-                    self.trackers.append(MultiTracker(cand['y_top']))
-
-        self.trackers = [t for t in self.trackers if t.active]
-        return self.trackers, intensities, huc_vars
-
-def run_lambda_v2_lab():
+def run_sentinel_mu():
     if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
-    sl = SentinelLambdaV2()
+    mu = SentinelMu()
     manifest = []
     
-    # Process the Training Lab range (Frame 2014 center)
-    for i in range(TARGET_IDX - 30, TARGET_IDX + 60):
-        fname = all_files[i]
-        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, fname))
+    for i in range(START_F, END_F):
+        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
         if img_bgr is None: continue
         
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        active_tracks, ints, huc_vars = sl.update(img_gray)
+        clusters, ints = mu.run_frame(img_gray)
         
         overlay = img_bgr.copy()
-        for trk in active_tracks:
-            color = (0, 255, 0) if trk.lost == 0 else (0, 255, 255)
-            cv2.rectangle(overlay, (0, int(trk.y_top)), (img_bgr.shape[1], int(trk.y_top + BANNER_H_TARGET)), color, -1)
-            manifest.append({"frame": i, "id": trk.id, "y_top": trk.y_top, "v": trk.v})
-
+        for c in clusters:
+            for y_center in c.centers:
+                y1, y2 = int(y_center - 22), int(y_center + 22)
+                cv2.rectangle(overlay, (0, y1), (img_bgr.shape[1], y2), (0, 0, 255), -1)
+                manifest.append({"frame": i, "cluster_id": c.id, "y_center": y_center, "age": c.age})
+        
         cv2.addWeighted(overlay, 0.4, img_bgr, 0.6, 0, img_bgr)
-        
-        # Draw search window
-        cv2.line(img_bgr, (0, SCAN_Y_START), (img_bgr.shape[1], SCAN_Y_START), (255, 0, 0), 1)
-        cv2.line(img_bgr, (0, SCAN_Y_END), (img_bgr.shape[1], SCAN_Y_END), (255, 0, 0), 1)
-        
-        # Telemetry: Intensity (Blue) and HUC Variance (Purple)
-        gx = img_bgr.shape[1] - 120
-        cv2.rectangle(img_bgr, (gx, 0), (img_bgr.shape[1], img_bgr.shape[0]), (20, 20, 20), -1)
-        for y in range(1, img_bgr.shape[0]):
-            ix = int(gx + (ints[y]/100)*60)
-            vx = int(gx + (np.log1p(huc_vars[y])/10)*60)
-            cv2.line(img_bgr, (ix, y), (ix+2, y), (255, 100, 0), 1) # Intensity
-            cv2.line(img_bgr, (vx, y), (vx+2, y), (255, 0, 255), 1) # HUC Var
-        
-        cv2.putText(img_bgr, f"LAMBDA_V2 F:{i} | TRACKS: {len(active_tracks)}", (20, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        cv2.imwrite(os.path.join(OUT_DIR, f"lambda_{i:05}.png"), img_bgr)
+        status = f"CLUSTERS: {len(clusters)}"
+        cv2.putText(img_bgr, f"MU F:{i} | {status}", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.imwrite(os.path.join(OUT_DIR, f"mu_{i:05}.png"), img_bgr)
 
-    pd.DataFrame(manifest).to_csv("lambda_v2_training_manifest.csv", index=False)
-    print("Lambda V2 Lab complete. Check 'lambda_v2_training_manifest.csv'.")
+    pd.DataFrame(manifest).to_csv("sentinel_mu_manifest.csv", index=False)
 
 if __name__ == "__main__":
-    run_lambda_v2_lab()
+    run_sentinel_mu()
