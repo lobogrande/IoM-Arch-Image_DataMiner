@@ -2,139 +2,161 @@ import cv2
 import numpy as np
 import os
 import pandas as pd
-import matplotlib.pyplot as plt
 
 # --- CONFIGURATION ---
 BUFFER_ROOT = "capture_buffer_0"
+OUT_DIR = "sentinel_tau_debug"
+START_F, END_F = 2000, 4000 
+
+# GEOMETRY
 SCAN_Y_START, SCAN_Y_END = 40, 450
-BANNER_H_TARGET = 45
-GLOBAL_VELOCITY = 10.0
-VELOCITY_SMOOTHING = 0.95
-MAX_COAST = 15
+BANNER_H = 45
+DRAW_OFFSET = -12 
+ICON_SAFETY_MARGIN = 20
 
-class MultiBannerTracker:
-    def __init__(self, y_top):
-        self.y_top = float(y_top)
-        self.v = GLOBAL_VELOCITY
-        self.lost = 0
+# KINEMATIC & SIGNAL LIMITS
+EXPECTED_V = 10.0
+VALIDATION_DISPLACEMENT = 50.0 
+STALL_KILL_LIMIT = 6 
+NUCLEATION_ZONE = 300 
+
+class SiblingClusterTau:
+    def __init__(self, tops, frame_idx):
+        self.tops = sorted(tops)
+        self.v = EXPECTED_V
+        self.age = 0
+        self.dist_moved = 0.0
+        self.stall_count = 0
+        self.is_validated = False 
         self.active = True
+        self.id = np.random.randint(1000, 9999)
+        
+        # RETROACTIVE BUFFER: Stores frames before validation
+        self.history = []
+        self._record(frame_idx)
 
-class SentinelKappaMulti:
+    def _record(self, frame_idx):
+        """Internal method to log position to history."""
+        for t in self.tops:
+            self.history.append({
+                "frame": frame_idx, 
+                "id": self.id, 
+                "y_top": t, 
+                "v": self.v,
+                "is_validated": self.is_validated
+            })
+
+    def update(self, new_tops, frame_idx):
+        self.age += 1
+        target_leader = self.tops[0] - self.v
+        matches = [t for t in new_tops if abs(t - target_leader) < 25]
+        
+        if matches:
+            best_leader = min(matches, key=lambda t: abs(t - target_leader))
+            actual_v = self.tops[0] - best_leader
+            
+            if abs(actual_v) < 1.5:
+                self.stall_count += 1
+            else:
+                self.stall_count = 0
+                self.dist_moved += actual_v
+            
+            self.v = (self.v * 0.7) + (actual_v * 0.3)
+            self.tops = [best_leader] + [best_leader + (self.tops[i]-self.tops[0]) for i in range(1, len(self.tops))]
+        else:
+            self.tops = [t - self.v for t in self.tops]
+            self.dist_moved += self.v
+            self.stall_count = 0 
+
+        # Validation Check
+        if not self.is_validated and self.dist_moved >= VALIDATION_DISPLACEMENT:
+            self.is_validated = True
+            # Update history items to reflect validation
+            for item in self.history: item['is_validated'] = True
+
+        self._record(frame_idx)
+
+        # Kinematic Laws
+        if self.stall_count > STALL_KILL_LIMIT: self.active = False
+        if (self.tops[0] + BANNER_H + ICON_SAFETY_MARGIN) < SCAN_Y_START: self.active = False
+                
+        return self.active
+
+class SentinelTau:
     def __init__(self):
-        self.trackers = []
+        self.clusters = []
+        self.final_manifest = []
+
+    def get_structured_edges(self, img_gray):
+        h, w = img_gray.shape
+        # 5-Point Horizontal check (Width verification)
+        cols = [int(w*0.1), int(w*0.3), int(w*0.5), int(w*0.7), int(w*0.9)]
+        ints = np.mean(img_gray[:, cols], axis=1)
         
-    def get_candidates(self, intensities):
-        diff = np.diff(intensities.astype(float))
-        tops = np.where(diff < -5.0)[0]
-        bots = np.where(diff > 5.0)[0]
+        grad = np.diff(ints.astype(float))
+        tops = np.where(grad < -7.0)[0]
         
-        candidates = []
+        valid_tops = []
         for t in tops:
             if not (SCAN_Y_START <= t <= SCAN_Y_END): continue
-            for b in bots:
-                if b <= t: continue
-                height = b - t
-                if 35 <= height <= 65:
-                    darkness = np.mean(intensities[t+2:b-2])
-                    if darkness < 40.0:
-                        candidates.append({'y_top': t, 'y_bot': b})
-        return candidates
+            
+            # Internal Row Variance (Text vs Empty Grid)
+            if t + 22 < h:
+                row_slice = img_gray[t + 22, cols[1]:cols[3]]
+                if np.var(row_slice) > 5.0: # Check for text signal
+                    if np.mean(ints[t:t+40]) < 48.0:
+                        valid_tops.append(t)
+        return valid_tops
 
-    def update(self, img_gray):
-        h, w = img_gray.shape
-        c1, c2 = int(w * 0.35), int(w * 0.65)
-        intensities = np.mean(img_gray[:, c1:c2], axis=1)
+    def process_frame(self, img_gray, frame_idx):
+        tops = self.get_structured_edges(img_gray)
         
-        candidates = self.get_candidates(intensities)
-        
-        # 1. Update existing trackers
-        for trk in self.trackers:
-            target_y = trk.y_top - trk.v
-            best_match = None
-            min_dist = 30
+        # 1. Update and Check for Validation Trigger
+        for c in self.clusters:
+            was_validated = c.is_validated
+            if c.update(tops, frame_idx):
+                # If it JUST became validated, dump its entire history to the manifest
+                if c.is_validated and not was_validated:
+                    self.final_manifest.extend(c.history)
+                elif c.is_validated:
+                    # If already validated, just add the latest frame
+                    self.final_manifest.append(c.history[-1])
             
-            for i, cand in enumerate(candidates):
-                dist = abs(cand['y_top'] - target_y)
-                if dist < min_dist:
-                    min_dist = dist
-                    best_match = i
-            
-            if best_match is not None:
-                cand = candidates.pop(best_match)
-                measured_v = trk.y_top - cand['y_top']
-                trk.v = (trk.v * VELOCITY_SMOOTHING) + (measured_v * (1.0 - VELOCITY_SMOOTHING))
-                trk.y_top = float(cand['y_top'])
-                trk.lost = 0
-            else:
-                trk.y_top -= trk.v
-                trk.lost += 1
-            
-            # Exit check
-            if (trk.y_top + BANNER_H_TARGET) < SCAN_Y_START or trk.lost > MAX_COAST:
-                trk.active = False
+        # 2. Nucleation
+        birth_tops = [t for t in tops if t > NUCLEATION_ZONE]
+        birth_tops = [bt for bt in birth_tops if not any(abs(bt - t) < 50 for c in self.clusters for t in c.tops)]
+        if birth_tops:
+            self.clusters.append(SiblingClusterTau(birth_tops, frame_idx))
 
-        # 2. Spawn new trackers for remaining candidates
-        for cand in candidates:
-            # Only spawn if it's in the nucleation zone (Y > 250) 
-            # and not already being tracked
-            if cand['y_top'] > 250:
-                if not any(abs(t.y_top - cand['y_top']) < 40 for t in self.trackers):
-                    self.trackers.append(MultiBannerTracker(cand['y_top']))
+        self.clusters = [c for c in self.clusters if c.active]
+        return self.clusters
 
-        # Cleanup inactive
-        self.trackers = [t for t in self.trackers if t.active]
-        return self.trackers
-
-def run_global_audit():
+def run_sentinel_tau():
+    if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
-    sk = SentinelKappaMulti()
+    st = SentinelTau()
     
-    manifest = []
-    total_frames = len(all_files)
-    
-    # Pre-allocate Waterfall Map (Height x Width)
-    # Using 1080 for height to see full context
-    waterfall = np.zeros((600, total_frames), dtype=np.uint8)
-
-    print(f"Starting Global Audit of {total_frames} frames...")
-    
-    for i, fname in enumerate(all_files):
-        img_gray = cv2.imread(os.path.join(BUFFER_ROOT, fname), cv2.IMREAD_GRAYSCALE)
-        if img_gray is None: continue
+    for i in range(START_F, min(END_F, len(all_files))):
+        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
+        if img_bgr is None: continue
+        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        active_tracks = sk.update(img_gray)
+        clusters = st.process_frame(img_gray, i)
         
-        for trk in active_tracks:
-            # Mark the waterfall map
-            y_center = int(trk.y_top + (BANNER_H_TARGET/2))
-            if 0 <= y_center < 600:
-                # Value 255 for real detection, 128 for coasting
-                val = 255 if trk.lost == 0 else 128
-                waterfall[y_center, i] = val
-            
-            manifest.append({
-                "frame": i,
-                "y_top": trk.y_top,
-                "velocity": trk.v,
-                "is_coasting": trk.lost > 0
-            })
-            
-        if i % 1000 == 0:
-            print(f"Processed {i}/{total_frames} frames...")
+        # Visual Debug: Only draw clusters that are currently validated
+        overlay = img_bgr.copy()
+        for c in clusters:
+            if c.is_validated:
+                for t in c.tops:
+                    y_draw = int(t + DRAW_OFFSET)
+                    cv2.rectangle(overlay, (0, y_draw), (img_bgr.shape[1], y_draw + BANNER_H), (0, 0, 255), -1)
+        
+        cv2.addWeighted(overlay, 0.4, img_bgr, 0.6, 0, img_bgr)
+        status = f"TRACKS: {len(clusters)} | VALID: {len([c for c in clusters if c.is_validated])}"
+        cv2.putText(img_bgr, f"TAU F:{i} | {status}", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.imwrite(os.path.join(OUT_DIR, f"tau_{i:05}.png"), img_bgr)
 
-    # --- SAVE OUTPUTS ---
-    pd.DataFrame(manifest).to_csv("global_audit_manifest.csv", index=False)
-    
-    # Save the Waterfall Plot
-    plt.figure(figsize=(20, 10))
-    plt.imshow(waterfall, aspect='auto', cmap='hot')
-    plt.title('Global Spatio-Temporal Banner Map (Waterfall)')
-    plt.xlabel('Frame Index (Time)')
-    plt.ylabel('Y-Coordinate (Space)')
-    plt.colorbar(label='Detection Confidence (White=Solid, Red=Coasting)')
-    plt.savefig('global_banner_waterfall.png', dpi=300)
-    
-    print("Audit Complete. See 'global_banner_waterfall.png' for the bird's eye view.")
+    pd.DataFrame(st.final_manifest).to_csv("sentinel_tau_manifest.csv", index=False)
 
 if __name__ == "__main__":
-    run_global_audit()
+    run_sentinel_tau()
