@@ -3,26 +3,24 @@ import numpy as np
 import os
 import pandas as pd
 
-# --- CALIBRATED CONSTANTS ---
+# --- CONFIGURATION ---
 BUFFER_ROOT = "capture_buffer_0"
-OUT_DIR = "sentinel_alpha_debug"
+OUT_DIR = "sentinel_beta_debug"
 START_F, END_F = 2000, 4000 
 
 # GEOMETRY
 SCAN_Y_START, SCAN_Y_END = 40, 450
 BANNER_H = 45
 DRAW_OFFSET = -12 
-HUD_DANGER_ZONE = 150 # Velocity-only mode below this line
+HUD_DANGER_ZONE = 145
 
 # KINEMATIC LAWS
 EXPECTED_V = 10.1
-CONSISTENCY_WINDOW = 10 
-MIN_V, MAX_V = 7.0, 15.0
+CONSISTENCY_WINDOW = 15 # Stricter vetting to kill ghosts
+MIN_V, MAX_V = 7.5, 14.0
 NUCLEATION_ZONE = 250
-# Banners are wide; damage numbers/sprites are narrow.
-MIN_HORIZONTAL_WIDTH = 600 
 
-class SiblingClusterAlpha:
+class SiblingClusterBeta:
     def __init__(self, tops, frame_idx):
         self.tops = sorted(tops)
         self.v = EXPECTED_V
@@ -35,97 +33,67 @@ class SiblingClusterAlpha:
         self._record(frame_idx)
 
     def _record(self, f):
-        """Internal logger for the history buffer."""
         for t in self.tops:
-            self.history.append({
-                "frame": f, "id": self.id, "y": t, "v": self.v, "valid": self.is_validated
-            })
+            self.history.append({"frame": f, "id": self.id, "y": t, "v": self.v, "valid": self.is_validated})
 
     def update(self, new_tops, f):
         self.age += 1
+        target = self.tops[0] - self.v
         
-        # --- LAW OF INERTIA: THE HUD BYPASS ---
-        # If validated and high on the screen, ignore visual noise to prevent Stage HUD anchoring.
-        is_blind = self.is_validated and (self.tops[0] < HUD_DANGER_ZONE)
+        # GUIDED MOMENTUM: Look for a match but reject it if it implies a wild jump
+        matches = [t for t in new_tops if abs(t - target) < 25]
         
-        if is_blind:
-            # Pure Momentum Mode: Subtract last known good velocity from current Y
-            self.tops = [t - self.v for t in self.tops]
+        best_match = None
+        if matches:
+            temp_best = min(matches, key=lambda t: abs(t - target))
+            actual_v = self.tops[0] - temp_best
+            # If the match implies we are stopping or jumping, ignore it (likely the HUD)
+            if abs(actual_v - self.v) < 2.5 and MIN_V <= actual_v <= MAX_V:
+                best_match = temp_best
+
+        if best_match is not None:
+            actual_v = self.tops[0] - best_match
+            self.consistency_score += 1
+            self.v = (self.v * 0.8) + (actual_v * 0.2)
+            self.tops = [best_match] + [best_match + (self.tops[i]-self.tops[0]) for i in range(1, len(self.tops))]
         else:
-            # NORMAL TRACKING MODE
-            target = self.tops[0] - self.v
-            matches = [t for t in new_tops if abs(t - target) < 30]
-            
-            # Filter matches to ensure they imply UPWARD movement
-            matches = [t for t in matches if (self.tops[0] - t) > 1.0]
-            
-            if matches:
-                best = min(matches, key=lambda t: abs(t - target))
-                actual_v = self.tops[0] - best
-                
-                # Check for consistent "Banner-like" upward velocity.
-                # Allow slower separation speeds during early nucleation (age < 15).
-                v_min = 2.0 if self.age < 15 else MIN_V
-                if v_min <= actual_v <= MAX_V:
-                    self.consistency_score += 1
-                    # Smooth the velocity vector
-                    self.v = (self.v * 0.7) + (actual_v * 0.3)
-                else:
-                    self.consistency_score = max(0, self.consistency_score - 1)
-                
-                # Maintain relative spacing for multi-banner clusters
-                self.tops = [best] + [best + (self.tops[i]-self.tops[0]) for i in range(1, len(self.tops))]
-            else:
-                # Predictive Coast: If the signal is lost, use the last velocity
-                self.tops = [t - self.v for t in self.tops]
+            # COASTING: Physics-only update
+            self.tops = [t - self.v for t in self.tops]
+            # Only reduce consistency if we are in the open grid (not the HUD zone)
+            if self.tops[0] > HUD_DANGER_ZONE:
                 self.consistency_score = max(0, self.consistency_score - 1)
 
-        # Validation logic (Backtracking Trigger)
         if not self.is_validated and self.consistency_score >= CONSISTENCY_WINDOW:
             self.is_validated = True
             for item in self.history: item['valid'] = True
 
         self._record(f)
 
-        # Execution logic (Kill candidates that stop moving or leave the screen)
-        if self.age > 30 and self.consistency_score < 3 and not is_blind: 
-            self.active = False
-        if self.tops[0] < -50: 
-            self.active = False
-            
+        # KILL if it stalls or leaves the screen
+        if self.age > 40 and self.consistency_score < 5: self.active = False
+        if self.tops[0] < -50: self.active = False
         return self.active
 
-class SentinelAlpha:
+class SentinelBeta:
     def __init__(self):
         self.clusters = []
         self.final_manifest = []
 
-    def check_banner_structure(self, img_gray, t, age):
-        """Verifies horizontal contiguity using Morphological Closing to bridge text gaps."""
+    def check_sandwich(self, img_gray, t):
+        """Verifies the Top-Edge / Text-Core / Black-Bottom structure."""
         h, w = img_gray.shape
-        y_probe = int(t + 15)
-        if y_probe >= h: return False
+        c1, c2 = int(w * 0.3), int(w * 0.7)
+        if t + 45 >= h: return False
         
-        # 1. Darkness Mask (Looking for the black rectangle)
-        row = img_gray[y_probe, :].reshape(1, -1)
-        mask = (row < 75).astype(np.uint8) * 255 # Slightly relaxed intensity
+        # 1. CORE VARIANCE (Must have text in the middle)
+        core_slice = img_gray[int(t + 22), c1:c2]
+        if np.var(core_slice) < 15.0: return False # Grid rows are too uniform
         
-        # 2. Horizontal Closing: Bridges the white text gaps
-        kernel = np.ones((1, 100), np.uint8)
-        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        # 2. BOTTOM PADDING (Must be solid dark at the base)
+        bottom_slice = img_gray[int(t + 40), c1:c2]
+        if np.mean(bottom_slice) > 65 or np.var(bottom_slice) > 30: return False
         
-        # 3. Measurement: Find the widest continuous dark segment
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-            closed, connectivity=8
-        )
-        if num_labels <= 1: return False
-        
-        max_width = np.max(stats[1:, cv2.CC_STAT_WIDTH])
-        
-        # Width Requirement: Starts small at nucleation and scales up to 600px
-        # This captures the 'narrow' banners at frame 2013 and 2886
-        target_width = MIN_HORIZONTAL_WIDTH if age > 15 else (w * 0.20)
-        return max_width > target_width
+        return True
 
     def process_frame(self, img_gray, f_idx):
         w = img_gray.shape[1]
@@ -133,69 +101,49 @@ class SentinelAlpha:
         grad = np.diff(center_ints.astype(float))
         tops = np.where(grad < -8.0)[0]
         
-        valid_tops = []
-        for t in tops:
-            if not (SCAN_Y_START <= t <= SCAN_Y_END): continue
-            
-            # Find age if this top is already tracked
-            age = 0
-            for c in self.clusters:
-                if any(abs(t - ct) < 30 for ct in c.tops):
-                    age = c.age
-                    break
-            
-            if self.check_banner_structure(img_gray, t, age):
-                valid_tops.append(t)
+        valid_tops = [t for t in tops if SCAN_Y_START <= t <= SCAN_Y_END and self.check_sandwich(img_gray, t)]
         
-        # 1. Update and Backfill
         for c in self.clusters:
-            was_validated = c.is_validated
+            was_v = c.is_validated
             if c.update(valid_tops, f_idx):
-                if c.is_validated and not was_validated:
-                    self.final_manifest.extend(c.history) # Dump backfilled history
-                elif c.is_validated:
-                    self.final_manifest.append(c.history[-1]) # Add latest frame
+                if c.is_validated and not was_v: self.final_manifest.extend(c.history)
+                elif c.is_validated: self.final_manifest.append(c.history[-1])
         
-        # 2. Nucleation logic (Birth zone only)
+        # Birth
         birth = [t for t in valid_tops if t > NUCLEATION_ZONE]
         birth = [bt for bt in birth if not any(abs(bt - t) < 50 for c in self.clusters for t in c.tops)]
-        if birth:
-            self.clusters.append(SiblingClusterAlpha(birth, f_idx))
+        if birth: self.clusters.append(SiblingClusterBeta(birth, f_idx))
         
         self.clusters = [c for c in self.clusters if c.active]
         return self.clusters
 
-def run_sentinel_alpha():
+def run_sentinel_beta():
     if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
-    
-    sa = SentinelAlpha()
+    sb = SentinelBeta()
     
     for i in range(START_F, min(END_F, len(all_files))):
         img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
         if img_bgr is None: continue
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        clusters = sb.process_frame(img_gray, i)
         
-        clusters = sa.process_frame(img_gray, i)
-        
-        # Visual Debug Overlay
         overlay = img_bgr.copy()
+        # --- UI CLEANUP: ONLY DRAW VALIDATED RED BARS ---
+        valid_count = 0
         for c in clusters:
-            color = (0, 0, 255) if c.is_validated else (0, 255, 255) # Red = Valid, Yellow = Candidate
-            for t in c.tops:
-                y_draw = int(t + DRAW_OFFSET)
-                cv2.rectangle(overlay, (0, max(0, y_draw)), 
-                              (img_bgr.shape[1], max(0, y_draw + BANNER_H)), color, -1)
+            if c.is_validated:
+                valid_count += 1
+                for t in c.tops:
+                    y_draw = int(t + DRAW_OFFSET)
+                    cv2.rectangle(overlay, (0, max(0, y_draw)), (img_bgr.shape[1], max(0, y_draw + BANNER_H)), (0, 0, 255), -1)
         
         cv2.addWeighted(overlay, 0.4, img_bgr, 0.6, 0, img_bgr)
-        status = f"TRACKS: {len(clusters)} | VALID: {len([c for c in clusters if c.is_validated])}"
-        cv2.putText(img_bgr, f"ALPHA F:{i} | {status}", (20, 30),
+        cv2.putText(img_bgr, f"BETA F:{i} | VALID BANNERS: {valid_count}", (20, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        cv2.imwrite(os.path.join(OUT_DIR, f"alpha_{i:05}.png"), img_bgr)
+        cv2.imwrite(os.path.join(OUT_DIR, f"beta_{i:05}.png"), img_bgr)
     
-    # Save the backfilled, frame-perfect manifest
-    pd.DataFrame(sa.final_manifest).to_csv("sentinel_alpha_manifest.csv", index=False)
-    print("Sentinel Alpha stress test complete.")
+    pd.DataFrame(sb.final_manifest).to_csv("sentinel_beta_manifest.csv", index=False)
 
 if __name__ == "__main__":
-    run_sentinel_alpha()
+    run_sentinel_beta()
