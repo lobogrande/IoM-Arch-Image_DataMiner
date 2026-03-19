@@ -140,4 +140,23 @@ def run_sentinel_chi():
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     sc = SentinelChi()
     
-    for i in range(START_F, min(END_F, len(all_files
+    for i in range(START_F, min(END_F, len(all_files))):
+        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
+        if img_bgr is None: continue
+        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        clusters = sc.process_frame(img_gray, i)
+        
+        overlay = img_bgr.copy()
+        for c in clusters:
+            color = (0, 0, 255) if c.is_validated else (0, 255, 255)
+            for t in c.tops:
+                y_draw = int(t + DRAW_OFFSET)
+                cv2.rectangle(overlay, (0, max(0, y_draw)), (img_bgr.shape[1], max(0, y_draw + BANNER_H)), color, -1)
+        
+        cv2.addWeighted(overlay, 0.4, img_bgr, 0.6, 0, img_bgr)
+        cv2.imwrite(os.path.join(OUT_DIR, f"chi_{i:05}.png"), img_bgr)
+    
+    pd.DataFrame(sc.final_manifest).to_csv("sentinel_chi_manifest.csv", index=False)
+
+if __name__ == "__main__":
+    run_sentinel_chi()
