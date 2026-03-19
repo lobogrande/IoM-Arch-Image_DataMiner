@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 START_INDEX = 0      
 END_INDEX = 2500     
 START_FLOOR = 1      
-OUT_DIR = "final_audit_v548"
+OUT_DIR = "restored_audit_v550"
 
 # --- CONSTANTS ---
 SLOT1_CENTER = (74, 261)
@@ -17,6 +17,18 @@ AI_DIM = 48
 HEADER_ROI = (54, 74, 103, 138)
 PLAYER_ROI_Y = (120, 420)
 KNOWN_TIERS = ['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
+
+# --- GROUND TRUTH DATA ---
+BOSS_DATA = {
+    11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 
+    25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 
+    34: {'tier': 'mixed', 'special': {8: 'myth1', 9: 'myth1', 14: 'myth1', 15: 'myth1'}}, 
+    35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'}, 
+    49: {"tier": "mixed", "special": {18: "myth2", 19: "myth2", 20: "myth2", 21: "myth2", 22: "myth2", 23: "myth2"}},
+    74: {'tier': 'mixed', 'special': {20: 'div1', 21: 'div1'}}, 
+    98: {'tier': 'myth3'}, 
+    99: {"tier": "mixed", "special": {5: "div2", 11: "div2", 17: "div2", 23: "div2"}}
+}
 
 ORE_RESTRICTIONS = {
     'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31), 'myth1': (20, 34), 'div1': (50, 74),
@@ -29,25 +41,28 @@ ORE_RESTRICTIONS = {
 def get_combined_mask(is_text_heavy_slot=False):
     mask = np.zeros((AI_DIM, AI_DIM), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
-    if is_text_heavy_slot: mask[0:28, :] = 0 # Calibrated Text Mask
+    if is_text_heavy_slot: mask[0:24, :] = 0 
     return mask
 
 def get_slot_status_worker(args):
     roi_gray, mask, templates, is_row1 = args
     bg_s = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
-    ore_s = max([cv2.matchTemplate(roi_gray, ore, cv2.TM_CCORR_NORMED, mask=mask).max() for ore in templates['active']])
+    
+    # Match against BOTH Active and Shadow ores
+    ore_s = max([cv2.matchTemplate(roi_gray, ore, cv2.TM_CCORR_NORMED, mask=mask).max() for ore in templates['ore_all']])
+    
     delta = ore_s - bg_s
-    # Reverted to safer 0.05 / 0.07 thresholds
-    thresh = 0.07 if is_row1 else 0.05
+    # If it looks like an ore (Active or Shadow) and NOT a background, bit is 1.
+    thresh = 0.08 if is_row1 else 0.06
     return "1" if (delta > thresh or bg_s < 0.81) else "0"
 
 # --- MAIN ENGINE ---
 
-def run_v5_48_final_auditor():
+def run_v5_50_surest_auditor():
     buffer_root = "capture_buffer_0"
     os.makedirs(f"{OUT_DIR}/confirmed", exist_ok=True)
-    p_right = cv2.imread("templates/player_right.png", 0)
     
+    # 1. LOAD TEMPLATES (Active + Shadows)
     raw_tpls = {'ore': {}, 'bg': []}
     for f in os.listdir("templates"):
         if f.startswith('.') or not f.lower().endswith('.png'): continue
@@ -62,6 +77,7 @@ def run_v5_48_final_auditor():
     files = all_files[START_INDEX:END_INDEX] if END_INDEX else all_files[START_INDEX:]
     std_mask, txt_mask = get_combined_mask(False), get_combined_mask(True)
     
+    # Initialization
     first_img_bgr = cv2.imread(os.path.join(buffer_root, files[0]))
     last_gray = cv2.cvtColor(first_img_bgr, cv2.COLOR_BGR2GRAY)
     anchor = {"idx": START_INDEX, "dna": "0"*24, "hud": last_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]].copy()}
@@ -70,12 +86,11 @@ def run_v5_48_final_auditor():
         cv2.imwrite(f"{OUT_DIR}/confirmed/F001_Idx00000_ROOT.jpg", first_img_bgr)
 
     dna_memory, confirmed_count = ["0"] * 24, START_FLOOR
-    lockout, persistence = 0, 0
-    last_dna = "0"*24
-    potential_start_idx = START_INDEX
-
+    lockout = 0
     executor = ThreadPoolExecutor(max_workers=24)
-    print(f"--- Running v5.48: FINAL Calibrated Auditor ---")
+    start_time = time.time()
+
+    print(f"--- Running v5.50-SUREST: High-Fidelity Auditor ---")
 
     for i in range(1, len(files)):
         abs_idx = START_INDEX + i
@@ -84,74 +99,57 @@ def run_v5_48_final_auditor():
         cur_hud = img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
         hud_diff = np.mean(cv2.absdiff(cur_hud, anchor['hud']))
 
-        # Player Col Detection
-        res_r = cv2.matchTemplate(img_gray[PLAYER_ROI_Y[0]:PLAYER_ROI_Y[1], :], p_right, cv2.TM_CCOEFF_NORMED)
-        player_col = int((cv2.minMaxLoc(res_r)[3][0] - 74 + 24) / 59.1)
-
         if lockout > 0: lockout -= 1
 
-        # LIGHT GATE: Always allow DNA math if not in lockout
-        pixel_move = np.mean(cv2.absdiff(img_gray[200:500, :], last_gray[200:500, :]))
-        if (hud_diff > 2.0 or pixel_move > 0.5) and lockout == 0:
-            allowed = [t for t, (low, high) in ORE_RESTRICTIONS.items() if low <= confirmed_count <= high]
-            active_list = []
-            for tier in allowed:
-                if tier in raw_tpls['ore']: active_list.extend(raw_tpls['ore'][tier])
-            runtime_tpls = {'active': active_list, 'bg': raw_tpls['bg']}
+        # TRIGGER Permission: If HUD shifts significantly, we MUST re-evaluate DNA
+        if (hud_diff > 2.5) and lockout == 0:
+            allowed_tiers = [t for t, (low, high) in ORE_RESTRICTIONS.items() if low <= confirmed_count <= high]
+            if confirmed_count in BOSS_DATA:
+                bt = BOSS_DATA[confirmed_count]['tier']
+                if bt != 'mixed' and bt not in allowed_tiers: allowed_tiers.append(bt)
+            
+            ore_all = []
+            for t in allowed_tiers:
+                if t in raw_tpls['ore']: ore_all.extend(raw_tpls['ore'][t])
+            
+            runtime_tpls = {'ore_all': ore_all, 'bg': raw_tpls['bg']}
 
-            tasks, task_map = [], []
+            # Scan the board
+            tasks = []
             for c in range(24):
                 r, col = divmod(c, 6)
                 x, y = int(SLOT1_CENTER[0]+(col*STEP_X))-24, int(SLOT1_CENTER[1])+(r*int(STEP_Y))-24
-                # Perform delta check to skip static slots
-                roi_now, roi_prev = img_gray[y:y+48, x:x+48], last_gray[y:y+48, x:x+48]
-                if np.mean(cv2.absdiff(roi_now, roi_prev)) < 0.2: continue
-                tasks.append((roi_now, txt_mask if c in [2,3] else std_mask, runtime_tpls, (c<6)))
-                task_map.append(c)
-
-            if tasks:
-                results = list(executor.map(get_slot_status_worker, tasks))
-                for idx, res in zip(task_map, results): dna_memory[idx] = res
+                tasks.append((img_gray[y:y+48, x:x+48], txt_mask if c in [2,3] else std_mask, runtime_tpls, (c<6)))
             
-            curr_dna = "".join(dna_memory)
-            if curr_dna == last_dna: persistence += 1
-            else:
-                persistence = 0
-                potential_start_idx = abs_idx
-            last_dna = curr_dna
+            results = list(executor.map(get_slot_status_worker, tasks))
+            curr_dna = "".join(results)
+            hamming = sum(c1 != c2 for c1, c2 in zip(anchor['dna'], curr_dna))
 
-            bits_changed = [k for k in range(24) if anchor['dna'][k] != curr_dna[k]]
-            hamming = len(bits_changed)
-            
-            # Smart Lane Veto: Only veto if Hamming is low
-            is_veto = False
-            if hamming < 3:
-                is_veto = all((k % 6) == player_col for k in bits_changed)
+            # --- THE SUREST TRIGGER ---
+            # A real floor transition involves a HUD spike AND a board shift (H >= 4)
+            if hud_diff > 3.0 and hamming >= 4:
+                confirmed_count += 1
+                lockout = 9 # Solid 10-frame window
+                cv2.imwrite(f"{OUT_DIR}/confirmed/F{confirmed_count:03}_Idx{abs_idx:05}_SURE.jpg", img_bgr)
+                print(f" >>> [SURE] F{confirmed_count} at {abs_idx:05} | H: {hamming} | HUD: {hud_diff:.2f}")
+                anchor = {"idx": abs_idx, "dna": curr_dna, "hud": cur_hud.copy()}
+                continue
 
-            # --- CONFIRMATION TRIGGERS ---
-            if lockout == 0 and not is_veto:
-                # Trigger A: HUD Pulse (Stage change)
-                if hud_diff > 4.5 and hamming >= 2 and persistence >= 1:
-                    confirmed_count += 1
-                    lockout = 9 # Solid 10-frame window
-                    cv2.imwrite(f"{OUT_DIR}/confirmed/F{confirmed_count:03}_Idx{potential_start_idx:05}_HUD.jpg", img_bgr)
-                    print(f" >>> [HUD] F{confirmed_count} at {potential_start_idx:05} | H: {hamming}")
-                    anchor = {"idx": abs_idx, "dna": curr_dna, "hud": cur_hud.copy()}
-                    continue
+            # --- THE VACUUM RECOVERY ---
+            # Catching the floors where the board becomes empty (Row 1)
+            row1_count = curr_dna[:6].count("1")
+            if row1_count <= 1 and (hamming >= 4 or abs_idx > anchor['idx'] + 30):
+                confirmed_count += 1
+                lockout = 9
+                cv2.imwrite(f"{OUT_DIR}/confirmed/F{confirmed_count:03}_Idx{abs_idx:05}_VAC.jpg", img_bgr)
+                print(f" >>> [VACUUM] F{confirmed_count} at {abs_idx:05} | H: {hamming}")
+                anchor = {"idx": abs_idx, "dna": curr_dna, "hud": cur_hud.copy()}
 
-                # Trigger B: Massive Hamming (Quake/Velocity)
-                if hamming >= 8 and persistence >= 2:
-                    confirmed_count += 1
-                    lockout = 9
-                    cv2.imwrite(f"{OUT_DIR}/confirmed/F{confirmed_count:03}_Idx{potential_start_idx:05}_VEL.jpg", img_bgr)
-                    print(f" >>> [VEL] F{confirmed_count} at {potential_start_idx:05} | H: {hamming}")
-                    anchor = {"idx": abs_idx, "dna": curr_dna, "hud": cur_hud.copy()}
-
-        last_gray = img_gray.copy()
-        if abs_idx % 250 == 0: print(f" [PROGRESS] {abs_idx:05} | Floors: {confirmed_count}")
+        if abs_idx % 250 == 0: 
+            print(f" [PROGRESS] {abs_idx:05} | Floors: {confirmed_count} | Time: {time.time()-start_time:.1f}s")
 
     executor.shutdown()
-    print(f"\n[FINISH] Scanned {len(files)} frames. Total Floors: {confirmed_count}")
+    print(f"\n[FINISH] Total Floors Found: {confirmed_count}")
 
 if __name__ == "__main__":
-    run_v5_48_final_auditor()
+    run_v5_50_surest_auditor()
