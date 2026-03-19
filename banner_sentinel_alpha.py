@@ -5,183 +5,153 @@ import pandas as pd
 
 # --- CALIBRATED CONSTANTS ---
 BUFFER_ROOT = "capture_buffer_0"
-OUT_DIR = "sentinel_lambda_debug"
+OUT_DIR = "sentinel_mu_debug"
 START_F, END_F = 2000, 4000 
 
 # GEOMETRY
-SCAN_Y_START = 40
-SCAN_Y_END = 450
+SCAN_Y_START, SCAN_Y_END = 40, 480
 BANNER_H = 45
 DRAW_OFFSET = -12 
-LOCK_ZONE_Y = 200 # Transition to Ballistic Lock
-NUCLEATION_Y_START = 350 # Banners must be in this zone to be "born"
-NUCLEATION_Y_END = 385
+LOCK_ZONE_Y = 190
 
-# KINEMATIC LAWS
-EXPECTED_V = 10.1
-CONSISTENCY_WINDOW = 10 
-MIN_V, MAX_V = 6.0, 16.0
-MIN_VALID_DISPLACEMENT = 60.0 
+# KINEMATIC & CHROMA LAWS
+EXPECTED_V = 9.5 # Updated based on Median forensic data
+CONSISTENCY_WINDOW = 8 
+MIN_V, MAX_V = 6.0, 15.0
+NUCLEATION_ZONE_Y = (250, 460) # Widened birth zone
 
-class SiblingClusterLambda:
+class SiblingClusterMu:
     def __init__(self, tops, frame_idx):
         self.tops = sorted(tops)
         self.v = EXPECTED_V
         self.age = 0
         self.consistency_score = 0
-        self.dist_moved = 0.0
-        self.v_samples = [] # Used for "Golden Mean" calculation
+        self.v_samples = []
         self.is_validated = False 
         self.active = True
         self.id = np.random.randint(1000, 9999)
-        self.history = []
-        self.mode = "N" # N=Nucleation, C=Cruising, B=Ballistic
+        self.history = [] # Temporary buffer for back-filling
+        self.start_frame = frame_idx
         self._record(frame_idx)
 
     def _record(self, f):
         for idx, t in enumerate(self.tops):
             self.history.append({
                 "frame": f, "id": self.id, "sibling_idx": idx,
-                "y_top": float(t), "v": self.v, 
-                "mode": self.mode, "valid": self.is_validated
+                "y_top": float(t), "v": self.v, "valid": self.is_validated
             })
 
     def update(self, new_tops, f):
         self.age += 1
+        is_ballistic = self.is_validated and (self.tops[0] < LOCK_ZONE_Y)
         
-        # 1. KINEMATIC MODE SELECTION
-        if self.is_validated and self.tops[0] < LOCK_ZONE_Y:
-            self.mode = "B" # Ballistic Lock
-        elif self.is_validated:
-            self.mode = "C" # Cruising
-        else:
-            self.mode = "N" # Nucleation/Vetting
-
         target = self.tops[0] - self.v
-        matches = [t for t in new_tops if abs(t - target) < 20]
+        matches = [t for t in new_tops if abs(t - target) < 18]
         
         visual_match = False
-        if self.mode == "B":
-            # BALLISTIC MODE: Ignore screen noise, allow only tiny Micro-Snaps
-            if matches:
-                best = min(matches, key=lambda t: abs(t - target))
-                if abs(best - target) < 2.0: # Very tight gate
-                    self.tops = [best] + [best + (self.tops[idx]-self.tops[0]) for idx in range(1, len(self.tops))]
-                    visual_match = True
-            if not visual_match:
-                self.tops = [t - self.v for t in self.tops]
+        if is_ballistic:
+            # PURE BALLISTIC: No visual snapping allowed to prevent HUD drift
+            self.tops = [t - self.v for t in self.tops]
         else:
-            # NORMAL TRACKING
             if matches:
                 best = min(matches, key=lambda t: abs(t - target))
                 actual_v = self.tops[0] - best
                 if MIN_V <= actual_v <= MAX_V:
                     self.consistency_score += 1
-                    self.dist_moved += actual_v
-                    # Velocity Smoothing
                     self.v = (self.v * 0.7) + (actual_v * 0.3)
-                    # Collect samples for Golden Mean (Cruising Phase)
-                    if self.tops[0] < 350: self.v_samples.append(actual_v)
-                    
+                    if self.tops[0] > LOCK_ZONE_Y: self.v_samples.append(actual_v)
                     self.tops = [best] + [best + (self.tops[idx]-self.tops[0]) for idx in range(1, len(self.tops))]
                     visual_match = True
-            
-            if not visual_match:
-                self.tops = [t - self.v for t in self.tops]
-                self.consistency_score = max(0, self.consistency_score - 1)
 
-        # 2. VALIDATION TRIGGER
-        if not self.is_validated:
-            if self.consistency_score >= CONSISTENCY_WINDOW and self.dist_moved >= MIN_VALID_DISPLACEMENT:
-                self.is_validated = True
-                # CALIBRATE GOLDEN MEAN: Use all cruising samples for the ballistic lock
-                if self.v_samples: self.v = sum(self.v_samples) / len(self.v_samples)
-                for item in self.history: item['valid'] = True
+        if not visual_match and not is_ballistic:
+            self.tops = [t - self.v for t in self.tops]
+            self.consistency_score = max(0, self.consistency_score - 1)
+
+        # VALIDATION & BACK-FILLING
+        if not self.is_validated and self.consistency_score >= CONSISTENCY_WINDOW:
+            self.is_validated = True
+            # CALIBRATE: Use the actual median cruising speed
+            if self.v_samples: self.v = np.median(self.v_samples)
+            
+            # RETROSPECTIVE RECOVERY: Correct the early frames using the calibrated velocity
+            # We work backwards from the first 'good' frame to the nucleation frame
+            anchor_y = self.tops[0]
+            anchor_f = f
+            for item in self.history:
+                frames_back = anchor_f - item['frame']
+                item['y_top'] = anchor_y + (frames_back * self.v)
+                item['valid'] = True
 
         self._record(f)
-        
-        # TERMINATION: Bottom edge must clear the HUD (y < 40)
-        if (self.tops[0] + BANNER_H) < 30: self.active = False
+        if (self.tops[0] + BANNER_H) < 20: self.active = False
         if self.age > 40 and not self.is_validated: self.active = False
         return self.active
 
-class SentinelLambda:
+class SentinelMu:
     def __init__(self):
         self.clusters = []
         self.master_history = []
 
-    def check_ensemble(self, img_bgr, t, age):
+    def check_structure(self, img_bgr, t):
         h, w, _ = img_bgr.shape
         y_probe = int(t + 15)
         if y_probe >= h: return False
-        
-        row_bgr = img_bgr[y_probe, int(w*0.1):int(w*0.9)]
-        row_gray = cv2.cvtColor(row_bgr.reshape(1, -1, 3), cv2.COLOR_BGR2GRAY).flatten()
-        
-        # 1. Structural Check
-        fill_rate = np.mean(row_gray < 75)
-        variance = np.var(row_gray.astype(float))
-        
-        # Strict nucleation check (must have text signature)
-        if age < 8 and variance < 15.0: return False
-        return (fill_rate > 0.55) and (variance > 10.0)
+        row_bgr = img_bgr[y_probe, int(w*0.2):int(w*0.8)]
+        # Chroma Filter: Banners are not pure Red
+        r_avg, g_avg = np.mean(row_bgr[:, 2]), np.mean(row_bgr[:, 1])
+        if r_avg > (g_avg + 40): return False 
+        # Texture check
+        row_gray = cv2.cvtColor(row_bgr.reshape(1, -1, 3), cv2.COLOR_BGR2GRAY)
+        return np.var(row_gray) > 10.0
 
     def process_frame(self, img_bgr, f_idx):
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        w = img_gray.shape[1]
-        center_ints = np.mean(img_gray[:, int(w*0.4):int(w*0.6)], axis=1)
+        center_ints = np.mean(img_gray[:, int(img_gray.shape[1]*0.4):int(img_gray.shape[1]*0.6)], axis=1)
         grad = np.diff(center_ints.astype(float))
         tops = np.where(grad < -8.0)[0]
         
+        valid_tops = [t for t in tops if SCAN_Y_START <= t <= SCAN_Y_END and self.check_structure(img_bgr, t)]
+        
         for c in self.clusters:
-            # Feed current age to the structure check
-            valid_tops = [t for t in tops if SCAN_Y_START <= t <= SCAN_Y_END and self.check_ensemble(img_bgr, t, c.age)]
             if not c.update(valid_tops, f_idx):
                 self.master_history.extend(c.history)
                 
-        # BIRTH LOGIC (Tightened Nucleation Zone)
-        birth_tops = [t for t in tops if NUCLEATION_Y_START <= t <= NUCLEATION_Y_END]
-        birth_tops = [t for t in birth_tops if self.check_ensemble(img_bgr, t, 0)]
+        # NUCLEATION: Look for new arrivals in the birth zone
+        birth_tops = [t for t in valid_tops if NUCLEATION_ZONE_Y[0] <= t <= NUCLEATION_ZONE_Y[1]]
         birth_tops = [bt for bt in birth_tops if not any(abs(bt - t) < 60 for c in self.clusters for t in c.tops)]
-        
         if birth_tops:
-            self.clusters.append(SiblingClusterLambda(birth_tops, f_idx))
+            self.clusters.append(SiblingClusterMu(birth_tops, f_idx))
         self.clusters = [c for c in self.clusters if c.active]
 
-    def finalize_manifest(self):
+    def finalize(self):
         for c in self.clusters: self.master_history.extend(c.history)
         df = pd.DataFrame(self.master_history)
         if df.empty: return df
-        df = df[df['valid']].sort_values(['frame', 'id', 'sibling_idx'])
-        return df.drop_duplicates(subset=['frame', 'id', 'sibling_idx'])
+        return df[df['valid']].sort_values(['frame', 'id', 'sibling_idx']).drop_duplicates(['frame', 'id', 'sibling_idx'])
 
-def run_sentinel_lambda():
+def run_sentinel_mu():
     if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
-    sl = SentinelLambda()
+    mu = SentinelMu()
     
-    print("PHASE 1: Calibrating Golden Mean Velocities...")
     for i in range(START_F, min(END_F, len(all_files))):
         img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
-        if img_bgr is not None: sl.process_frame(img_bgr, i)
+        if img_bgr is not None: mu.process_frame(img_bgr, i)
     
-    manifest = sl.finalize_manifest()
-    manifest.to_csv("sentinel_lambda_manifest.csv", index=False)
+    manifest = mu.finalize()
+    manifest.to_csv("sentinel_mu_manifest.csv", index=False)
     
-    print("PHASE 2: Generating Pristine Overlays...")
     for i in range(START_F, min(END_F, len(all_files))):
         frame_data = manifest[manifest['frame'] == i]
         if frame_data.empty: continue
         img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, all_files[i]))
         overlay = img_bgr.copy()
         for _, row in frame_data.iterrows():
-            y_draw = int(row['y_top'] + DRAW_OFFSET)
-            cv2.rectangle(overlay, (40, y_draw), (1240, y_draw + BANNER_H), (0, 0, 255), -1)
-            label = f"ID:{int(row['id'])} [{row['mode']}] V:{row['v']:.2f}"
-            cv2.putText(img_bgr, label, (50, y_draw - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        
+            y = int(row['y_top'] + DRAW_OFFSET)
+            cv2.rectangle(overlay, (40, y), (1240, y + BANNER_H), (0, 0, 255), -1)
+            cv2.putText(img_bgr, f"ID:{int(row['id'])} V:{row['v']:.2f}", (50, y-5), 1, 0.8, (255, 255, 255), 1)
         cv2.addWeighted(overlay, 0.4, img_bgr, 0.6, 0, img_bgr)
-        cv2.imwrite(os.path.join(OUT_DIR, f"lam_{i:05}.png"), img_bgr)
+        cv2.imwrite(os.path.join(OUT_DIR, f"mu_{i:05}.png"), img_bgr)
 
 if __name__ == "__main__":
-    run_sentinel_lambda()
+    run_sentinel_mu()
