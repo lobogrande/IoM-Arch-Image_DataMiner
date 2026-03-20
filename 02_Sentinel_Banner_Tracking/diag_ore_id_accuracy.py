@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic audit of Row 4 ore identification accuracy using DNA-Gated Masked Competitive Logic.
-# Version: 4.0 (Bugfix: Explicit String Dtypes for DNA Bitmasks)
+# Purpose: Forensic audit of Row 4 ore identification accuracy using Unified Competitive Profiling.
+# Version: 4.1 (Self-Gated Parallelized Logic)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -10,12 +10,16 @@ import project_config as cfg
 
 # CONFIG
 STEP1_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
-DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
 OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "debug_visuals")
 AI_DIM = 48
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
+
+# THRESHOLDS
+BG_OCCUPANCY_FLOOR = 0.92  # If BG match > this, slot is definitely empty
+ORE_STRICT_GATE = 0.82     # Ore match must beat this
+MARGIN_REQUIREMENT = 0.08  # Ore must beat BG by this much
 
 def get_spatial_mask():
     mask = np.zeros((AI_DIM, AI_DIM), dtype=np.uint8)
@@ -43,8 +47,8 @@ def load_all_templates():
             if state in ['act', 'sha']: templates['ore'][tier][state].append({'id': f, 'img': img})
     return templates
 
-def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
-    """Worker function to process 6 slots for a single frame."""
+def process_single_frame(frame_data, templates, mask, buffer_dir):
+    """Worker function to process 6 slots using self-gating logic."""
     f_idx = frame_data['frame_idx']
     filename = frame_data['filename']
     img_path = os.path.join(buffer_dir, filename)
@@ -52,9 +56,6 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     img_gray = cv2.imread(img_path, 0)
     if img_gray is None: return []
     
-    # Get DNA for this specific frame. 
-    # dna_map will now contain strings thanks to explicit dtypes in run_ore_audit.
-    r4_dna = dna_map.get(f_idx, "000000")
     row4_y = int(ORE0_Y + (3 * STEP))
     frame_results = []
 
@@ -63,59 +64,55 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         x1, y1 = int(cx - AI_DIM//2), int(row4_y - AI_DIM//2)
         roi = img_gray[y1 : y1 + AI_DIM, x1 : x1 + AI_DIM]
         
-        # DNA GATE: Ensuring subscripting works on string data
-        if r4_dna[col] == '0':
-            frame_results.append({
-                'frame': f_idx, 'slot': col, 'detected': 'empty_bg',
-                'ore_score': 0.0, 'bg_score': 1.0, 'margin': -1.0, 'source': 'dna_gate'
-            })
-            continue
-
-        # BACKGROUND DEFENSE
+        # 1. Background Defense (The new Gate)
         best_bg = {'id': 'none', 'score': 0.0}
         for bg_tpl in templates['bg']:
             res = cv2.matchTemplate(roi, bg_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
             _, val, _, _ = cv2.minMaxLoc(res)
             if val > best_bg['score']: best_bg = {'id': bg_tpl['id'], 'score': val}
 
-        # ORE IDENTIFICATION
-        best_ore = {'tier': 'empty', 'score': 0.0, 'id': 'none', 'raw_score': 0.0}
+        # SELF-GATE: If background match is pristine, skip ores
+        if best_bg['score'] > BG_OCCUPANCY_FLOOR:
+            frame_results.append({
+                'frame': f_idx, 'slot': col, 'detected': 'empty_bg',
+                'ore_score': 0.0, 'bg_score': round(best_bg['score'], 4), 
+                'margin': -1.0, 'ore_id': 'none', 'bg_id': best_bg['id']
+            })
+            continue
+
+        # 2. Ore Identification
+        best_ore = {'tier': 'empty', 'score': 0.0, 'id': 'none'}
         for tier, states in templates['ore'].items():
             for state in ['act', 'sha']:
                 for ore_tpl in states[state]:
                     res = cv2.matchTemplate(roi, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                     _, score, _, _ = cv2.minMaxLoc(res)
-                    raw = score
-                    # Apply Shadow Compensation (Tuned to 1.03 for stability)
                     if state == 'sha': score *= 1.03
                     
                     if score > best_ore['score']:
-                        best_ore = {'tier': tier, 'score': score, 'id': ore_tpl['id'], 'raw_score': raw}
+                        best_ore = {'tier': tier, 'score': score, 'id': ore_tpl['id']}
 
-        # COMPETITIVE LOGIC
-        is_valid = (best_ore['score'] > 0.82) and (best_ore['score'] - best_bg['score'] > 0.08)
+        # 3. Competitive Logic
+        margin = best_ore['score'] - best_bg['score']
+        is_valid = (best_ore['score'] > ORE_STRICT_GATE) and (margin > MARGIN_REQUIREMENT)
         detected = best_ore['tier'] if is_valid else "low_conf_ore"
 
         frame_results.append({
             'frame': f_idx, 'slot': col, 'detected': detected,
             'ore_score': round(best_ore['score'], 4),
             'bg_score': round(best_bg['score'], 4),
-            'margin': round(best_ore['score'] - best_bg['score'], 4),
-            'ore_id': best_ore['id'], 'bg_id': best_bg['id'], 'source': 'masked_id'
+            'margin': round(margin, 4),
+            'ore_id': best_ore['id'], 'bg_id': best_bg['id']
         })
 
     return frame_results
 
 def run_ore_audit():
-    if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV):
-        print("Error: Required CSV files missing.")
+    if not os.path.exists(STEP1_CSV):
+        print("Error: Step 1 CSV missing.")
         return
 
     if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
-    
-    # CRITICAL BUGFIX: Explicitly load DNA columns as strings to prevent integer-stripping of leading zeros.
-    dna_df = pd.read_csv(DNA_CSV, dtype={'r3_dna': str, 'r4_dna': str})
-    dna_map = dna_df.set_index('frame_idx')['r4_dna'].to_dict()
     
     df = pd.read_csv(STEP1_CSV)
     df_sample = df.sample(min(1000, len(df)))
@@ -124,11 +121,11 @@ def run_ore_audit():
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v4.0: PARALLELIZED GATED LOGIC ---")
-    print(f"Analyzing {len(df_sample)} frames using multi-core processing...")
+    print(f"--- ORE ID AUDIT v4.1: UNIFIED COMPETITIVE LOGIC ---")
+    print(f"Analyzing {len(df_sample)} frames...")
 
     all_results = []
-    worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
+    worker_func = partial(process_single_frame, templates=templates, mask=mask, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
         tasks = df_sample.to_dict('records')
@@ -140,23 +137,23 @@ def run_ore_audit():
                 all_results.extend(future.result())
             except Exception as e:
                 print(f"Worker Exception: {e}")
-                
             count += 1
             if count % 100 == 0:
                 print(f"  Processed {count}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.0_parallel.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.1_unified.csv"), index=False)
     
-    print("\n--- DETECTION SUMMARY (v4.0) ---")
+    print("\n--- UNIFIED DETECTION SUMMARY (v4.1) ---")
     print(audit_df['detected'].value_counts())
     
-    print("\n--- TOP FALSE POSITIVE SUSPECTS (Margins) ---")
-    div_hits = audit_df[audit_df['detected'].str.startswith('div', na=False)]
-    if not div_hits.empty:
-        print(div_hits.groupby('detected')['margin'].describe())
+    if 'low_conf_ore' in audit_df['detected'].values:
+        print("\n--- LOW CONFIDENCE ANALYSIS ---")
+        low_conf = audit_df[audit_df['detected'] == 'low_conf_ore']
+        print(f"Average Margin for Low-Conf Ores: {low_conf['margin'].mean():.4f}")
+        print(f"Max Margin for Low-Conf Ores:     {low_conf['margin'].max():.4f}")
 
-    print(f"\n[DONE] Scan complete. Output: {OUT_DIR}/ore_id_v4.0_parallel.csv")
+    print(f"\n[DONE] Audit complete. Output: {OUT_DIR}/ore_id_v4.1_unified.csv")
 
 if __name__ == "__main__":
     run_ore_audit()
