@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic audit of Row 4 ore identification accuracy using Masked Competitive Logic.
-# Version: 3.6 (Visual Debug & Raw Delta Profiling)
+# Purpose: Forensic audit of Row 4 ore identification accuracy using DNA-Gated Masked Competitive Logic.
+# Version: 3.8 (DNA Bit-Masking & Precision Resolution)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -8,6 +8,7 @@ import project_config as cfg
 
 # CONFIG
 STEP1_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
+DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
 OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "debug_visuals")
 AI_DIM = 48
@@ -22,27 +23,38 @@ def get_spatial_mask():
 def load_all_templates():
     templates = {'ore': {}, 'bg': []}
     t_path = cfg.TEMPLATE_DIR
+    if not os.path.exists(t_path): return templates
+
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
         img = cv2.imread(os.path.join(t_path, f), 0)
         if img is None: continue
         if img.shape != (AI_DIM, AI_DIM): img = cv2.resize(img, (AI_DIM, AI_DIM))
-        if f.startswith("background"):
-            templates['bg'].append(img)
+            
+        if f.startswith("background") or f.startswith("negative_ui"):
+            templates['bg'].append({'id': f, 'img': img})
         else:
             parts = f.split("_")
             if len(parts) < 2: continue
             tier, state = parts[0], parts[1]
             if tier not in templates['ore']: templates['ore'][tier] = {'act': [], 'sha': []}
-            if state in ['act', 'sha']: templates['ore'][tier][state].append(img)
+            if state in ['act', 'sha']: templates['ore'][tier][state].append({'id': f, 'img': img})
     return templates
 
 def run_ore_audit():
-    if not os.path.exists(STEP1_CSV): return
+    if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV):
+        print("Error: Required CSV files missing (Step 1 or Step 2 output).")
+        return
+
     if not os.path.exists(DEBUG_IMG_DIR): os.makedirs(DEBUG_IMG_DIR)
     
+    # 1. Load Step 2 DNA Signatures
+    dna_df = pd.read_csv(DNA_CSV)
+    # Map frame_idx -> r4_dna string (e.g., '001111')
+    dna_map = dna_df.set_index('frame_idx')['r4_dna'].to_dict()
+    
+    # 2. Sample Step 1 frames
     df = pd.read_csv(STEP1_CSV)
-    # We take a specific sample including some suspected boss floors if possible
     df_sample = df.sample(min(200, len(df)))
     
     templates = load_all_templates()
@@ -52,60 +64,75 @@ def run_ore_audit():
     results = []
     row4_y = int(ORE0_Y + (3 * STEP))
 
-    print(f"--- ORE ID AUDIT v3.6: VISUAL DEBUG MODE ---")
+    print(f"--- ORE ID AUDIT v3.8: DNA-GATED COMPETITIVE LOGIC ---")
+    print(f"Active Tiers: {len(templates['ore'])} | Background Templates: {len(templates['bg'])}")
 
-    for idx, row in df_sample.iterrows():
+    for _, row in df_sample.iterrows():
+        f_idx = row['frame_idx']
         img_color = cv2.imread(os.path.join(buffer_dir, row['filename']))
         img_gray = cv2.cvtColor(img_color, cv2.COLOR_BGR2GRAY) if img_color is not None else None
         if img_gray is None: continue
         
-        frame_results = []
+        # Get DNA for this specific frame
+        r4_dna = dna_map.get(f_idx, "000000")
+
         for col in range(6):
             cx = int(ORE0_X + (col * STEP))
             x1, y1 = int(cx - AI_DIM//2), int(row4_y - AI_DIM//2)
             roi = img_gray[y1 : y1 + AI_DIM, x1 : x1 + AI_DIM]
             
-            # 1. Background Match
-            best_bg_score = 0.0
-            for bg_img in templates['bg']:
-                bg_res = cv2.matchTemplate(roi, bg_img, cv2.TM_CCOEFF_NORMED).max()
-                if bg_res > best_bg_score: best_bg_score = bg_res
+            # --- GATE: Is the slot even occupied? ---
+            if r4_dna[col] == '0':
+                results.append({
+                    'frame': f_idx, 'slot': col, 'detected': 'empty_bg',
+                    'ore_score': 0.0, 'bg_score': 1.0, 'margin': -1.0, 'source': 'dna_gate'
+                })
+                continue
 
-            # 2. Ore Match
-            best_ore = {'tier': 'empty', 'score': 0.0, 'state': 'none', 'raw': 0.0}
+            # --- IDENTIFICATION: Only run if DNA says '1' ---
+            # 1. Best Background Defense
+            best_bg = {'id': 'none', 'score': 0.0}
+            for bg_tpl in templates['bg']:
+                res = cv2.matchTemplate(roi, bg_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
+                _, val, _, _ = cv2.minMaxLoc(res)
+                if val > best_bg['score']: best_bg = {'id': bg_tpl['id'], 'score': val}
+
+            # 2. Best Ore Identity
+            best_ore = {'tier': 'empty', 'score': 0.0, 'id': 'none'}
             for tier, states in templates['ore'].items():
                 for state in ['act', 'sha']:
-                    for t_img in states[state]:
-                        res = cv2.matchTemplate(roi, t_img, cv2.TM_CCORR_NORMED, mask=mask)
+                    for ore_tpl in states[state]:
+                        res = cv2.matchTemplate(roi, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                         _, score, _, _ = cv2.minMaxLoc(res)
-                        raw_score = score
                         if state == 'sha': score *= 1.05
-                        
                         if score > best_ore['score']:
-                            best_ore = {'tier': tier, 'score': score, 'state': state, 'raw': raw_score}
+                            best_ore = {'tier': tier, 'score': score, 'id': ore_tpl['id']}
 
             # 3. Competitive Logic
-            is_valid = (best_ore['score'] > 0.80) and (best_ore['score'] - best_bg_score > 0.06)
-            detected = best_ore['tier'] if is_valid else "empty"
+            # Higher strictness since we already know the slot is occupied
+            is_valid = (best_ore['score'] > 0.82) and (best_ore['score'] - best_bg['score'] > 0.08)
+            detected = best_ore['tier'] if is_valid else "low_conf_ore"
             
-            # HUD Visual
-            color = (0, 255, 0) if is_valid else (0, 0, 255)
+            color = (0, 255, 0) if is_valid else (0, 165, 255) # Green for ID, Orange for low-conf
             cv2.rectangle(img_color, (x1, y1), (x1+AI_DIM, y1+AI_DIM), color, 1)
             cv2.putText(img_color, f"{detected}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-            cv2.putText(img_color, f"{best_ore['score']:.2f}", (x1, y1+AI_DIM+12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
 
             results.append({
-                'frame': row['frame_idx'], 'slot': col, 'detected': detected,
-                'score': best_ore['score'], 'bg': best_bg_score, 'margin': best_ore['score'] - best_bg_score
+                'frame': f_idx, 'slot': col, 'detected': detected,
+                'ore_score': round(best_ore['score'], 4),
+                'bg_score': round(best_bg['score'], 4),
+                'margin': round(best_ore['score'] - best_bg['score'], 4),
+                'ore_id': best_ore['id'], 'bg_id': best_bg['id'], 'source': 'masked_id'
             })
 
-        # Save debug image
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"audit_f{row['frame_idx']}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"audit_v38_f{f_idx}.jpg"), img_color)
 
     audit_df = pd.DataFrame(results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v3.6_debug.csv"), index=False)
-    print(f"\n[DONE] Saved {len(df_sample)} debug images to {DEBUG_IMG_DIR}")
-    print(f"Check the 'margin' column in the CSV for slots labeled 'div' that should be 'empty'.")
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v3.8_gated.csv"), index=False)
+    
+    print("\n--- GATED DETECTION SUMMARY (v3.8) ---")
+    print(audit_df['detected'].value_counts())
+    print(f"\n[DONE] Check 'ore_id_v3.8_gated.csv'. 'low_conf_ore' counts should be investigated.")
 
 if __name__ == "__main__":
     run_ore_audit()
