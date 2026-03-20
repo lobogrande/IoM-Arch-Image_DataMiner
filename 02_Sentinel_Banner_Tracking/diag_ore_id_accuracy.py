@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic audit of Row 4 ore identification accuracy using DNA-Gated Dual-ROI Logic.
-# Version: 4.9 (Greedy Template Profiler & Inter-Tier Stability)
+# Purpose: Forensic audit of Row 4 ore identification accuracy using Tier-Biased Dual-ROI Logic.
+# Version: 5.0 (Tier-Biased Conservation & Complexity Penalties)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -23,11 +23,22 @@ STEP = 59.0
 JITTER = 2 
 
 # THRESHOLDS
-BG_OCCUPANCY_FLOOR = 0.82  # CCOEFF Background Match
-ORE_STRICT_GATE    = 0.80  # CCORR Identity Match (Masked)
+BG_OCCUPANCY_FLOOR = 0.82  
+ORE_STRICT_GATE    = 0.80  
+TIER_CONF_BUFFER   = 0.05  # Higher tier must beat lower tier by this much to 'win'
+
+# TIER RANKING (Higher value = Higher complexity/rarity)
+TIER_RANK = {
+    'dirt1': 1, 'dirt2': 1, 'dirt3': 1,
+    'com1': 2, 'com2': 2, 'com3': 2,
+    'rare1': 3, 'rare2': 3, 'rare3': 3,
+    'epic1': 4, 'epic2': 4, 'epic3': 4,
+    'myth1': 5, 'myth2': 5,
+    'leg1': 6, 'leg2': 6, 'leg3': 6,
+    'div1': 7, 'div2': 7, 'div3': 7
+}
 
 def get_spatial_mask():
-    """Circular mask for 48x48 Identity phase."""
     mask = np.zeros((DIM_ID, DIM_ID), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
     return mask
@@ -42,13 +53,10 @@ def load_all_templates():
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
         
-        # 1. Prepare Occupancy (30x30 Center Crop)
         h, w = img_raw.shape
         cy, cx = h // 2, w // 2
         r = DIM_OCC // 2
         img_occ = img_raw[cy-r : cy+r, cx-r : cx+r]
-        
-        # 2. Prepare Identity (48x48)
         img_id = cv2.resize(img_raw, (DIM_ID, DIM_ID))
             
         if f.startswith("background") or f.startswith("negative_ui"):
@@ -82,12 +90,10 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     for col in range(6):
         cx = int(ORE0_X + (col * STEP))
         
-        # GATE 1: DNA Occupancy
         if r4_dna[col] == '0':
-            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'occ_score': 0.0, 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none'})
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'occ_score': 0.0, 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none', 'was_downgraded': False})
             continue
 
-        # GATE 2: 30px Surgical Background Check
         x1_occ, y1_occ = int(cx - (DIM_OCC//2) - JITTER), int(row4_y - (DIM_OCC//2) - JITTER)
         search_occ = img_gray[y1_occ : y1_occ + DIM_OCC + (JITTER*2), x1_occ : x1_occ + DIM_OCC + (JITTER*2)]
         best_bg_occ = 0.0
@@ -96,50 +102,66 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             best_bg_occ = max(best_bg_occ, cv2.minMaxLoc(res)[1])
 
         if best_bg_occ > BG_OCCUPANCY_FLOOR:
-            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_bg', 'occ_score': round(best_bg_occ, 4), 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none'})
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_bg', 'occ_score': round(best_bg_occ, 4), 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none', 'was_downgraded': False})
             continue
 
-        # PHASE 2: Identity (48x48 Masked)
         x1_id, y1_id = int(cx - (DIM_ID//2) - JITTER), int(row4_y - (DIM_ID//2) - JITTER)
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
         
-        all_matches = []
+        tier_winners = [] # List of best match for each tier category
         for tier, states in templates['ore_id'].items():
+            best_in_tier = {'tier': tier, 'id': 'none', 'score': -1.0}
             for state in ['act', 'sha']:
                 for ore_tpl in states[state]:
                     res = cv2.matchTemplate(search_id, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                     score = cv2.minMaxLoc(res)[1]
-                    all_matches.append({'tier': tier, 'id': ore_tpl['id'], 'score': score})
+                    if score > best_in_tier['score']:
+                        best_in_tier = {'tier': tier, 'id': ore_tpl['id'], 'score': score}
+            tier_winners.append(best_in_tier)
         
-        all_matches.sort(key=lambda x: x['score'], reverse=True)
-        top1 = all_matches[0]
+        # Sort winners by raw score
+        tier_winners.sort(key=lambda x: x['score'], reverse=True)
+        raw_winner = tier_winners[0]
         
-        # Stability Margin: How much better is #1 than the best different tier?
-        diff_tiers = [m for m in all_matches if m['tier'] != top1['tier']]
+        # --- CHALLENGE LOGIC ---
+        # We start with the absolute best score. 
+        # But if there's a lower-ranked tier that is within TIER_CONF_BUFFER, we take the lower one.
+        final_winner = raw_winner
+        was_downgraded = False
+        
+        for challenger in tier_winners[1:]:
+            # If the challenger is a LOWER tier
+            if TIER_RANK.get(challenger['tier'], 0) < TIER_RANK.get(final_winner['tier'], 0):
+                # And the score gap is within the buffer
+                if (final_winner['score'] - challenger['score']) < TIER_CONF_BUFFER:
+                    final_winner = challenger
+                    was_downgraded = True
+
+        greedy_candidates.append(raw_winner['id'])
+        is_valid = final_winner['score'] > ORE_STRICT_GATE
+        detected = final_winner['tier'] if is_valid else "low_conf_id"
+        
+        # Stability Margin relative to the NEW winner
+        diff_tiers = [m for m in tier_winners if m['tier'] != final_winner['tier']]
         top2_diff = diff_tiers[0] if diff_tiers else {'tier': 'none', 'score': 0.0}
-        tier_margin = top1['score'] - top2_diff['score']
+        tier_margin = final_winner['score'] - top2_diff['score']
 
-        # Greedy Profiling: Track top 3 templates seen in this occupied slot
-        greedy_candidates.extend([m['id'] for m in all_matches[:3]])
-
-        is_valid = top1['score'] > ORE_STRICT_GATE
-        detected = top1['tier'] if is_valid else "low_conf_id"
-        
-        # Enhanced Visualization
         color = (0, 255, 0) if is_valid else (0, 0, 255)
+        if was_downgraded: color = (255, 255, 0) # Cyan for downgraded/stable calls
+        
         rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
-        cv2.putText(img_color, f"1. {top1['tier']} ({top1['score']:.2f})", (rx1, ry1-15), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        cv2.putText(img_color, f"2. {top2_diff['tier']} ({top2_diff['score']:.2f})", (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 0), 1)
+        cv2.putText(img_color, f"{detected} ({final_winner['score']:.2f})", (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
 
         frame_results.append({
             'frame': f_idx, 'slot': col, 'detected': detected,
-            'occ_score': round(best_bg_occ, 4), 'id_score': round(top1['score'], 4),
-            'margin': round(tier_margin, 4), 'ore_id': top1['id']
+            'occ_score': round(best_bg_occ, 4), 'id_score': round(final_winner['score'], 4),
+            'margin': round(tier_margin, 4), 'ore_id': final_winner['id'],
+            'was_downgraded': was_downgraded
         })
 
     if any(r['detected'] not in ['empty_dna', 'empty_bg'] for r in frame_results):
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"forensic_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"consensus_v5_f{f_idx}.jpg"), img_color)
 
     return frame_results, greedy_candidates
 
@@ -155,7 +177,7 @@ def run_ore_audit():
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v4.9: GREEDY TEMPLATE PROFILER ---")
+    print(f"--- ORE ID AUDIT v5.0: TIER-BIASED CONSERVATION ---")
 
     all_results, all_greedy = [], []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
@@ -169,21 +191,13 @@ def run_ore_audit():
             all_greedy.extend(greedy)
             if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
-    # Report Greediness
-    greedy_counts = Counter(all_greedy)
-    print("\n--- TOP GREEDY TEMPLATES (High Occurrence in Top 3) ---")
-    for tid, count in greedy_counts.most_common(10):
-        print(f"  {count:4d} hits: {tid}")
-
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.9_forensic.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v5.0_conservative.csv"), index=False)
     
-    print(f"\n--- STABILITY ANALYSIS ---")
-    valid_hits = audit_df[~audit_df['detected'].isin(['empty_dna', 'empty_bg', 'low_conf_id'])]
-    if not valid_hits.empty:
-        print(valid_hits.groupby('detected')['margin'].agg(['mean', 'min', 'count']))
-
-    print(f"\n[DONE] Check forensic images. Look for small margins on 'div3' and 'dirt1' calls.")
+    print(f"\n--- CONSERVATION STATS ---")
+    downgrades = audit_df['was_downgraded'].sum()
+    print(f"Total Ores 'Downgraded' to Lower Tier for Stability: {downgrades}")
+    print(audit_df['detected'].value_counts())
 
 if __name__ == "__main__":
     run_ore_audit()
