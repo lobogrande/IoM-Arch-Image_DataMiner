@@ -8,7 +8,7 @@ import os
 import re
 
 # --- 1. SETUP ---
-TEST_FRAME = "capture_buffer_0/frame_20260306_231753_721292.png" # Stage 14
+TEST_FRAME = os.path.join(cfg.get_buffer_path(0), "frame_20260306_231753_721292.png") # Stage 14
 DIGITS_DIR = cfg.DIGIT_DIR
 ROI = (230, 250, 16, 31) # Y, X, H, W (Your verified AI box)
 

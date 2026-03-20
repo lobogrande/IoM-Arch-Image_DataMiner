@@ -17,7 +17,7 @@ AI_DIG_X1, AI_DIG_Y1 = 255, 230     # Placeholder (Update these!)
 AI_DIG_X2, AI_DIG_Y2 = 282, 246     # Placeholder (Update these!)
 
 # --- 2. INPUT IMAGE ---
-TEST_IMAGE = "capture_buffer_0/frame_20260306_233844_294839.png" 
+TEST_IMAGE = os.path.join(cfg.get_buffer_path(0), "frame_20260306_233844_294839.png") 
 OUTPUT_DIR = "calibration_v4_outputs"
 
 def run_precision_audit():

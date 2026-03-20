@@ -17,7 +17,7 @@ HUD_X1, HUD_Y1 = 161, 231           # Top Left (+1px buffer)
 HUD_X2, HUD_Y2 = 281, 248           # Bottom Right (+2px buffer)
 
 # --- 2. INPUT IMAGE ---
-TEST_IMAGE = "capture_buffer_0/frame_20260306_233844_294839.png" 
+TEST_IMAGE = os.path.join(cfg.get_buffer_path(0), "frame_20260306_233844_294839.png") 
 OUTPUT_DIR = "calibration_outputs_v2_1"
 
 def run_calibration_v2_1():

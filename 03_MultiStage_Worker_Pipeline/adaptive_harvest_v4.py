@@ -7,7 +7,7 @@ import numpy as np
 import os
 
 # --- 1. TARGET FRAME (Stage 14) ---
-FRAME_PATH = "capture_buffer_0/frame_20260306_231753_721292.png"
+FRAME_PATH = os.path.join(cfg.get_buffer_path(0), "frame_20260306_231753_721292.png")
 DIG_Y1, DIG_Y2, DIG_X1, DIG_X2 = 230, 246, 250, 281
 OUTPUT_DIR = "harvest_v4_adaptive"
 

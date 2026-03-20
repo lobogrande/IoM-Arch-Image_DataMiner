@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 # --- 1. SET THE TEST IMAGE ---
-IMAGE_SOURCE = "capture_buffer_0/frame_20260306_232957_356908.png" 
+IMAGE_SOURCE = os.path.join(cfg.get_buffer_path(0), "frame_20260306_232957_356908.png") 
 
 def click_event(event, x, y, flags, params):
     if event == cv2.EVENT_LBUTTONDOWN:

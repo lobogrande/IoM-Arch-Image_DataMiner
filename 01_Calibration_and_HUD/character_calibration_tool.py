@@ -30,4 +30,4 @@ def calibrate_relative_offset(image_path):
     return None
 
 # Run this on a frame where player is to the left of slot 0
-calibrate_relative_offset("capture_buffer_0/frame_20260306_231745_717968.png")
+calibrate_relative_offset(os.path.join(cfg.get_buffer_path(0), "frame_20260306_231745_717968.png"))

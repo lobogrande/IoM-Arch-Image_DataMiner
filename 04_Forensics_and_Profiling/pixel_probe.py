@@ -7,7 +7,7 @@ import numpy as np
 
 # --- 1. SET THE TEST IMAGE ---
 # Use the currated 3-digit floor image here
-IMAGE_SOURCE = "capture_buffer_0/frame_20260306_233844_294839.png" 
+IMAGE_SOURCE = os.path.join(cfg.get_buffer_path(0), "frame_20260306_233844_294839.png") 
 
 def click_event(event, x, y, flags, params):
     if event == cv2.EVENT_LBUTTONDOWN:
