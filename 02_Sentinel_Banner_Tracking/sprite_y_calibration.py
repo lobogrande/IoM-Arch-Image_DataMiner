@@ -1,65 +1,69 @@
 # sprite_y_calibration.py
-# Version: 1.1
-# Fix: Full-width search and dimension validation to prevent OpenCV crashes.
+# Version: 1.2
+# Fix: Exhaustive search (every frame) and lower threshold to capture transition frames.
 
 import sys, os, cv2, numpy as np
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
-VERSION = "1.1"
+VERSION = "1.2"
 
 def run_y_calibration():
-    # 1. Load Left-Facing Template (Behead for stability)
+    # 1. Load Left-Facing Template
     tpl_l = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, "player_left.png"), 0)
-    if tpl_l is None:
-        print("Error: player_left.png not found.")
-        return
+    if tpl_l is None: return
     
-    # Crop top 40% to avoid 'Dig Stage' text interference
-    tpl_l = tpl_l[int(tpl_l.shape[0]*0.4):, :] 
+    # Behead for stability (40% crop)
     th, tw = tpl_l.shape
+    tpl_l = tpl_l[int(th*0.4):, :] 
+    new_th, _ = tpl_l.shape
 
     files = sorted([f for f in os.listdir(cfg.get_buffer_path(0)) if f.endswith('.png')])
     
-    # Slot 0 Y was confirmed as 249 in our previous audit
+    # Established Baseline from Slot 0 Audit
     slot0_y_pixel = 249
     
-    print(f"--- Y-AXIS RECONCILIATION v{VERSION} ---")
-    print("Searching for player at Slot 11 (Facing Left)...")
+    print(f"--- Y-AXIS RECONCILIATION v{VERSION} (Exhaustive Mode) ---")
+    print(f"Searching every frame for Slot 11 (Start of Floor 13)...")
 
-    found_y = None
-    # We scan a broad range of frames to find where the player transitions to Row 2
-    # Typically this happens toward the end of a floor cycle
-    for f_idx in range(100, len(files), 10): # Sample every 10 frames to move fast
-        img = cv2.imread(os.path.join(cfg.get_buffer_path(0), files[f_idx]), 0)
+    best_match = {'conf': 0, 'y': 0, 'frame': '', 'idx': 0}
+
+    # Focus specifically on the early transition window the user identified
+    for f_idx in range(0, 1000):
+        img_path = os.path.join(cfg.get_buffer_path(0), files[f_idx])
+        img = cv2.imread(img_path, 0)
         if img is None: continue
         ih, iw = img.shape
 
-        # Safety Check: Ensure image is large enough for the template
-        if ih < th or iw < tw: continue
-
-        # Global search for the left-facing sprite
-        # We look across the entire width now to avoid slicing errors
-        res = cv2.matchTemplate(img, tpl_l, cv2.TM_CCOEFF_NORMED)
+        # Search the right half where Slot 11 lives (X > 500)
+        # Full height scan to find the vertical shift
+        strip = img[:, 500:]
+        res = cv2.matchTemplate(strip, tpl_l, cv2.TM_CCOEFF_NORMED)
         _, val, _, loc = cv2.minMaxLoc(res)
 
-        # We only care about hits on the right half of the grid (X > 400)
-        # to ensure we are actually looking at Slot 11 and not a stray fairy
-        if val > 0.90 and loc[0] > 400:
-            found_y = loc[1]
-            print(f"Found Slot 11 candidate at Frame {f_idx}:")
-            print(f"  Pixel X: {loc[0]}, Pixel Y: {found_y} (Conf: {round(val,4)})")
-            break
+        if val > best_match['conf']:
+            best_match = {
+                'conf': val,
+                'y': loc[1],
+                'frame': files[f_idx],
+                'idx': f_idx
+            }
 
-    if found_y:
-        actual_step_y = found_y - slot0_y_pixel
-        print(f"\n--- Y-CALIBRATION RESULT ---")
-        print(f"Row 1 (Slot 0)  AI Pixel Y: {slot0_y_pixel}")
-        print(f"Row 2 (Slot 11) AI Pixel Y: {found_y}")
-        print(f"NEW CALIBRATED STEP_Y: {actual_step_y}")
+        # Progress heartbeat
+        if f_idx % 200 == 0:
+            print(f"  Processed {f_idx} frames... (Best so far: {round(best_match['conf'], 3)})")
+
+    if best_match['conf'] > 0.75:
+        actual_step_y = best_match['y'] - slot0_y_pixel
+        print(f"\n--- Y-CALIBRATION SUCCESS ---")
+        print(f"Best Slot 11 Candidate: Frame {best_match['idx']} ({best_match['frame']})")
+        print(f"Confidence: {round(best_match['conf'], 4)}")
+        print(f"Row 2 (Slot 11) Pixel Y: {best_match['y']}")
+        print(f"Row 1 (Slot 0)  Pixel Y: {slot0_y_pixel}")
+        print(f"CALIBRATED STEP_Y: {actual_step_y}")
         print(f"Old HUD STEP_Y: 59.1")
     else:
-        print("\n[ERROR] No Slot 11 detections. Check if the player actually reaches Slot 11 in this buffer.")
+        print("\n[ERROR] Still no clear detection. Template/Search mismatch.")
 
 if __name__ == "__main__":
     run_y_calibration()
