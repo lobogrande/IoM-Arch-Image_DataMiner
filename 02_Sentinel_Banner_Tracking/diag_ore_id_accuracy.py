@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic audit of Row 4 ore identification accuracy using Structural Texture Validation.
-# Version: 5.2 (Structural Complexity Validation & Soft Consensus)
+# Purpose: Forensic audit of Row 4 ore identification accuracy using Hardened Consistency.
+# Version: 5.3 (Hard Floor Profile Election & Complexity-Weighted Priority)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -16,8 +16,8 @@ OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 
 # ROI CONSTANTS
-DIM_OCC = 30  # Surgical ROI for Background/Occupancy (CCOEFF)
-DIM_ID  = 48  # Contextual ROI for Tier Identification (Masked CCORR)
+DIM_OCC = 30  
+DIM_ID  = 48  
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 JITTER = 2 
@@ -26,7 +26,8 @@ JITTER = 2
 BG_OCCUPANCY_FLOOR = 0.82  
 ORE_STRICT_GATE    = 0.80  
 TIER_CONF_BUFFER   = 0.05  
-COMPLEXITY_PENALTY_COEFF = 0.0002 # How much to penalize structural mismatch
+COMPLEXITY_PENALTY_COEFF = 0.0002 
+COMPLEXITY_BONUS_COEFF   = 0.0001 # Bonus for high-info templates (Com/Rare)
 
 # TIER RANKING
 TIER_RANK = {
@@ -43,7 +44,6 @@ def get_family(tier_name):
     return ''.join([i for i in tier_name if not i.isdigit()])
 
 def get_complexity(img):
-    """Calculates the structural complexity (detail level) of an image."""
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def get_spatial_mask():
@@ -66,8 +66,6 @@ def load_all_templates():
         r = DIM_OCC // 2
         img_occ = img_raw[cy-r : cy+r, cx-r : cx+r]
         img_id = cv2.resize(img_raw, (DIM_ID, DIM_ID))
-        
-        # Calculate Template Complexity Profile
         complexity = get_complexity(img_id)
             
         if f.startswith("background") or f.startswith("negative_ui"):
@@ -97,6 +95,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     row4_y = int(ORE0_Y + (3 * STEP))
     slot_matches = {}
 
+    # --- PASS 1: Raw Local Identification ---
     for col in range(6):
         cx = int(ORE0_X + (col * STEP))
         if r4_dna[col] == '0':
@@ -116,8 +115,6 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
 
         x1_id, y1_id = int(cx - (DIM_ID//2) - JITTER), int(row4_y - (DIM_ID//2) - JITTER)
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
-        
-        # Calculate ROI Complexity
         roi_comp = get_complexity(search_id)
         
         tier_performances = {} 
@@ -130,11 +127,11 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
                     res = cv2.matchTemplate(search_id, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                     raw_score = cv2.minMaxLoc(res)[1]
                     
-                    # --- STRUCTURAL VALIDATION ---
-                    # Penalize "Flat" templates matching "Busy" ROIs
+                    # --- REFINED STRUCTURAL VALIDATION ---
                     comp_diff = abs(roi_comp - ore_tpl['comp'])
                     penalty = comp_diff * COMPLEXITY_PENALTY_COEFF
-                    adjusted_score = raw_score - penalty
+                    bonus = ore_tpl['comp'] * COMPLEXITY_BONUS_COEFF # Bonus for being complex
+                    adjusted_score = raw_score - penalty + bonus
                     
                     if adjusted_score > best_score:
                         best_score = adjusted_score
@@ -144,15 +141,18 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             
         slot_matches[col] = {'status': 'occupied', 'occ_score': best_bg_occ, 'tiers': tier_performances, 'roi_comp': roi_comp}
 
-    # ROW-LEVEL ELECTION
+    # --- PASS 2: ROW-LEVEL FLOOR PROFILE ELECTION ---
+    # Determine the Champion Tier for each family for the WHOLE floor.
     family_champions = {}
     for col, data in slot_matches.items():
         if data['status'] != 'occupied': continue
         for tier, perf in data['tiers'].items():
             fam = get_family(tier)
+            # A Tier wins if it has the highest single confidence 'Anchor' in the row
             if fam not in family_champions or perf['score'] > family_champions[fam]['score']:
                 family_champions[fam] = {'tier': tier, 'score': perf['score']}
 
+    # --- PASS 3: FINAL ENFORCEMENT ---
     frame_results = []
     has_detections = False
 
@@ -165,41 +165,28 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_bg', 'occ_score': round(data['occ_score'], 4), 'id_score': 0.0, 'ore_id': 'none', 'was_corrected': False})
             continue
 
-        tier_list = [{'tier': t, 'score': p['score'], 'id': p['id'], 'comp': p['comp']} for t, p in data['tiers'].items()]
-        tier_list.sort(key=lambda x: x['score'], reverse=True)
-        local_winner = tier_list[0]
+        # Force all tiers to the Champion tiers for their respective families
+        profile_tiers = []
+        for fam, champion in family_champions.items():
+            perf = data['tiers'].get(champion['tier'])
+            if perf:
+                profile_tiers.append({'tier': champion['tier'], 'score': perf['score'], 'id': perf['id'], 'comp': perf['comp']})
         
-        # v5.0 Downgrade check
-        for challenger in tier_list[1:]:
-            if TIER_RANK.get(challenger['tier'], 0) < TIER_RANK.get(local_winner['tier'], 0):
-                if (local_winner['score'] - challenger['score']) < TIER_CONF_BUFFER:
-                    local_winner = challenger
-
-        # v5.2 SOFT CONSENSUS
-        final_winner = local_winner
-        was_corrected = False
-        fam = get_family(local_winner['tier'])
-        champion = family_champions.get(fam)
+        # Now find the winner ONLY from the allowed Floor Profile
+        profile_tiers.sort(key=lambda x: x['score'], reverse=True)
+        final_winner = profile_tiers[0]
         
-        # Only correct if the champion is significantly stronger OR same family with low local margin
-        if champion and champion['tier'] != local_winner['tier']:
-            champ_perf = data['tiers'].get(champion['tier'])
-            if champ_perf:
-                # Rule: Overwhelming Champion
-                if champ_perf['score'] > (local_winner['score'] + 0.15):
-                    final_winner = {'tier': champion['tier'], 'score': champ_perf['score'], 'id': champ_perf['id']}
-                    was_corrected = True
-                # Rule: Family Alignment on Weak Signal
-                elif champ_perf['score'] > 0.70 and (local_winner['score'] - champ_perf['score']) < 0.03:
-                    final_winner = {'tier': champion['tier'], 'score': champ_perf['score'], 'id': champ_perf['id']}
-                    was_corrected = True
+        # Apply Tier-Bias Conservation within the Profile (v5.0 logic)
+        for challenger in profile_tiers[1:]:
+            if TIER_RANK.get(challenger['tier'], 0) < TIER_RANK.get(final_winner['tier'], 0):
+                if (final_winner['score'] - challenger['score']) < TIER_CONF_BUFFER:
+                    final_winner = challenger
 
         is_valid = final_winner['score'] > ORE_STRICT_GATE
         detected = final_winner['tier'] if is_valid else "low_conf_id"
         
+        # Visualization
         color = (0, 255, 0) if is_valid else (0, 0, 255)
-        if was_corrected: color = (255, 0, 255)
-        
         cx = int(ORE0_X + (col * STEP))
         rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
@@ -210,11 +197,11 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             'frame': f_idx, 'slot': col, 'detected': detected,
             'occ_score': round(data['occ_score'], 4), 'id_score': round(final_winner['score'], 4),
             'roi_comp': round(data['roi_comp'], 1), 'tpl_comp': round(final_winner.get('comp', 0), 1),
-            'ore_id': final_winner['id'], 'was_corrected': was_corrected
+            'ore_id': final_winner['id'], 'was_corrected': False # was_corrected logic removed for clean profile
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"structural_v52_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"hardened_v53_f{f_idx}.jpg"), img_color)
 
     return frame_results, []
 
@@ -229,7 +216,9 @@ def run_ore_audit():
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v5.2: STRUCTURAL TEXTURE VALIDATION ---")
+    print(f"--- ORE ID AUDIT v5.3: HARDENED CONSISTENCY ---")
+    print(f"Profile-Strict Re-Evaluation Active")
+
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
     
@@ -242,9 +231,8 @@ def run_ore_audit():
             if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v5.2_structural.csv"), index=False)
-    print(f"\n--- STRUCTURAL STATS ---")
-    print(f"Consensus Corrections: {audit_df['was_corrected'].sum()}")
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v5.3_hardened.csv"), index=False)
+    print(f"\n--- HARDENED DETECTION SUMMARY ---")
     print(audit_df['detected'].value_counts())
 
 if __name__ == "__main__":
