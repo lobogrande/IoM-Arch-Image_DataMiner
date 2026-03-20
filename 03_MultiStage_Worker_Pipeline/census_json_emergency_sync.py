@@ -1,10 +1,15 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import json
 import os
+UNIFIED_ROOT = cfg.UNIFIED_INPUTS
 
 # --- CONFIG ---
 TARGET_RUN = "3"
 SHIFT_START_FLOOR = 62  # The first floor that is now 'missing' or needs to be moved up
-JSON_PATH = f"Unified_Consensus_Inputs/Run_{TARGET_RUN}/final_sequence.json"
+JSON_PATH = f"{UNIFIED_ROOT}/Run_{TARGET_RUN}/final_sequence.json"
 
 def emergency_json_sync():
     if not os.path.exists(JSON_PATH):

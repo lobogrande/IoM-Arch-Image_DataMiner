@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -5,7 +9,7 @@ import json
 import glob
 
 # --- CONFIGURATION ---
-UNIFIED_ROOT = "Unified_Consensus_Inputs"
+UNIFIED_ROOT = cfg.UNIFIED_INPUTS  # Root directory for unified consensus inputs
 
 def run_census_shifter_sync():
     print("--- ARCHAEOLOGY CENSUS SHIFTER & SYNC (v1.1) ---")

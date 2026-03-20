@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import mss
@@ -9,6 +13,7 @@ from datetime import datetime
 
 # --- GLOBAL SCALER (SET TO 2 FOR MAC RETINA, 1 FOR STANDARD) ---
 SCALER = 2 
+LOG_DIR = cfg.DATA_DIRS["LOGS"]
 
 def scale_roi(roi):
     return {k: v * SCALER for k, v in roi.items()}
@@ -47,7 +52,7 @@ VALIDATION_MIN = 0.70  # Threshold to save unknown images for review
 if not os.path.exists(CHECK_FOLDER): os.makedirs(CHECK_FOLDER)
 
 # --- TEMPLATE LOADING ---
-def load_templates(folder="templates"):
+def load_templates(folder=cfg.TEMPLATE_DIR):
     templates = {'act': {}, 'sha': {}, 'hbar': {}, 'bg': [], 'fairy': [], 'play': {}}
     if not os.path.exists(folder):
         print(f"CRITICAL ERROR: '{folder}' folder not found!")

@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import mss
@@ -24,14 +28,7 @@ for folder in [DIV_FOLDER, AUDIT_FOLDER]:
     if not os.path.exists(folder): os.makedirs(folder)
 
 # --- ORE SPAWN GATES (User Verified Table) ---
-SPAWN_GATES = {
-    'dirt1': (1, 11),   'com1': (1, 17),   'rare1': (3, 25),  'epic1': (6, 29),
-    'leg1': (12, 31),   'myth1': (20, 34), 'div1': (50, 74),
-    'dirt2': (12, 23),  'com2': (18, 28),  'rare2': (26, 35), 'epic2': (30, 41),
-    'leg2': (32, 44),   'myth2': (36, 49), 'div2': (75, 99),
-    'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999),
-    'leg3': (45, 999),  'myth3': (50, 999), 'div3': (100, 999)
-}
+SPAWN_GATES = cfg.ORE_RESTRICTIONS
 
 SLOT_COORDS = [(x, y-5) for x, y in [
     (82, 492), (141, 492), (200, 492), (259, 492), (318, 492), (377, 492),
@@ -44,8 +41,8 @@ SLOT_COORDS = [(x, y-5) for x, y in [
 
 def load_digit_templates():
     digits = []
-    if not os.path.exists("digits"): return digits
-    for f in sorted(os.listdir("digits")):
+    if not os.path.exists(cfg.DIGIT_DIR): return digits
+    for f in sorted(os.listdir(cfg.DIGIT_DIR)):
         if f.endswith(".png"):
             img = cv2.imread(f"digits/{f}", 0)
             if img is not None:
@@ -55,8 +52,8 @@ def load_digit_templates():
 
 def load_ore_templates():
     templates = {'act': {}, 'sha': {}}
-    if not os.path.exists("templates"): return templates
-    for f in os.listdir("templates"):
+    if not os.path.exists(cfg.TEMPLATE_DIR): return templates
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         img = cv2.imread(f"templates/{f}", 0)
         if img is None: continue
         prefix = f.split('_')[0]
