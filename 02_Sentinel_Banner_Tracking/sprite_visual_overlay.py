@@ -11,7 +11,7 @@ STEP_X, STEP_Y = 117.2, 59.0
 
 def run_visual_overlay():
     # Pick a few key frames where we expect movement (e.g. start of Floor 13)
-    test_frames = [63, 120, 240, 360, 480, 600] 
+    test_frames = [100, 200, 300, 400, 500, 550] 
     files = sorted([f for f in os.listdir(cfg.get_buffer_path(0)) if f.endswith('.png')])
     
     if not os.path.exists("debug_grid"): os.makedirs("debug_grid")
