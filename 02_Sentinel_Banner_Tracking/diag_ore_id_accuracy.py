@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic audit of Row 4 ore identification accuracy using DNA-Gated Masked Competitive Logic.
-# Version: 3.9 (Parallelized Execution & Optimized Template Handling)
+# Version: 4.0 (Bugfix: Explicit String Dtypes for DNA Bitmasks)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -52,7 +52,8 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     img_gray = cv2.imread(img_path, 0)
     if img_gray is None: return []
     
-    # Get DNA for this specific frame
+    # Get DNA for this specific frame. 
+    # dna_map will now contain strings thanks to explicit dtypes in run_ore_audit.
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y = int(ORE0_Y + (3 * STEP))
     frame_results = []
@@ -62,7 +63,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         x1, y1 = int(cx - AI_DIM//2), int(row4_y - AI_DIM//2)
         roi = img_gray[y1 : y1 + AI_DIM, x1 : x1 + AI_DIM]
         
-        # DNA GATE
+        # DNA GATE: Ensuring subscripting works on string data
         if r4_dna[col] == '0':
             frame_results.append({
                 'frame': f_idx, 'slot': col, 'detected': 'empty_bg',
@@ -112,42 +113,42 @@ def run_ore_audit():
 
     if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
     
-    dna_df = pd.read_csv(DNA_CSV)
+    # CRITICAL BUGFIX: Explicitly load DNA columns as strings to prevent integer-stripping of leading zeros.
+    dna_df = pd.read_csv(DNA_CSV, dtype={'r3_dna': str, 'r4_dna': str})
     dna_map = dna_df.set_index('frame_idx')['r4_dna'].to_dict()
     
     df = pd.read_csv(STEP1_CSV)
-    # Increase sample size now that we are parallelized
     df_sample = df.sample(min(1000, len(df)))
     
     templates = load_all_templates()
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v3.9: PARALLELIZED GATED LOGIC ---")
+    print(f"--- ORE ID AUDIT v4.0: PARALLELIZED GATED LOGIC ---")
     print(f"Analyzing {len(df_sample)} frames using multi-core processing...")
 
     all_results = []
-    
-    # Use ProcessPoolExecutor for CPU-bound template matching
-    # We pass the shared data to a partial function to simplify the map call
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Convert df rows to list of dicts for serialization
         tasks = df_sample.to_dict('records')
         futures = {executor.submit(worker_func, task): task for task in tasks}
         
         count = 0
         for future in concurrent.futures.as_completed(futures):
-            all_results.extend(future.result())
+            try:
+                all_results.extend(future.result())
+            except Exception as e:
+                print(f"Worker Exception: {e}")
+                
             count += 1
             if count % 100 == 0:
                 print(f"  Processed {count}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v3.9_parallel.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.0_parallel.csv"), index=False)
     
-    print("\n--- DETECTION SUMMARY (v3.9) ---")
+    print("\n--- DETECTION SUMMARY (v4.0) ---")
     print(audit_df['detected'].value_counts())
     
     print("\n--- TOP FALSE POSITIVE SUSPECTS (Margins) ---")
@@ -155,8 +156,7 @@ def run_ore_audit():
     if not div_hits.empty:
         print(div_hits.groupby('detected')['margin'].describe())
 
-    print(f"\n[DONE] Scan complete. Output: {OUT_DIR}/ore_id_v3.9_parallel.csv")
+    print(f"\n[DONE] Scan complete. Output: {OUT_DIR}/ore_id_v4.0_parallel.csv")
 
 if __name__ == "__main__":
-    # Multiprocessing requires the main guard on Windows/macOS
     run_ore_audit()
