@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic audit of Row 4 ore identification accuracy using Tier-Biased Dual-ROI Logic.
-# Version: 5.0 (Tier-Biased Conservation & Complexity Penalties)
+# Version: 5.1 (Row-Level Tier Consensus & Family Elections)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -25,7 +25,7 @@ JITTER = 2
 # THRESHOLDS
 BG_OCCUPANCY_FLOOR = 0.82  
 ORE_STRICT_GATE    = 0.80  
-TIER_CONF_BUFFER   = 0.05  # Higher tier must beat lower tier by this much to 'win'
+TIER_CONF_BUFFER   = 0.05  # Buffer for tier-biased conservation (v5.0)
 
 # TIER RANKING (Higher value = Higher complexity/rarity)
 TIER_RANK = {
@@ -33,10 +33,14 @@ TIER_RANK = {
     'com1': 2, 'com2': 2, 'com3': 2,
     'rare1': 3, 'rare2': 3, 'rare3': 3,
     'epic1': 4, 'epic2': 4, 'epic3': 4,
-    'myth1': 5, 'myth2': 5,
+    'myth1': 5, 'myth2': 5, 'myth3': 5,
     'leg1': 6, 'leg2': 6, 'leg3': 6,
     'div1': 7, 'div2': 7, 'div3': 7
 }
+
+def get_family(tier_name):
+    """Extracts family name from tier (e.g., 'dirt1' -> 'dirt')."""
+    return ''.join([i for i in tier_name if not i.isdigit()])
 
 def get_spatial_mask():
     mask = np.zeros((DIM_ID, DIM_ID), dtype=np.uint8)
@@ -75,6 +79,7 @@ def load_all_templates():
     return templates
 
 def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
+    """Worker function using Row-Level Consensus logic."""
     f_idx = frame_data['frame_idx']
     filename = frame_data['filename']
     img_path = os.path.join(buffer_dir, filename)
@@ -84,16 +89,19 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y = int(ORE0_Y + (3 * STEP))
-    frame_results = []
-    greedy_candidates = []
+    
+    # --- PHASE 1: Collect ALL Potential Matches for the Row ---
+    slot_matches = {} # col -> list of all tier best-matches
 
     for col in range(6):
         cx = int(ORE0_X + (col * STEP))
         
+        # DNA Gate
         if r4_dna[col] == '0':
-            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'occ_score': 0.0, 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none', 'was_downgraded': False})
+            slot_matches[col] = {'status': 'empty_dna'}
             continue
 
+        # 30px Occupancy Gate
         x1_occ, y1_occ = int(cx - (DIM_OCC//2) - JITTER), int(row4_y - (DIM_OCC//2) - JITTER)
         search_occ = img_gray[y1_occ : y1_occ + DIM_OCC + (JITTER*2), x1_occ : x1_occ + DIM_OCC + (JITTER*2)]
         best_bg_occ = 0.0
@@ -102,68 +110,101 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             best_bg_occ = max(best_bg_occ, cv2.minMaxLoc(res)[1])
 
         if best_bg_occ > BG_OCCUPANCY_FLOOR:
-            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_bg', 'occ_score': round(best_bg_occ, 4), 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none', 'was_downgraded': False})
+            slot_matches[col] = {'status': 'empty_bg', 'occ_score': best_bg_occ}
             continue
 
+        # 48px Masked Identity phase - Run ALL tiers to prepare for election
         x1_id, y1_id = int(cx - (DIM_ID//2) - JITTER), int(row4_y - (DIM_ID//2) - JITTER)
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
         
-        tier_winners = [] # List of best match for each tier category
+        tier_performances = {} # tier -> best score in this slot
         for tier, states in templates['ore_id'].items():
-            best_in_tier = {'tier': tier, 'id': 'none', 'score': -1.0}
+            best_score = -1.0
+            best_id = 'none'
             for state in ['act', 'sha']:
                 for ore_tpl in states[state]:
                     res = cv2.matchTemplate(search_id, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                     score = cv2.minMaxLoc(res)[1]
-                    if score > best_in_tier['score']:
-                        best_in_tier = {'tier': tier, 'id': ore_tpl['id'], 'score': score}
-            tier_winners.append(best_in_tier)
-        
-        # Sort winners by raw score
-        tier_winners.sort(key=lambda x: x['score'], reverse=True)
-        raw_winner = tier_winners[0]
-        
-        # --- CHALLENGE LOGIC ---
-        # We start with the absolute best score. 
-        # But if there's a lower-ranked tier that is within TIER_CONF_BUFFER, we take the lower one.
-        final_winner = raw_winner
-        was_downgraded = False
-        
-        for challenger in tier_winners[1:]:
-            # If the challenger is a LOWER tier
-            if TIER_RANK.get(challenger['tier'], 0) < TIER_RANK.get(final_winner['tier'], 0):
-                # And the score gap is within the buffer
-                if (final_winner['score'] - challenger['score']) < TIER_CONF_BUFFER:
-                    final_winner = challenger
-                    was_downgraded = True
+                    if score > best_score:
+                        best_score = score
+                        best_id = ore_tpl['id']
+            tier_performances[tier] = {'score': best_score, 'id': best_id}
+            
+        slot_matches[col] = {'status': 'occupied', 'occ_score': best_bg_occ, 'tiers': tier_performances}
 
-        greedy_candidates.append(raw_winner['id'])
+    # --- PHASE 2: ROW-LEVEL TIER ELECTION ---
+    # Determine which specific tier of a family is dominant in this row.
+    family_champions = {} # family -> {'tier': 'dirt1', 'score': 0.94}
+    
+    for col, data in slot_matches.items():
+        if data['status'] != 'occupied': continue
+        for tier, perf in data['tiers'].items():
+            fam = get_family(tier)
+            if fam not in family_champions or perf['score'] > family_champions[fam]['score']:
+                family_champions[fam] = {'tier': tier, 'score': perf['score']}
+
+    # --- PHASE 3: FINAL RESOLUTION ---
+    frame_results = []
+    has_detections = False
+
+    for col in range(6):
+        data = slot_matches[col]
+        if data['status'] == 'empty_dna':
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'occ_score': 0.0, 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none', 'was_corrected': False})
+            continue
+        if data['status'] == 'empty_bg':
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_bg', 'occ_score': round(data['occ_score'], 4), 'id_score': 0.0, 'margin': 0.0, 'ore_id': 'none', 'was_corrected': False})
+            continue
+
+        # Get initial local winner using v5.0 Tier Bias
+        tier_list = [{'tier': t, 'score': p['score'], 'id': p['id']} for t, p in data['tiers'].items()]
+        tier_list.sort(key=lambda x: x['score'], reverse=True)
+        
+        local_winner = tier_list[0]
+        # v5.0 Downgrade check
+        for challenger in tier_list[1:]:
+            if TIER_RANK.get(challenger['tier'], 0) < TIER_RANK.get(local_winner['tier'], 0):
+                if (local_winner['score'] - challenger['score']) < TIER_CONF_BUFFER:
+                    local_winner = challenger
+
+        # v5.1 Row-Level Consensus Check
+        final_winner = local_winner
+        was_corrected = False
+        
+        fam = get_family(local_winner['tier'])
+        champion = family_champions.get(fam)
+        
+        # If the row has a 'champion' tier for this family that is different from our local winner
+        if champion and champion['tier'] != local_winner['tier']:
+            # And the champion tier actually matched reasonably well here (e.g. > 0.70)
+            champ_perf = data['tiers'].get(champion['tier'])
+            if champ_perf and champ_perf['score'] > 0.70:
+                final_winner = {'tier': champion['tier'], 'score': champ_perf['score'], 'id': champ_perf['id']}
+                was_corrected = True
+
         is_valid = final_winner['score'] > ORE_STRICT_GATE
         detected = final_winner['tier'] if is_valid else "low_conf_id"
         
-        # Stability Margin relative to the NEW winner
-        diff_tiers = [m for m in tier_winners if m['tier'] != final_winner['tier']]
-        top2_diff = diff_tiers[0] if diff_tiers else {'tier': 'none', 'score': 0.0}
-        tier_margin = final_winner['score'] - top2_diff['score']
-
+        # Visual Annotation
         color = (0, 255, 0) if is_valid else (0, 0, 255)
-        if was_downgraded: color = (255, 255, 0) # Cyan for downgraded/stable calls
+        if was_corrected: color = (255, 0, 255) # Purple for consensus corrections
         
+        cx = int(ORE0_X + (col * STEP))
         rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
         cv2.putText(img_color, f"{detected} ({final_winner['score']:.2f})", (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        if is_valid: has_detections = True
 
         frame_results.append({
             'frame': f_idx, 'slot': col, 'detected': detected,
-            'occ_score': round(best_bg_occ, 4), 'id_score': round(final_winner['score'], 4),
-            'margin': round(tier_margin, 4), 'ore_id': final_winner['id'],
-            'was_downgraded': was_downgraded
+            'occ_score': round(data['occ_score'], 4), 'id_score': round(final_winner['score'], 4),
+            'ore_id': final_winner['id'], 'was_corrected': was_corrected
         })
 
-    if any(r['detected'] not in ['empty_dna', 'empty_bg'] for r in frame_results):
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"consensus_v5_f{f_idx}.jpg"), img_color)
+    if has_detections:
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"consensus_v51_f{f_idx}.jpg"), img_color)
 
-    return frame_results, greedy_candidates
+    return frame_results, []
 
 def run_ore_audit():
     if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV): return
@@ -177,26 +218,25 @@ def run_ore_audit():
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v5.0: TIER-BIASED CONSERVATION ---")
+    print(f"--- ORE ID AUDIT v5.1: ROW-LEVEL CONSENSUS ---")
 
-    all_results, all_greedy = [], []
+    all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
         tasks = df_sample.to_dict('records')
         futures = {executor.submit(worker_func, task): task for task in tasks}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            res, greedy = future.result()
+            res, _ = future.result()
             all_results.extend(res)
-            all_greedy.extend(greedy)
             if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v5.0_conservative.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v5.1_consensus.csv"), index=False)
     
-    print(f"\n--- CONSERVATION STATS ---")
-    downgrades = audit_df['was_downgraded'].sum()
-    print(f"Total Ores 'Downgraded' to Lower Tier for Stability: {downgrades}")
+    print(f"\n--- CONSENSUS STATS ---")
+    corrections = audit_df['was_corrected'].sum()
+    print(f"Total Ores Forced to Champion Tier for Consistency: {corrections}")
     print(audit_df['detected'].value_counts())
 
 if __name__ == "__main__":
