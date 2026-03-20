@@ -1,6 +1,6 @@
 # diag_step1_gap_audit.py
 # Purpose: Check if missing floors exist in Step 1 results by converting manual filenames to indices.
-# Added: Deep Search mode and Surgical Forensic Scan for absolute misses.
+# Added: Deep Search mode, Surgical Forensic Scan, and Recovery Search for substitute frames.
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -40,7 +40,6 @@ def perform_surgical_forensic_scan(img_path):
     if img is None: return "File Error"
     
     # Analyze Row 3 area (where banners and fairy usually interfere)
-    # Target player/ore Y range is roughly 250-450
     roi = img[250:450, :]
     hpp = np.mean(roi, axis=1)
     variance = np.var(roi, axis=1)
@@ -48,9 +47,6 @@ def perform_surgical_forensic_scan(img_path):
     avg_intensity = np.mean(hpp)
     max_var = np.max(variance)
     
-    # Diagnostics
-    # Dark banners drop intensity significantly (< 40)
-    # Moving sprites (Fairy) cause high local variance spikes (> 1500)
     if avg_intensity < 40: return f"Blocked: Dark Banner (Intensity: {avg_intensity:.1f})"
     if max_var > 1500: return f"Blocked: High Noise/Fairy (Max Var: {max_var:.1f})"
     return f"Clear but Missed (Int: {avg_intensity:.1f}, Var: {max_var:.1f})"
@@ -82,7 +78,7 @@ def run_gap_audit():
         target_idx = index_map.get(filename)
         if target_idx is None: continue
 
-        # 1. Search in Step 1 Successful Hits
+        # 1. Search in Step 1 Successful Hits (Tight Window)
         nearby_hits = df_hits[(df_hits['frame_idx'] >= target_idx - 5) & (df_hits['frame_idx'] <= target_idx + 5)]
         if not nearby_hits.empty:
             best_hit = nearby_hits.iloc[0]
@@ -97,7 +93,16 @@ def run_gap_audit():
                 print(f"Floor {floor} (Index {target_idx}): [DEEP SEARCH] Found in discards! Conf: {best_discard['confidence']:.4f}")
                 continue
 
-        # 3. Surgical Forensic Scan for Absolute Misses
+        # 3. Recovery Search: Look for ANY later hit belonging to this floor (Wide Window)
+        # We look up to 500 frames ahead to see if the player was caught later in the floor
+        recovery_hits = df_hits[(df_hits['frame_idx'] > target_idx + 5) & (df_hits['frame_idx'] < target_idx + 500)]
+        if not recovery_hits.empty:
+            substitute = recovery_hits.iloc[0]
+            print(f"Floor {floor} (Index {target_idx}): [RECOVERY] Found substitute at Index {substitute['frame_idx']}!")
+            print(f"   Note: Floor 77 is active, but start was obscured. Use this as temporary anchor.")
+            continue
+
+        # 4. Surgical Forensic Scan for Absolute Misses
         img_path = os.path.join(cfg.get_buffer_path(0), filename)
         forensic_result = perform_surgical_forensic_scan(img_path)
         print(f"Floor {floor} (Index {target_idx}): [MISS] {forensic_result}")
