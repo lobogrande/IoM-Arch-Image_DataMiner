@@ -17,7 +17,7 @@ UNIFIED_ROOT = "Unified_Consensus_Inputs"
 OUTPUT_DIR = "Standardized_Templates_Raw"
 TARGET_RUN = "0"
 # Starting with your requested Boss Floors
-TARGET_FLOORS = [11, 17, 23, 25, 29, 31, 34, 35, 41, 44, 49, 74, 98, 99]
+TARGET_FLOORS = [2, 3, 4, 5, 6, 9]
 
 def run_interactive_harvester():
     if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR)

@@ -5,9 +5,9 @@ import json
 
 # --- TARGET CONFIG ---
 TARGET_RUN = "0"
-TARGET_FLOOR = 4 # Or 7
+TARGET_FLOOR = 2 # Or 7
 # Choose a "Ghost" slot and a "Missed" slot from your HUD images
-TARGET_SLOTS = [1, 2, 8, 11] 
+TARGET_SLOTS = [1, 2, 6, 9, 10, 11, 13, 14, 19] 
 
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1

@@ -9,7 +9,7 @@ HUD_X2, HUD_Y2 = 281, 248
 
 # AI (Narrow): Top-Left of the FIRST DIGIT to Bottom-Right of the LAST DIGIT
 # This is what you are recalibrating now
-AI_DIG_X1, AI_DIG_Y1 = 250, 230     # Placeholder (Update these!)
+AI_DIG_X1, AI_DIG_Y1 = 255, 230     # Placeholder (Update these!)
 AI_DIG_X2, AI_DIG_Y2 = 282, 246     # Placeholder (Update these!)
 
 # --- 2. INPUT IMAGE ---

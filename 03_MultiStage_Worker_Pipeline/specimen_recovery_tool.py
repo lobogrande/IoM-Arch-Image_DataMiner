@@ -11,7 +11,7 @@ SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
 # Define the slots you see are missing in your visual check
-MISSING_SLOTS = [4, 7, 12, 19] # ADJUST THESE BASED ON YOUR VISUAL CHECK
+MISSING_SLOTS = [2, 7, 16, 22] # ADJUST THESE BASED ON YOUR VISUAL CHECK
 
 def run_specimen_recovery():
     run_path = os.path.join(UNIFIED_ROOT, f"Run_{TARGET_RUN}")

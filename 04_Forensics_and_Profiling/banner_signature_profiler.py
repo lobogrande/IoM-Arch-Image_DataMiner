@@ -2,86 +2,68 @@ import cv2
 import numpy as np
 import os
 import pandas as pd
-import matplotlib.pyplot as plt
-from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURATION ---
 BUFFER_ROOT = "capture_buffer_0"
-# Target frame you mentioned: "frame_20260306_231817_939420.png"
-# We will look for this frame to find its index
 TARGET_FILENAME = "frame_20260306_231817_939420.png"
-WINDOW_BEFORE = 10
-WINDOW_AFTER = 50
 
-def analyze_frame(args):
-    idx, img_path = args
-    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-    if img is None: return None
-    
-    # HPP: Row intensity averages
-    # Row Variance: Row flatness (Low variance = solid color / black rectangle)
-    hpp = np.mean(img, axis=1)
-    row_var = np.var(img, axis=1)
-    
-    return {"idx": idx, "hpp": hpp, "var": row_var}
+# --- SEARCH CONSTRAINTS (Calibrated from your feedback) ---
+SCAN_Y_START = 40   
+SCAN_Y_END = 450     
+BANNER_HEIGHT = 45   # Average height of the banner box
 
-def run_banner_diagnostic():
+def run_pathfinding_probe():
     all_files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
     try:
         target_idx = all_files.index(TARGET_FILENAME)
         print(f"Target found at Index: {target_idx}")
     except ValueError:
-        print(f"Error: {TARGET_FILENAME} not found. Running on default range 1170.")
-        target_idx = 1170 # Estimated Floor 17 start
+        target_idx = 1170
+        print(f"Target not found, starting at index {target_idx}")
 
-    start = max(0, target_idx - WINDOW_BEFORE)
-    end = min(len(all_files), target_idx + WINDOW_AFTER)
+    path_data = []
     
-    tasks = [(i, os.path.join(BUFFER_ROOT, all_files[i])) for i in range(start, end)]
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        results = list(executor.map(analyze_frame, tasks))
-    results = [r for r in results if r is not None]
-
-    # --- 1. SIGNATURE PLOTTING ---
-    # Rows vs. Frames (Heatmaps)
-    hpp_matrix = np.array([r['hpp'] for r in results])
-    var_matrix = np.array([r['var'] for r in results])
-
-    # Plot Intensity (HPP) Heatmap
-    plt.figure(figsize=(10, 8))
-    plt.imshow(hpp_matrix.T, aspect='auto', cmap='gray', origin='upper')
-    plt.colorbar(label='Avg Brightness')
-    plt.title('Banner Signature: Intensity Heatmap (HPP)')
-    plt.ylabel('Row Y-Coordinate')
-    plt.xlabel('Frame Count')
-    plt.savefig('banner_intensity_signature.png')
-
-    # Plot Variance Heatmap (Shows the "Flatness" of the black rectangle)
-    plt.figure(figsize=(10, 8))
-    plt.imshow(var_matrix.T, aspect='auto', cmap='hot', origin='upper')
-    plt.colorbar(label='Pixel Variance')
-    plt.title('Banner Signature: Variance Heatmap (Flatness)')
-    plt.ylabel('Row Y-Coordinate')
-    plt.xlabel('Frame Count')
-    plt.savefig('banner_variance_signature.png')
-
-    # --- 2. LOGGING THE PROFILE ---
-    # We track the "Nucleation Point" - the darkest, flattest row in the target zone
-    profile_data = []
-    for r in results:
-        # Focus on the ore grid (y: 200 to 550)
-        grid_zone = r['hpp'][200:550]
-        min_y = np.argmin(grid_zone) + 200
-        profile_data.append({
-            "idx": r['idx'],
-            "center_y": min_y,
-            "min_intensity": r['hpp'][min_y],
-            "row_variance": r['var'][min_y]
+    # Analyze the window frame-by-frame
+    # We broaden the range to catch the entire arrival and exit
+    for i in range(target_idx - 30, target_idx + 80):
+        fname = all_files[i]
+        img_bgr = cv2.imread(os.path.join(BUFFER_ROOT, fname))
+        if img_bgr is None: continue
+        
+        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        h, w = img_gray.shape
+        
+        # Focus on Center Strip (35%-65%)
+        c1, c2 = int(w * 0.35), int(w * 0.65)
+        center_strip = img_gray[:, c1:c2]
+        
+        # 1D Intensity profile
+        intensities = np.mean(center_strip, axis=1)
+        
+        # SLIDING WINDOW: Find the darkest 45-pixel block
+        best_avg = 255
+        best_y_top = -1
+        
+        for y in range(SCAN_Y_START, SCAN_Y_END - BANNER_HEIGHT):
+            window_avg = np.mean(intensities[y : y + BANNER_HEIGHT])
+            if window_avg < best_avg:
+                best_avg = window_avg
+                best_y_top = y
+        
+        # Log the "Best Match" for this frame
+        path_data.append({
+            "idx": i,
+            "filename": fname,
+            "y_top": best_y_top,
+            "y_center": best_y_top + (BANNER_HEIGHT // 2),
+            "avg_intensity": best_avg,
+            "variance": np.var(intensities[best_y_top : best_y_top + BANNER_HEIGHT])
         })
-    
-    pd.DataFrame(profile_data).to_csv("banner_forensic_signature.csv", index=False)
-    print("Forensic signature profiling complete. Check signature PNGs.")
+
+    df = pd.DataFrame(path_data)
+    df.to_csv("banner_ground_truth_path.csv", index=False)
+    print("Pathfinding Probe complete. Result saved to 'banner_ground_truth_path.csv'.")
 
 if __name__ == "__main__":
-    run_banner_diagnostic()
+    run_pathfinding_probe()
