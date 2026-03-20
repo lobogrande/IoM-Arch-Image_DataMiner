@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic Discrimination Audit for Row 4 Ore Identification.
-# Version: 6.2 (Greediness Index & Structural Entropy Profiling)
+# Purpose: Forensic Ore Identification with Structural and Physical Constraints.
+# Version: 7.0 (The Discriminator: Greediness Penalties & Structural Gating)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -13,12 +13,32 @@ import project_config as cfg
 STEP1_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
 OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
+DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 
 # ROI CONSTANTS
 DIM_ID  = 48  
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 JITTER = 2 
+
+# THRESHOLDS
+ORE_STRICT_GATE = 0.78  # High gate for the initial "Anchor" identification
+TIER_CONF_BUFFER = 0.04 # v5.0 logic: prefer lower tiers if scores are close
+
+# BULLY PENALTY MAP (Derived from v6.2 Greediness Index)
+# These templates were found to be "Noise Magnets" and receive a scoring penalty.
+BULLY_PENALTIES = {
+    'div3_sha_plain_0.png': 0.12,
+    'com3_act_pmod_hbar_xhair_0.png': 0.08,
+    'rare1_act_pmod_6.png': 0.05,
+    'rare1_act_plain_3.png': 0.05,
+    'dirt1_act_pmod_9.png': 0.04,
+    'leg2_act_xhair_0.png': 0.04,
+    'dirt1_act_pmod_2.png': 0.04,
+    'div2_sha_pmod_1.png': 0.06,
+    'dirt2_act_xhair_0.png': 0.04,
+    'dirt1_act_plain_2.png': 0.04
+}
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
 ORE_RESTRICTIONS = {
@@ -60,22 +80,25 @@ def load_all_templates():
         
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
-        templates['ore_id'][tier].append({'id': f, 'img': img_id, 'comp': complexity})
+        templates['ore_id'][tier].append({
+            'id': f, 'img': img_id, 'comp': complexity, 'tier': tier
+        })
     return templates
 
 def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     f_idx = frame_data['frame_idx']
     filename = frame_data['filename']
     img_path = os.path.join(buffer_dir, filename)
-    img_gray = cv2.imread(img_path, 0)
-    if img_gray is None: return [], []
+    img_color = cv2.imread(img_path)
+    img_gray = cv2.cvtColor(img_color, cv2.COLOR_BGR2GRAY) if img_color is not None else None
+    if img_gray is None: return []
     
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y = int(ORE0_Y + (3 * STEP))
     
-    forensic_results = []
-    greedy_accumulator = []
+    slot_matches = {}
 
+    # --- PASS 1: WIDE DISCRIMINATION (Find the Anchor) ---
     for col in range(6):
         if r4_dna[col] == '0': continue 
 
@@ -84,103 +107,139 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
         
         if search_id.shape[0] < DIM_ID or search_id.shape[1] < DIM_ID: continue
-        roi_complexity = get_complexity(search_id)
+        roi_comp = get_complexity(search_id)
 
-        # MATCH ALL TIERS (Unfiltered for Forensics)
-        all_matches = []
+        all_candidates = []
         for tier, states in templates['ore_id'].items():
-            for ore_tpl in states:
-                res = cv2.matchTemplate(search_id, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
+            for tpl in states:
+                res = cv2.matchTemplate(search_id, tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                 score = cv2.minMaxLoc(res)[1]
-                all_matches.append({
-                    'tier': tier, 'id': ore_tpl['id'], 'score': score, 'comp': ore_tpl['comp']
+                
+                # Apply Greediness Penalty
+                penalty = BULLY_PENALTIES.get(tpl['id'], 0.0)
+                
+                # Apply Structural Gating (Complexity Mismatch)
+                # Penalize "Smooth" templates on "Busy" ROIs and vice versa
+                comp_diff = abs(roi_comp - tpl['comp'])
+                structural_penalty = comp_diff * 0.0001
+                
+                final_score = score - penalty - structural_penalty
+                all_candidates.append({
+                    'tier': tier, 'id': tpl['id'], 'score': final_score, 'raw': score
                 })
         
-        all_matches.sort(key=lambda x: x['score'], reverse=True)
-        top_5 = all_matches[:5]
-        greedy_accumulator.extend([m['id'] for m in all_matches[:3]])
+        all_candidates.sort(key=lambda x: x['score'], reverse=True)
+        slot_matches[col] = {'candidates': all_candidates, 'roi_comp': roi_comp}
 
-        # Forensic Record
-        res_row = {
-            'frame': f_idx, 'slot': col,
-            'winner': top_5[0]['tier'], 'w_score': round(top_5[0]['score'], 4),
-            'roi_comp': round(roi_complexity, 1), 'tpl_comp': round(top_5[0]['comp'], 1),
-            'comp_diff': round(abs(roi_complexity - top_5[0]['comp']), 1),
-            'cand2': top_5[1]['tier'], 's2': round(top_5[1]['score'], 4),
-            'cand3': top_5[2]['tier'], 's3': round(top_5[2]['score'], 4),
-            'margin_1_2': round(top_5[0]['score'] - top_5[1]['score'], 4),
-            'win_id': top_5[0]['id']
-        }
-        forensic_results.append(res_row)
+    if not slot_matches: return []
 
-    return forensic_results, greedy_accumulator
+    # --- PASS 2: ANCHOR-GATED FLOOR PROFILE ---
+    # Find the single most mathematically certain ore in the row.
+    anchor = {'tier': 'none', 'score': 0.0, 'range': (1, 999)}
+    for col, data in slot_matches.items():
+        top = data['candidates'][0]
+        if top['score'] > anchor['score']:
+            anchor = {'tier': top['tier'], 'score': top['score'], 'range': ORE_RESTRICTIONS.get(top['tier'], (1, 999))}
 
-def run_forensic_audit():
-    if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV):
-        print("Error: Required files missing.")
-        return
+    # --- PASS 3: RESTRICTED RESOLUTION ---
+    frame_results = []
+    has_detections = False
+    
+    # Vote on Champion Tiers within the Valid Floor Range
+    family_champions = {}
+    for col, data in slot_matches.items():
+        for cand in data['candidates']:
+            # Only allow ores that overlap with the Anchor's floor range
+            t_range = ORE_RESTRICTIONS.get(cand['tier'], (1, 999))
+            if t_range[0] <= anchor['range'][1] and t_range[1] >= anchor['range'][0]:
+                fam = get_family(cand['tier'])
+                if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
+                    family_champions[fam] = {'tier': cand['tier'], 'score': cand['score'], 'id': cand['id']}
 
-    if not os.path.exists(OUT_DIR): os.makedirs(OUT_DIR)
+    for col in range(6):
+        if r4_dna[col] == '0':
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna'})
+            continue
+            
+        data = slot_matches.get(col)
+        if not data: continue
+
+        # Filter slot to only allowed tiers from the Row-Champion list
+        valid_options = []
+        for fam, champion in family_champions.items():
+            # Find the local score for this champion tier
+            for cand in data['candidates']:
+                if cand['tier'] == champion['tier']:
+                    valid_options.append(cand)
+                    break
+        
+        valid_options.sort(key=lambda x: x['score'], reverse=True)
+        if not valid_options: 
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'low_conf_id'})
+            continue
+
+        # Final Choice with v5.0 Tier Bias (prefer simpler ores if scores are close)
+        final = valid_options[0]
+        for challenger in valid_options[1:]:
+            if challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
+                if 'dirt' in final['tier'] and 'dirt' not in challenger['tier']:
+                    pass # Keep dirt as simple
+                elif TIER_RANK_VAL(challenger['tier']) < TIER_RANK_VAL(final['tier']):
+                    final = challenger
+
+        is_valid = final['score'] > 0.65 # Lowered because penalties reduce absolute scores
+        detected = final['tier'] if is_valid else "low_conf_id"
+        
+        # Visual Verification
+        color = (0, 255, 0) if is_valid else (0, 0, 255)
+        cx = int(ORE0_X + (col * STEP))
+        rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
+        cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
+        cv2.putText(img_color, f"{detected} ({final['score']:.2f})", (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        if is_valid: has_detections = True
+
+        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'ore_id': final['id']})
+
+    if has_detections:
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"discriminator_v70_f{f_idx}.jpg"), img_color)
+
+    return frame_results
+
+def TIER_RANK_VAL(tier):
+    """Simple rarity rank for tie-breaking."""
+    ranks = {'dirt': 1, 'com': 2, 'rare': 3, 'epic': 4, 'myth': 5, 'leg': 6, 'div': 7}
+    return ranks.get(get_family(tier), 0)
+
+def run_discriminator_audit():
+    if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV): return
+    if not os.path.exists(DEBUG_IMG_DIR): os.makedirs(DEBUG_IMG_DIR)
+    
     dna_df = pd.read_csv(DNA_CSV, dtype={'r4_dna': str})
     dna_map = dna_df.set_index('frame_idx')['r4_dna'].to_dict()
     df = pd.read_csv(STEP1_CSV)
     
-    # Target 200 frames for a deep profile
-    df_sample = df.sample(min(200, len(df)))
     templates = load_all_templates()
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID FORENSIC AUDIT v6.2 ---")
-    print(f"Goal: Identify Structural Mismatches and Greedy Noise Magnets")
+    df_sample = df.sample(min(400, len(df)))
+    print(f"--- ORE ID AUDIT v7.0: THE DISCRIMINATOR ---")
+    print(f"Gating: Laplacian Structural Mismatch + Greediness Penalties")
 
-    all_results, all_greedy = [], []
+    all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
         tasks = df_sample.to_dict('records')
         futures = {executor.submit(worker_func, task): task for task in tasks}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            res, greedy = future.result()
-            all_results.extend(res)
-            all_greedy.extend(greedy)
+            all_results.extend(future.result())
+            if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
-    # 1. GREEDINESS INDEX
-    greedy_counts = Counter(all_greedy)
-    print("\n[FORENSIC] Greediness Index (Occurrences in Top 3):")
-    for tid, count in greedy_counts.most_common(12):
-        print(f"  {count:4d} hits: {tid}")
-
-    # 2. STRUCTURAL GAP ANALYSIS
     audit_df = pd.DataFrame(all_results)
-    print("\n[FORENSIC] Structural Complexity Mismatches (ROI vs Winner):")
-    # Large comp_diff suggests a smooth template matched a busy ROI (The Dirt Trap)
-    mismatches = audit_df[audit_df['comp_diff'] > 1000]
-    print(f"  High Complexity Mismatches: {len(mismatches)} / {len(audit_df)}")
-    
-    # 3. CONSTRAINT VIOLATION CHECK
-    print("\n[FORENSIC] Physical Constraint Violations (Unfiltered Run):")
-    violations = 0
-    for frame, group in audit_df.groupby('frame'):
-        detected_tiers = group['winner'].unique()
-        # Check One-Tier-Per-Family
-        families = [get_family(t) for t in detected_tiers]
-        if len(families) != len(set(families)):
-            violations += 1
-            continue
-        # Check Floor Overlap
-        if len(detected_tiers) > 1:
-            ranges = [ORE_RESTRICTIONS.get(t, (1, 999)) for t in detected_tiers]
-            max_start = max(r[0] for r in ranges)
-            min_stop = min(r[1] for r in ranges)
-            if max_start > min_stop:
-                violations += 1
-
-    print(f"  Rows violating game physics: {violations} / {len(audit_df['frame'].unique())}")
-    
-    out_path = os.path.join(OUT_DIR, "ore_discrimination_audit_v6.2.csv")
-    audit_df.to_csv(out_path, index=False)
-    print(f"\n[DONE] Diagnostic Complete. Check {out_path} for raw conflict data.")
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.0_discriminator.csv"), index=False)
+    print(f"\n--- DISCRIMINATOR SUMMARY ---")
+    print(audit_df['detected'].value_counts())
 
 if __name__ == "__main__":
-    run_forensic_audit()
+    run_discriminator_audit()
