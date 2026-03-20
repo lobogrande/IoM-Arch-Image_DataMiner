@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic audit of Row 4 ore identification accuracy using DNA-Aligned ROI.
-# Version: 4.2 (Surgical 30x30 ROI & CCOEFF Matching)
+# Version: 4.3 (Bugfix: Center-Cropping Templates for Pixel Parity)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -13,19 +13,19 @@ STEP1_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "debug_visuals")
 
-# ROI CONSTANTS - Now Aligned with DNA Sensor Logic
+# ROI CONSTANTS - Aligned with DNA Sensor logic
 AI_DIM = 30  
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 
-# THRESHOLDS - Adjusted for CCOEFF separation
-BG_OCCUPANCY_FLOOR = 0.85  # High CCOEFF score = Clear Background
-ORE_STRICT_GATE = 0.60     # CCOEFF ore matches tend to be lower than CCORR
-MARGIN_REQUIREMENT = 0.10  # Requiring a sharper delta to call an ore
+# THRESHOLDS - Calibrated for surgical CCOEFF matching
+BG_OCCUPANCY_FLOOR = 0.82  # Background should match strongly in empty slots
+ORE_STRICT_GATE = 0.70     # Ores should beat this once pixel parity is restored
+MARGIN_REQUIREMENT = 0.08  # Sufficient delta for Row 4 identification
 
 def load_all_templates():
     """
-    Loads templates resized to the surgical 30x30 ROI.
+    Loads templates using a CENTER CROP to ensure 1:1 pixel parity with the 30x30 ROI.
     """
     templates = {'ore': {}, 'bg': []}
     t_path = cfg.TEMPLATE_DIR
@@ -36,8 +36,15 @@ def load_all_templates():
         img = cv2.imread(os.path.join(t_path, f), 0)
         if img is None: continue
         
-        # Surgical resizing to match the new ROI
-        img = cv2.resize(img, (AI_DIM, AI_DIM))
+        h, w = img.shape
+        # Instead of Resizing (which distorts), we Center-Crop to match the ROI
+        if h > AI_DIM or w > AI_DIM:
+            cy, cx = h // 2, w // 2
+            r = AI_DIM // 2
+            img = img[cy-r : cy+r, cx-r : cx+r]
+        elif h < AI_DIM or w < AI_DIM:
+            # Only resize if the template is somehow smaller than our surgical window
+            img = cv2.resize(img, (AI_DIM, AI_DIM))
             
         if f.startswith("background") or f.startswith("negative_ui"):
             templates['bg'].append({'id': f, 'img': img})
@@ -63,20 +70,20 @@ def process_single_frame(frame_data, templates, buffer_dir):
 
     for col in range(6):
         cx = int(ORE0_X + (col * STEP))
-        # 30x30 Surgical Crop
+        # Surgical 30x30 Crop centered on the ore slot
         x1, y1 = int(cx - AI_DIM//2), int(row4_y - AI_DIM//2)
         roi = img_gray[y1 : y1 + AI_DIM, x1 : x1 + AI_DIM]
         
         if roi.shape != (AI_DIM, AI_DIM): continue
 
-        # 1. Background Defense (Using DNA Sensor Algorithm: CCOEFF)
+        # 1. Background Defense
         best_bg = {'id': 'none', 'score': 0.0}
         for bg_tpl in templates['bg']:
             res = cv2.matchTemplate(roi, bg_tpl['img'], cv2.TM_CCOEFF_NORMED)
             _, val, _, _ = cv2.minMaxLoc(res)
             if val > best_bg['score']: best_bg = {'id': bg_tpl['id'], 'score': val}
 
-        # SELF-GATE
+        # SELF-GATE: If BG matches at 0.82+, the slot is effectively empty
         if best_bg['score'] > BG_OCCUPANCY_FLOOR:
             frame_results.append({
                 'frame': f_idx, 'slot': col, 'detected': 'empty_bg',
@@ -93,7 +100,7 @@ def process_single_frame(frame_data, templates, buffer_dir):
                     res = cv2.matchTemplate(roi, ore_tpl['img'], cv2.TM_CCOEFF_NORMED)
                     _, score, _, _ = cv2.minMaxLoc(res)
                     
-                    # Shadow normalization is less critical with CCOEFF but still helps
+                    # Shadow normalization
                     if state == 'sha': score *= 1.02
                     
                     if score > best_ore['score']:
@@ -127,7 +134,7 @@ def run_ore_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v4.2: ALIGNED SURGICAL ROI ---")
+    print(f"--- ORE ID AUDIT v4.3: PIXEL-PARITY CROP ---")
     print(f"ROI: {AI_DIM}x{AI_DIM} | Method: TM_CCOEFF_NORMED")
 
     all_results = []
@@ -148,9 +155,9 @@ def run_ore_audit():
                 print(f"  Processed {count}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.2_surgical.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.3_crop.csv"), index=False)
     
-    print("\n--- SURGICAL DETECTION SUMMARY (v4.2) ---")
+    print("\n--- DETECTION SUMMARY (v4.3) ---")
     print(audit_df['detected'].value_counts())
     
     if 'low_conf_ore' in audit_df['detected'].values:
@@ -158,7 +165,7 @@ def run_ore_audit():
         print(f"\nLow-Conf Avg Margin: {low_conf['margin'].mean():.4f}")
         print(f"Low-Conf Max Margin: {low_conf['margin'].max():.4f}")
 
-    print(f"\n[DONE] Check {OUT_DIR}/ore_id_v4.2_surgical.csv")
+    print(f"\n[DONE] Check {OUT_DIR}/ore_id_v4.3_crop.csv")
 
 if __name__ == "__main__":
     run_ore_audit()
