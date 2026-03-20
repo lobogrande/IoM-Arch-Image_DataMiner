@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic audit of Row 4 ore identification accuracy using Unified Competitive Profiling.
-# Version: 4.1 (Self-Gated Parallelized Logic)
+# Purpose: Forensic audit of Row 4 ore identification accuracy using DNA-Aligned ROI.
+# Version: 4.2 (Surgical 30x30 ROI & CCOEFF Matching)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -12,21 +12,21 @@ import project_config as cfg
 STEP1_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "debug_visuals")
-AI_DIM = 48
+
+# ROI CONSTANTS - Now Aligned with DNA Sensor Logic
+AI_DIM = 30  
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 
-# THRESHOLDS
-BG_OCCUPANCY_FLOOR = 0.92  # If BG match > this, slot is definitely empty
-ORE_STRICT_GATE = 0.82     # Ore match must beat this
-MARGIN_REQUIREMENT = 0.08  # Ore must beat BG by this much
-
-def get_spatial_mask():
-    mask = np.zeros((AI_DIM, AI_DIM), dtype=np.uint8)
-    cv2.circle(mask, (24, 24), 18, 255, -1)
-    return mask
+# THRESHOLDS - Adjusted for CCOEFF separation
+BG_OCCUPANCY_FLOOR = 0.85  # High CCOEFF score = Clear Background
+ORE_STRICT_GATE = 0.60     # CCOEFF ore matches tend to be lower than CCORR
+MARGIN_REQUIREMENT = 0.10  # Requiring a sharper delta to call an ore
 
 def load_all_templates():
+    """
+    Loads templates resized to the surgical 30x30 ROI.
+    """
     templates = {'ore': {}, 'bg': []}
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
@@ -35,7 +35,9 @@ def load_all_templates():
         if not f.endswith(('.png', '.jpg')): continue
         img = cv2.imread(os.path.join(t_path, f), 0)
         if img is None: continue
-        if img.shape != (AI_DIM, AI_DIM): img = cv2.resize(img, (AI_DIM, AI_DIM))
+        
+        # Surgical resizing to match the new ROI
+        img = cv2.resize(img, (AI_DIM, AI_DIM))
             
         if f.startswith("background") or f.startswith("negative_ui"):
             templates['bg'].append({'id': f, 'img': img})
@@ -47,8 +49,8 @@ def load_all_templates():
             if state in ['act', 'sha']: templates['ore'][tier][state].append({'id': f, 'img': img})
     return templates
 
-def process_single_frame(frame_data, templates, mask, buffer_dir):
-    """Worker function to process 6 slots using self-gating logic."""
+def process_single_frame(frame_data, templates, buffer_dir):
+    """Worker function using 30x30 surgical ROI and CCOEFF matching."""
     f_idx = frame_data['frame_idx']
     filename = frame_data['filename']
     img_path = os.path.join(buffer_dir, filename)
@@ -61,17 +63,20 @@ def process_single_frame(frame_data, templates, mask, buffer_dir):
 
     for col in range(6):
         cx = int(ORE0_X + (col * STEP))
+        # 30x30 Surgical Crop
         x1, y1 = int(cx - AI_DIM//2), int(row4_y - AI_DIM//2)
         roi = img_gray[y1 : y1 + AI_DIM, x1 : x1 + AI_DIM]
         
-        # 1. Background Defense (The new Gate)
+        if roi.shape != (AI_DIM, AI_DIM): continue
+
+        # 1. Background Defense (Using DNA Sensor Algorithm: CCOEFF)
         best_bg = {'id': 'none', 'score': 0.0}
         for bg_tpl in templates['bg']:
-            res = cv2.matchTemplate(roi, bg_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
+            res = cv2.matchTemplate(roi, bg_tpl['img'], cv2.TM_CCOEFF_NORMED)
             _, val, _, _ = cv2.minMaxLoc(res)
             if val > best_bg['score']: best_bg = {'id': bg_tpl['id'], 'score': val}
 
-        # SELF-GATE: If background match is pristine, skip ores
+        # SELF-GATE
         if best_bg['score'] > BG_OCCUPANCY_FLOOR:
             frame_results.append({
                 'frame': f_idx, 'slot': col, 'detected': 'empty_bg',
@@ -85,9 +90,11 @@ def process_single_frame(frame_data, templates, mask, buffer_dir):
         for tier, states in templates['ore'].items():
             for state in ['act', 'sha']:
                 for ore_tpl in states[state]:
-                    res = cv2.matchTemplate(roi, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
+                    res = cv2.matchTemplate(roi, ore_tpl['img'], cv2.TM_CCOEFF_NORMED)
                     _, score, _, _ = cv2.minMaxLoc(res)
-                    if state == 'sha': score *= 1.03
+                    
+                    # Shadow normalization is less critical with CCOEFF but still helps
+                    if state == 'sha': score *= 1.02
                     
                     if score > best_ore['score']:
                         best_ore = {'tier': tier, 'score': score, 'id': ore_tpl['id']}
@@ -118,14 +125,13 @@ def run_ore_audit():
     df_sample = df.sample(min(1000, len(df)))
     
     templates = load_all_templates()
-    mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v4.1: UNIFIED COMPETITIVE LOGIC ---")
-    print(f"Analyzing {len(df_sample)} frames...")
+    print(f"--- ORE ID AUDIT v4.2: ALIGNED SURGICAL ROI ---")
+    print(f"ROI: {AI_DIM}x{AI_DIM} | Method: TM_CCOEFF_NORMED")
 
     all_results = []
-    worker_func = partial(process_single_frame, templates=templates, mask=mask, buffer_dir=buffer_dir)
+    worker_func = partial(process_single_frame, templates=templates, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
         tasks = df_sample.to_dict('records')
@@ -142,18 +148,17 @@ def run_ore_audit():
                 print(f"  Processed {count}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.1_unified.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v4.2_surgical.csv"), index=False)
     
-    print("\n--- UNIFIED DETECTION SUMMARY (v4.1) ---")
+    print("\n--- SURGICAL DETECTION SUMMARY (v4.2) ---")
     print(audit_df['detected'].value_counts())
     
     if 'low_conf_ore' in audit_df['detected'].values:
-        print("\n--- LOW CONFIDENCE ANALYSIS ---")
         low_conf = audit_df[audit_df['detected'] == 'low_conf_ore']
-        print(f"Average Margin for Low-Conf Ores: {low_conf['margin'].mean():.4f}")
-        print(f"Max Margin for Low-Conf Ores:     {low_conf['margin'].max():.4f}")
+        print(f"\nLow-Conf Avg Margin: {low_conf['margin'].mean():.4f}")
+        print(f"Low-Conf Max Margin: {low_conf['margin'].max():.4f}")
 
-    print(f"\n[DONE] Audit complete. Output: {OUT_DIR}/ore_id_v4.1_unified.csv")
+    print(f"\n[DONE] Check {OUT_DIR}/ore_id_v4.2_surgical.csv")
 
 if __name__ == "__main__":
     run_ore_audit()
