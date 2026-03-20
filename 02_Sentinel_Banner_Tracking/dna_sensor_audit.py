@@ -1,5 +1,5 @@
 # dna_sensor_audit.py
-# Purpose: Verify the AI's ability to "read" the grid occupancy of Rows 3 and 4 using background templates.
+# Purpose: Profile and verify background template matching for Row 3/4 occupancy detection.
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -9,113 +9,132 @@ import project_config as cfg
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 
-# THRESHOLD: If match confidence against "background_plain" is > 0.85, the slot is EMPTY (0).
-# Otherwise, it is OCCUPIED (1) by ore, shadow ore, or other sprites.
+# Initial threshold for profiling - will be refined by the output stats.
 BG_MATCH_THRESHOLD = 0.85
 
-def get_row_dna(img, row_idx, bg_templates):
-    """
-    Returns a bitstring (e.g. '101100') for the specified row.
-    Occupancy is determined by NOT matching the background template.
-    """
-    bits = []
-    y_center = int(ORE0_Y + (row_idx * STEP))
+def load_all_bg_templates():
+    """Loads all available background and negative UI templates."""
+    templates = []
+    # Load plain backgrounds
+    for i in range(10):
+        p = os.path.join(cfg.TEMPLATE_DIR, f"background_plain_{i}.png")
+        if os.path.exists(p):
+            templates.append({'id': f'plain_{i}', 'img': cv2.imread(p, 0)})
     
-    # ROI Size for background matching (consistent with background_plain templates)
-    # Assuming the templates are roughly 40x40 or 30x30 centered on the slot
-    tw, th = 30, 30
-    
-    for col in range(6):
-        x_center = int(ORE0_X + (col * STEP))
-        
-        # Calculate ROI Top-Left
-        tx, ty = x_center - (tw // 2), y_center - (th // 2)
-        roi = img[ty : ty + th, tx : tx + tw]
-        
-        if roi.shape[0] < th or roi.shape[1] < tw:
-            bits.append('1') # Default to occupied if out of bounds
-            continue
+    # Load negative UI (often contains banner artifacts)
+    for i in range(10):
+        p = os.path.join(cfg.TEMPLATE_DIR, f"negative_ui_{i}.png")
+        if os.path.exists(p):
+            templates.append({'id': f'neg_ui_{i}', 'img': cv2.imread(p, 0)})
             
-        # Match against the plain background template
-        # We use background_plain_0.png as the primary reference
-        res = cv2.matchTemplate(roi, bg_templates[0], cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
-        
-        # LOGIC: High match = Empty (0), Low match = Occupied (1)
-        is_empty = max_val >= BG_MATCH_THRESHOLD
-        bits.append('0' if is_empty else '1')
-        
-    return "".join(bits)
+    return templates
 
-def run_dna_audit():
+def get_slot_profile(img, row_idx, col_idx, templates):
+    """Matches a specific slot against all templates and returns the best score."""
+    y_center = int(ORE0_Y + (row_idx * STEP))
+    x_center = int(ORE0_X + (col_idx * STEP))
+    
+    tw, th = 30, 30
+    tx, ty = x_center - (tw // 2), y_center - (th // 2)
+    roi = img[ty : ty + th, tx : tx + tw]
+    
+    if roi.shape[0] < th or roi.shape[1] < tw:
+        return 0, "none"
+        
+    best_val = -1
+    best_id = "none"
+    
+    for t in templates:
+        res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        if max_val > best_val:
+            best_val = max_val
+            best_id = t['id']
+            
+    return best_val, best_id
+
+def run_dna_profiling_audit():
     input_csv = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
     if not os.path.exists(input_csv):
-        print("Error: sprite_homing_run_0.csv not found. Run Step 1 first.")
+        print("Error: sprite_homing_run_0.csv not found.")
         return
 
-    # 1. Load Background Templates
-    bg_templates = []
-    # Attempt to load up to 3 plain background variants if they exist
-    for i in range(3):
-        path = os.path.join(cfg.TEMPLATE_DIR, f"background_plain_{i}.png")
-        if os.path.exists(path):
-            bg_templates.append(cv2.imread(path, 0))
-    
+    bg_templates = load_all_bg_templates()
     if not bg_templates:
-        print("Error: No background_plain templates found in templates folder.")
+        print("Error: No background templates found.")
         return
 
-    # Load the "Golden Dataset" from Step 1
     df = pd.read_csv(input_csv)
     source_dir = cfg.get_buffer_path(0)
     
-    print(f"--- DNA SENSOR AUDIT (Template-Based) ---")
-    print(f"Using Background Matching to detect occupancy in Rows 3 & 4...")
+    print(f"--- DNA SENSOR PROFILING (Templates: {len(bg_templates)}) ---")
     
+    profile_data = []
     results = []
+    
     if not os.path.exists("dna_debug"): os.makedirs("dna_debug")
 
+    # We'll profile the first 1000 frames to get a solid statistical baseline
+    sample_limit = min(len(df), 1000)
+
     for idx, row in df.iterrows():
+        if idx >= sample_limit: break
+        
         img = cv2.imread(os.path.join(source_dir, row['filename']), 0)
         if img is None: continue
         
-        # Extract signatures using template logic
-        r3_dna = get_row_dna(img, 2, bg_templates) 
-        r4_dna = get_row_dna(img, 3, bg_templates)
-        combined = f"{r3_dna}-{r4_dna}"
+        r3_bits = []
+        r4_bits = []
         
-        # Visual Verification
-        if idx % 50 == 0:
+        # Profile Row 3 and Row 4
+        for r_idx in [2, 3]:
+            for c_idx in range(6):
+                score, t_id = get_slot_profile(img, r_idx, c_idx, bg_templates)
+                
+                profile_data.append({
+                    'frame': row['frame_idx'],
+                    'row': r_idx + 1,
+                    'col': c_idx,
+                    'max_conf': score,
+                    'best_tpl': t_id
+                })
+                
+                bit = '0' if score >= BG_MATCH_THRESHOLD else '1'
+                if r_idx == 2: r3_bits.append(bit)
+                else: r4_bits.append(bit)
+
+        r3_dna = "".join(r3_bits)
+        r4_dna = "".join(r4_bits)
+        combined = f"{r3_dna}-{r4_dna}"
+
+        # Visual Verification for every 100th frame
+        if idx % 100 == 0:
             vis = cv2.imread(os.path.join(source_dir, row['filename']))
-            cv2.putText(vis, f"DNA: {combined}", (20, 460), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
             for r_idx in [2, 3]:
                 y = int(ORE0_Y + (r_idx * STEP))
                 current_dna = r3_dna if r_idx == 2 else r4_dna
                 for c_idx in range(6):
                     x = int(ORE0_X + (c_idx * STEP))
-                    # Green = Occupied (1), Red = Empty (0)
                     color = (0, 255, 0) if current_dna[c_idx] == '1' else (0, 0, 255)
                     cv2.circle(vis, (x, y), 6, color, -1)
-                    cv2.circle(vis, (x, y), 7, (0,0,0), 1)
-            
-            cv2.imwrite(f"dna_debug/dna_verify_f{row['frame_idx']}.jpg", vis)
+            cv2.imwrite(f"dna_debug/dna_prof_f{row['frame_idx']}.jpg", vis)
 
-        results.append({
-            'frame_idx': row['frame_idx'],
-            'r3_dna': r3_dna,
-            'r4_dna': r4_dna,
-            'dna_sig': combined
-        })
+        results.append({'frame_idx': row['frame_idx'], 'dna_sig': combined})
 
-    audit_df = pd.DataFrame(results)
-    audit_df.to_csv("dna_sensor_results.csv", index=False)
+    # 1. Distribution Analysis
+    prof_df = pd.DataFrame(profile_data)
+    prof_df.to_csv("dna_profiling_stats.csv", index=False)
     
-    print("\n--- DNA SIGNATURE DISTRIBUTION ---")
-    print(f"Unique Signatures: {len(audit_df['dna_sig'].unique())}")
+    print("\n--- MATCH SCORE DISTRIBUTION (EMPTY CANDIDATES) ---")
+    summary = prof_df.groupby(['row', 'col'])['max_conf'].describe(percentiles=[.01, .05, .5, .95, .99])
+    print(summary[['min', '5%', '50%', 'max']])
+    
+    # 2. Signature distribution
+    audit_df = pd.DataFrame(results)
+    print("\n--- DNA SIGNATURES FOUND (Using 0.85 Threshold) ---")
     print(audit_df['dna_sig'].value_counts().head(5))
-    print(f"\n[DONE] Check 'dna_debug/' to confirm Green=Occupied, Red=Empty.")
+    
+    print(f"\n[DONE] Check 'dna_profiling_stats.csv' to determine the optimal threshold.")
 
 if __name__ == "__main__":
-    run_dna_audit()
+    run_dna_profiling_audit()
