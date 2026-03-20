@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -14,11 +18,7 @@ ROW_0_MAX_Y = 300
 HEARTBEAT_INTERVAL = 250
 KNOWN_TIERS = ['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
 
-ORE_RESTRICTIONS = {
-    'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31), 'myth1': (20, 34), 'div1': (50, 74),
-    'dirt2': (12, 23), 'com2': (18, 28), 'rare2': (26, 35), 'epic2': (30, 41), 'leg2': (32, 44), 'myth2': (36, 49), 'div2': (75, 99),
-    'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
-}
+# cfg.ORE_RESTRICTIONS moved to project_config
 
 # --- HELPERS ---
 
@@ -65,14 +65,14 @@ def get_slot_status_v456(roi_gray, full_img_bgr, rect, mask, templates, prev_bit
 # --- MAIN ENGINE ---
 
 def run_v5_20_high_fidelity_hybrid():
-    buffer_root, out_dir = "capture_buffer_0", "production_audit_HYBRID"
+    buffer_root, out_dir = cfg.get_buffer_path(0), "production_audit_HYBRID"
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
     
     p_right, p_left = cv2.imread("templates/player_right.png", 0), cv2.imread("templates/player_left.png", 0)
     raw_ore_tpls = {'ore': {}, 'bg': []}
     
-    for f in os.listdir("templates"):
-        img = cv2.imread(os.path.join("templates", f), 0)
+    for f in os.listdir(cfg.TEMPLATE_DIR):
+        img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is None: continue
         img = cv2.resize(img, (48, 48))
         if f.startswith("background"): raw_ore_tpls['bg'].append(img)
@@ -109,7 +109,7 @@ def run_v5_20_high_fidelity_hybrid():
         if hud_diff > 3.8 or not is_p_in_0:
             # 1. Update Active Templates for THIS floor
             active_list = []
-            allowed = [p for p, (m, x) in ORE_RESTRICTIONS.items() if m <= confirmed_count <= x]
+            allowed = [p for p, (m, x) in cfg.ORE_RESTRICTIONS.items() if m <= confirmed_count <= x]
             for tier in allowed:
                 if tier in raw_ore_tpls['ore']:
                     for state in ['act', 'sha']: active_list.extend(raw_ore_tpls['ore'][tier][state])

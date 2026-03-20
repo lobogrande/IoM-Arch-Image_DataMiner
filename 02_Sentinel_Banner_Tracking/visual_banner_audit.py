@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import os
 import cv2
 import pandas as pd
@@ -5,7 +9,7 @@ import numpy as np
 import shutil
 
 # --- CONFIGURATION ---
-BUFFER_ROOT = "capture_buffer_0"  # Path to your 25k images
+BUFFER_ROOT = cfg.get_buffer_path(0)  # Path to your 25k images
 OUT_BASE = "manual_audit_samples"
 GLOBAL_CSV = "global_audit_manifest.csv"
 CLEANED_CSV = "cleaned_audit_manifest.csv"

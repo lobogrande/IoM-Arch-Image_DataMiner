@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -12,16 +16,14 @@ TARGET_FRAMES = {
     92: "100010"  # F6 Start
 }
 
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 AI_DIM = 48
 
 # --- DATA MAPPINGS ---
 KNOWN_TIERS = ['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
-ORE_RESTRICTIONS = {
-    'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29)
-}
+# cfg.ORE_RESTRICTIONS moved to project_config
 
 # --- HELPERS ---
 
@@ -64,14 +66,14 @@ def run_row1_transparency_audit():
     
     # 1. LOAD TEMPLATES (With Mac-file protection)
     raw_tpls = {'ore': {}, 'bg': []}
-    if not os.path.exists("templates"):
+    if not os.path.exists(cfg.TEMPLATE_DIR):
         print("Error: 'templates' folder not found.")
         return
 
-    for f in os.listdir("templates"):
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         if f.startswith('.') or not f.lower().endswith('.png'): continue # Ignore .DS_Store etc.
         
-        img = cv2.imread(os.path.join("templates", f), 0)
+        img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is None: continue
         img = cv2.resize(img, (AI_DIM, AI_DIM))
         

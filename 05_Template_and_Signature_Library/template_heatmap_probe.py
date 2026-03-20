@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -5,7 +9,7 @@ import re
 
 # --- 1. SETUP ---
 TEST_FRAME = "capture_buffer_0/frame_20260306_231753_721292.png" # Stage 14
-DIGITS_DIR = "digits"
+DIGITS_DIR = cfg.DIGIT_DIR
 ROI = (230, 250, 16, 31) # Y, X, H, W (Your verified AI box)
 
 def run_heatmap_probe():

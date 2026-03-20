@@ -1,10 +1,14 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
 import pandas as pd
 
 # --- CONFIGURATION ---
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 TARGET_FILENAME = "frame_20260306_231817_939420.png"
 
 # --- SEARCH CONSTRAINTS (Calibrated from your feedback) ---

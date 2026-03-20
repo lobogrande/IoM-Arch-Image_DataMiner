@@ -1,10 +1,14 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import os
 
 # Coordinates for the words "Dig Stage:" (Left of the number)
 # X=161 to X=250 covers the text area
 ANCHOR_ROI = (229, 248, 163, 253) 
-DATASET_DIR = "capture_buffer_0"
+DATASET_DIR = cfg.get_buffer_path(0)
 TARGET_FRAME = "frame_20260306_231745_817144.png"
 
 def harvest_text_anchor():

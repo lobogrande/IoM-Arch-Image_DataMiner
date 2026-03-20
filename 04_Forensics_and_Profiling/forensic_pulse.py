@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -11,7 +15,7 @@ HEADER_ROI = (54, 74, 103, 138)
 PLAYER_ROI_Y = (120, 420)
 
 def run_v5_08_forensic_hud_trace():
-    buffer_root = "capture_buffer_0"
+    buffer_root = cfg.get_buffer_path(0)
     p_right = cv2.imread("templates/player_right.png", 0)
     files = sorted([f for f in os.listdir(buffer_root) if f.lower().endswith(('.png', '.jpg'))])
     

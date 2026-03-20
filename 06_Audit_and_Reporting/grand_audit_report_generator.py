@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import pandas as pd
 import numpy as np
 import os
@@ -5,7 +9,7 @@ import cv2
 
 # --- CONFIGURATION ---
 CSV_PATH = "global_stability_report_v2.csv"
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 OUTPUT_DIR = "grand_audit_v544_pulse_results"
 
 def run_v5_44_pulse_audit():

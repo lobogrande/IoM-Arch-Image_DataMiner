@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -8,7 +12,7 @@ STEP_X, STEP_Y = 59.1, 59.1
 VALID_X_ANCHORS = [11, 70, 129, 188, 247, 306]
 
 def run_v19_2_robust_diagnostic(target_idx):
-    buffer_root = "capture_buffer_0"
+    buffer_root = cfg.get_buffer_path(0)
     out_dir = "diagnostic_results"
     os.makedirs(out_dir, exist_ok=True)
 
@@ -37,11 +41,11 @@ def run_v19_2_robust_diagnostic(target_idx):
     ore_tpls = {}
     valid_states = ['act', 'sha'] # The only drawers we have
     
-    if not os.path.exists("templates"):
+    if not os.path.exists(cfg.TEMPLATE_DIR):
         print("Error: 'templates' folder not found.")
         return
 
-    for f in os.listdir("templates"):
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         # Expecting format: tier_state.png (e.g., dirt1_act.png)
         if "_" in f and f.endswith(".png") and not f.startswith("background"):
             parts = f.split("_")
@@ -50,7 +54,7 @@ def run_v19_2_robust_diagnostic(target_idx):
             
             # THE FIX: Only process if the state is act or sha
             if state in valid_states:
-                tpl_path = os.path.join("templates", f)
+                tpl_path = os.path.join(cfg.TEMPLATE_DIR, f)
                 raw_tpl = cv2.imread(tpl_path, 0)
                 if raw_tpl is not None:
                     tpl = cv2.resize(raw_tpl, (48, 48))

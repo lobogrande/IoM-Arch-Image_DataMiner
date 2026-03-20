@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -15,13 +19,13 @@ O_GATE = 0.75   # Minimum masked template score
 
 def run_calibrated_audit():
     # 1. Load All Assets
-    bg_templates = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) 
-                    for f in os.listdir("templates") if f.startswith("background")]
+    bg_templates = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) 
+                    for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("background")]
     
     ore_templates = []
-    for f in os.listdir("templates"):
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         if f.startswith("background"): continue
-        img = cv2.imread(os.path.join("templates", f), 0)
+        img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is not None:
             ore_templates.append({'name': f, 'img': cv2.resize(img, (48, 48))})
 

@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -9,8 +13,8 @@ from queue import Queue
 
 # --- 1. CONFIGURATION ---
 BUFFER_DIR = "capture_buffer"
-TEMPLATE_DIR = "templates"
-DIGITS_DIR = "digits" 
+TEMPLATE_DIR = cfg.TEMPLATE_DIR
+DIGITS_DIR = cfg.DIGIT_DIR 
 RECOVERY_DIR = "forensic_v34_1"
 CSV_FILE = "FINAL_TOTAL_AUDIT_v34_1.csv"
 

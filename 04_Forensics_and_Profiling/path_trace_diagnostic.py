@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -8,7 +12,7 @@ STEP_X, STEP_Y = 59.1, 59.1
 VALID_X_ANCHORS = [11, 70, 129, 188, 247, 306]
 
 def run_v24_path_trace(target_idx):
-    buffer_root = "capture_buffer_0"
+    buffer_root = cfg.get_buffer_path(0)
     out_dir = "diagnostic_v24"
     os.makedirs(out_dir, exist_ok=True)
 
@@ -20,10 +24,10 @@ def run_v24_path_trace(target_idx):
 
     # 2. Load Templates
     ore_tpls = {'ore': {}}
-    for f in os.listdir("templates"):
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         if "_" in f and f.endswith(".png") and not f.startswith("background"):
             tier, state = f.split("_")[0], f.split("_")[1].replace(".png","")
-            img = cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48))
+            img = cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48))
             if tier not in ore_tpls['ore']: ore_tpls['ore'][tier] = {'act': [], 'sha': []}
             if state in ['act', 'sha']: ore_tpls['ore'][tier][state].append(img)
 

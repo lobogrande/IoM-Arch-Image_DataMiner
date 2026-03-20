@@ -1,10 +1,14 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
 import pandas as pd
 
 # --- CALIBRATED CONSTANTS ---
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 OUT_DIR = "sentinel_pi_debug"
 START_F, END_F = 1980, 2080 
 

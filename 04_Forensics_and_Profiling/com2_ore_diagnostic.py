@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -35,11 +39,11 @@ def get_occupancy_dna(img_gray, bg_templates):
 
 def run_v62_reconstruction():
     # 1. Asset Loading
-    bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
+    bg_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("background")]
     all_ore_t = []
-    for f in os.listdir("templates"):
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         if any(x in f for x in ["background", "negative"]) or not f.endswith('.png'): continue
-        img = cv2.imread(os.path.join("templates", f), 0)
+        img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is not None: all_ore_t.append({'tier': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
 
     # 2. Sequence Mapping

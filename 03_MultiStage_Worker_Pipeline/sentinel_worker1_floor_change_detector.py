@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -8,52 +12,11 @@ import re
 import time
 
 # --- 1. MASTER BOSS DATA (UNABRIDGED) ---
-BOSS_DATA = {
-    11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
-    25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'},
-    34: {
-        'tier': 'mixed', 
-        'special': {
-            0: 'com2', 1: 'com2', 2: 'com2', 3: 'com2', 4: 'com2', 5: 'com2',
-            6: 'com2', 7: 'com2', 8: 'myth1', 9: 'myth1', 10: 'com2', 11: 'com2',
-            12: 'com2', 13: 'com2', 14: 'myth1', 15: 'myth1', 16: 'com2', 17: 'com2',
-            18: 'com2', 19: 'com2', 20: 'com2', 21: 'com2', 22: 'com2', 23: 'com2'
-        }
-    },
-    35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'},
-    49: {
-      "tier": "mixed",
-      "special": {
-        0: "dirt3", 1: "dirt3", 2: "dirt3", 3: "dirt3", 4: "dirt3", 5: "dirt3",
-        6: "com3",  7: "com3",  8: "com3",  9: "com3",  10: "com3", 11: "com3",
-        12: "rare3", 13: "rare3", 14: "rare3", 15: "rare3", 16: "rare3", 17: "rare3",
-        18: "myth2", 19: "myth2", 20: "myth2", 21: "myth2", 22: "myth2", 23: "myth2"
-      }
-    },
-    74: {
-        'tier': 'mixed', 
-        'special': {
-            0: 'dirt3', 1: 'dirt3', 2: 'dirt3', 3: 'dirt3', 4: 'dirt3', 5: 'dirt3',
-            6: 'dirt3', 7: 'dirt3', 8: 'dirt3', 9: 'dirt3', 10: 'dirt3', 11: 'dirt3',
-            12: 'dirt3', 13: 'dirt3', 14: 'dirt3', 15: 'dirt3', 16: 'dirt3', 17: 'dirt3',
-            18: 'dirt3', 19: 'dirt3', 20: 'div1', 21: 'div1', 22: 'dirt3', 23: 'dirt3'
-        }
-    },
-    98: {'tier': 'myth3'},
-    99: {
-      "tier": "mixed",
-      "special": {
-        0: "com3", 1: "rare3", 2: "epic3", 3: "leg3", 4: "myth3", 5: "div2",
-        6: "com3",  7: "rare3",  8: "epic3",  9: "leg3",  10: "myth3", 11: "div2",
-        12: "com3", 13: "rare3", 14: "epic3", 15: "leg3", 16: "myth3", 17: "div2",
-        18: "com3", 19: "rare3", 20: "epic3", 21: "leg3", 22: "myth3", 23: "div2"
-      }
-    }
-}
+# cfg.BOSS_DATA moved to project_config
 
 # --- 2. MASTER CONSTANTS (VERIFIED HUD/ROI) ---
 DATASETS = ["0", "1", "2", "3", "4"]
-DIGITS_DIR = "digits"
+DIGITS_DIR = cfg.DIGIT_DIR
 BASE_EVIDENCE_DIR = "Pass1_Evidence"
 ANCHOR_FILE = "dig_stage_anchor.png"
 
@@ -99,7 +62,7 @@ def run_final_worker1():
                 res = cv2.matchTemplate(gray[229:248, 163:253], anchor_tmpl, cv2.TM_CCOEFF_NORMED)
                 if res.max() > 0.60: has_anch = True
 
-            if h_val > current_f and (h_val - current_f <= 30 or h_val in BOSS_DATA):
+            if h_val > current_f and (h_val - current_f <= 30 or h_val in cfg.BOSS_DATA):
                 if h_val == d_val and has_anch:
                     current_f = h_val
                     milestones.append({'idx': i, 'floor': current_f, 'frame': frames[i]})

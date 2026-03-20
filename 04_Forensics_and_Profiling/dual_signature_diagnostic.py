@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -5,27 +9,14 @@ import json
 from datetime import datetime
 
 # --- GROUND TRUTH DATA ---
-BOSS_DATA = {
-    11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 
-    25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 
-    34: {'tier': 'mixed', 'special': {0:'com3',1:'com3',2:'com3',3:'com3',4:'com3',5:'com3',6:'com3',7:'com3',8:'myth1',9:'myth1',10:'com3',11:'com3',12:'com3',13:'com3',14:'myth1',15:'myth1',16:'com3',17:'com3',18:'com3',19:'com3',20:'com3',21:'com3',22:'com3',23:'com3'}}, 
-    35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'}, 
-    49: {'tier': 'mixed', 'special': {0:"dirt3",1:"dirt3",2:"dirt3",3:"dirt3",4:"dirt3",5:"dirt3",6:"com3",7:"com3",8:"com3",9:"com3",10:"com3",11:"com3",12:"rare3",13:"rare3",14:"rare3",15:"rare3",16:"rare3",17:"rare3",18:"myth2",19:"myth2",20:"myth2",21:"myth2",22:"myth2",23:"myth2"}},
-    74: {'tier': 'mixed', 'special': {0:'dirt3',1:'dirt3',2:'dirt3',3:'dirt3',4:'dirt3',5:'dirt3',6:'dirt3',7:'dirt3',8:'dirt3',9:'dirt3',10:'dirt3',11:'dirt3',12:'dirt3',13:'dirt3',14:'dirt3',15:'dirt3',16:'dirt3',17:'dirt3',18:'dirt3',19:'dirt3',20:'div1',21:'div1',22:'dirt3',23:'dirt3'}}, 
-    98: {'tier': 'myth3'}, 
-    99: {'tier': 'mixed', 'special': {0:"com3",1:"rare3",2:"epic3",3:"leg3",4:"myth3",5:"div2",6:"com3",7:"rare3",8:"epic3",9:"leg3",10:"myth3",11:"div2",12:"com3",13:"rare3",14:"epic3",15:"leg3",16:"myth3",17:"div2",18:"com3",19:"rare3",20:"epic3",21:"leg3",22:"myth3",23:"div2"}}
-}
+# cfg.BOSS_DATA moved to project_config
 
-ORE_RESTRICTIONS = {
-    'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31), 'myth1': (20, 34), 'div1': (50, 74),
-    'dirt2': (12, 23), 'com2': (18, 28), 'rare2': (26, 35), 'epic2': (30, 41), 'leg2': (32, 44), 'myth2': (36, 49), 'div2': (75, 99),
-    'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
-}
+# cfg.ORE_RESTRICTIONS moved to project_config
 
 # --- CONFIG ---
 TARGET_RUN = "0"
 TARGET_FLOORS = range(1, 51)
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 TIMESTAMP = datetime.now().strftime('%m%d_%H%M')
 OUTPUT_DIR = f"diagnostic_results/Run_{TARGET_RUN}_v35_{TIMESTAMP}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -51,13 +42,13 @@ def get_temporal_identity(coords, templates, frame_name, mask):
 
 def run_v35_audit():
     # 1. Load Assets
-    bg_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
-    player_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_player")]
-    ui_t = [cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48)) for f in os.listdir("templates") if f.startswith("negative_ui")]
+    bg_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("background")]
+    player_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("negative_player")]
+    ui_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("negative_ui")]
     all_ore_t = []
-    for f in os.listdir("templates"):
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         if any(x in f for x in ["background", "negative"]): continue
-        img = cv2.imread(os.path.join("templates", f), 0)
+        img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is not None: all_ore_t.append({'name': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
 
     with open(f"Unified_Consensus_Inputs/Run_{TARGET_RUN}/final_sequence.json", 'r') as f:
@@ -71,9 +62,9 @@ def run_v35_audit():
         raw_img = cv2.imread(os.path.join(f"Unified_Consensus_Inputs/Run_{TARGET_RUN}", f"F{f_num}_{f_name}"))
         gray = cv2.cvtColor(raw_img, cv2.COLOR_BGR2GRAY)
         
-        is_boss = f_num in BOSS_DATA
+        is_boss = f_num in cfg.BOSS_DATA
         # Filter templates by FLOOR RESTRICTION
-        valid_ore_t = [t for t in all_ore_t if ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[0] <= f_num <= ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[1]]
+        valid_ore_t = [t for t in all_ore_t if cfg.ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[0] <= f_num <= cfg.ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[1]]
 
         for slot in range(24):
             row, col = divmod(slot, 6)
@@ -97,7 +88,7 @@ def run_v35_audit():
             # --- GATE 3: IDENTIFICATION ---
             best_o, best_label = 0, ""
             if is_boss:
-                data = BOSS_DATA[f_num]
+                data = cfg.BOSS_DATA[f_num]
                 best_label = (data['special'][slot] if data['tier'] == 'mixed' else data['tier'])
                 best_o = 1.0 
             else:

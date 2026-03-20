@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -11,7 +15,7 @@ DIG_X1, DIG_X2 = 250, 281 # X2 increased by 2 from 279
 
 DATASET_ID = "0"
 BUFFER_DIR = f"capture_buffer_{DATASET_ID}"
-DIGITS_DIR = "digits"
+DIGITS_DIR = cfg.DIGIT_DIR
 
 def run_ocr_optimizer():
     print(f"--- INITIATING OCR OPTIMIZER (RUN {DATASET_ID}) ---")

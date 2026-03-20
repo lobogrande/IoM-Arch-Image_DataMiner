@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -7,7 +11,7 @@ import os
 # Replace these with the approximate frame indices from your v16 JSON
 START_FRAME = 17482 
 END_FRAME = 19383
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 
 def get_existence_vector(img_gray, bg_templates):
     vector = []
@@ -20,7 +24,7 @@ def get_existence_vector(img_gray, bg_templates):
     return vector
 
 def run_gap_forensics():
-    bg_t = [cv2.resize(cv2.imread(f"templates/{f}", 0), (48, 48)) for f in os.listdir("templates") if f.startswith("background")]
+    bg_t = [cv2.resize(cv2.imread(f"templates/{f}", 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("background")]
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.endswith(('.png', '.jpg'))])
     
     print(f"--- Scouting Gap: {START_FRAME} to {END_FRAME} ---")

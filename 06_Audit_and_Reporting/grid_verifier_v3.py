@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -5,7 +9,7 @@ import random
 import shutil
 
 # --- 1. THE CALIBRATED CONSTANTS ---
-DATASET_DIR = "capture_buffer_0"
+DATASET_DIR = cfg.get_buffer_path(0)
 OUTPUT_DIR = "grid_verification_report"
 NUM_SAMPLES = 10
 

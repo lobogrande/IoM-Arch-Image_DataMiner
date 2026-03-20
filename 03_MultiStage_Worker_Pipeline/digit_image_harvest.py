@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import mss
@@ -10,7 +14,7 @@ import pyautogui
 CROP_W = 7  
 CROP_H = 12 
 
-SAVE_FOLDER = "digits"
+SAVE_FOLDER = cfg.DIGIT_DIR
 if not os.path.exists(SAVE_FOLDER):
     os.makedirs(SAVE_FOLDER)
 

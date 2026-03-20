@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -7,7 +11,7 @@ import os
 HEADER_ROI = (54, 74, 103, 138) 
 
 def run_hud_autopsy_v2():
-    buffer_path = "capture_buffer_0"
+    buffer_path = cfg.get_buffer_path(0)
     output_dir = "diagnostic_results/HUD_Autopsy_v2"
     os.makedirs(output_dir, exist_ok=True)
     

@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -7,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 # --- TARGET WINDOW CONFIGURATION ---
 START_IDX = 0
 END_IDX = 300
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 HEADER_ROI = (54, 74, 103, 138)
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
@@ -16,22 +20,9 @@ AI_DIM = 48
 # --- GROUND TRUTH DATA (FULL & PERMANENT) ---
 KNOWN_TIERS = ['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
 
-BOSS_DATA = {
-    11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'}, 
-    25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'}, 
-    34: {'tier': 'mixed', 'special': {8: 'myth1', 9: 'myth1', 14: 'myth1', 15: 'myth1'}}, 
-    35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'}, 
-    49: {"tier": "mixed", "special": {18: "myth2", 19: "myth2", 20: "myth2", 21: "myth2", 22: "myth2", 23: "myth2"}},
-    74: {'tier': 'mixed', 'special': {20: 'div1', 21: 'div1'}}, 
-    98: {'tier': 'myth3'}, 
-    99: {"tier": "mixed", "special": {5: "div2", 11: "div2", 17: "div2", 23: "div2"}}
-}
+# cfg.BOSS_DATA moved to project_config
 
-ORE_RESTRICTIONS = {
-    'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31), 'myth1': (20, 34), 'div1': (50, 74),
-    'dirt2': (12, 23), 'com2': (18, 28), 'rare2': (26, 35), 'epic2': (30, 41), 'leg2': (32, 44), 'myth2': (36, 49), 'div2': (75, 99),
-    'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
-}
+# cfg.ORE_RESTRICTIONS moved to project_config
 
 # --- HELPERS ---
 
@@ -77,8 +68,8 @@ def run_transition_signature_audit():
     
     # 1. LOAD ALL TEMPLATES WITH STRICT FILTER
     raw_tpls = {'ore': {}, 'bg': []}
-    for f in os.listdir("templates"):
-        img = cv2.imread(os.path.join("templates", f), 0)
+    for f in os.listdir(cfg.TEMPLATE_DIR):
+        img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is None: continue
         img = cv2.resize(img, (48, 48))
         if f.startswith("background"): 
@@ -104,9 +95,9 @@ def run_transition_signature_audit():
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
         # Determine allowed tiers for current floor
-        allowed = [t for t, (low, high) in ORE_RESTRICTIONS.items() if low <= current_floor <= high]
-        if current_floor in BOSS_DATA:
-            bt = BOSS_DATA[current_floor]['tier']
+        allowed = [t for t, (low, high) in cfg.ORE_RESTRICTIONS.items() if low <= current_floor <= high]
+        if current_floor in cfg.BOSS_DATA:
+            bt = cfg.BOSS_DATA[current_floor]['tier']
             if bt != 'mixed' and bt not in allowed: allowed.append(bt)
             
         active_list = []

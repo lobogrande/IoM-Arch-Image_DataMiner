@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -45,13 +49,13 @@ clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4,4))
 # --- LOADERS ---
 def load_all_templates():
     templates = {'act': {'plain': {}, 'mod': {}}, 'sha': {}, 'void': [], 'digits': []}
-    if os.path.exists("digits"):
-        for f in sorted(os.listdir("digits")):
+    if os.path.exists(cfg.DIGIT_DIR):
+        for f in sorted(os.listdir(cfg.DIGIT_DIR)):
             if f.endswith(".png"):
                 img = cv2.imread(f"digits/{f}", 0)
                 if img is not None: templates['digits'].append((int(f[0]), img))
-    if os.path.exists("templates"):
-        for f in os.listdir("templates"):
+    if os.path.exists(cfg.TEMPLATE_DIR):
+        for f in os.listdir(cfg.TEMPLATE_DIR):
             if not f.endswith(".png"): continue
             img = cv2.imread(f"templates/{f}", 0)
             if any(k in f for k in ["background", "fairy", "bone"]):

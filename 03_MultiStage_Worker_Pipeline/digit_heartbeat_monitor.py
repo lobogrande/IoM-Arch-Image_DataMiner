@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -6,8 +10,8 @@ import re
 # --- DIAGNOSTIC CONFIG ---
 TARGET_WINDOW = (650, 750) # The frames around where Floor 12 should live
 HEADER_ROI = (58, 70, 105, 127)
-DIGITS_DIR = "digits"
-DATASET_DIR = "capture_buffer_0"
+DIGITS_DIR = cfg.DIGIT_DIR
+DATASET_DIR = cfg.get_buffer_path(0)
 
 def run_heartbeat_monitor():
     digit_map = load_digit_map_fixed()

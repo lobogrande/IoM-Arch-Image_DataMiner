@@ -1,10 +1,14 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import pandas as pd
 import os
 
 # --- FORENSIC CONFIGURATION ---
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 OUT_DIR = "sentinel_forensic_profiles"
 
 # Ground Truth Ranges provided for profiling

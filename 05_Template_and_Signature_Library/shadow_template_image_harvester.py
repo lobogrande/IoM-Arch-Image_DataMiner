@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -79,8 +83,8 @@ def run_interactive_harvester():
                     
                     # Boss Hint Filename
                     hint = "unknown"
-                    if floor in BOSS_DATA:
-                        b = BOSS_DATA[floor]
+                    if floor in cfg.BOSS_DATA:
+                        b = cfg.BOSS_DATA[floor]
                         if 'tier' in b and b['tier'] != 'mixed': hint = b['tier']
                         elif 'special' in b and slot in b['special']: hint = b['special'][slot]
                     

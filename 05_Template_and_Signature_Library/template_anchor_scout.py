@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -5,7 +9,7 @@ import os
 # --- CONFIG ---
 TARGET_RUN = "0"
 BUFFER_PATH = f"capture_buffer_{TARGET_RUN}"
-OUTPUT_DIR = "templates"
+OUTPUT_DIR = cfg.TEMPLATE_DIR
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Selection State

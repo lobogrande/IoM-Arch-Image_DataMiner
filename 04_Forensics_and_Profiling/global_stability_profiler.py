@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -6,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURATION ---
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 REPORT_NAME = "global_stability_report_v2.csv"
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
@@ -31,9 +35,9 @@ def run_v5_39_ultra():
     
     # Load Templates (Full Global Set)
     raw_tpls = {'ore': {}, 'bg': []}
-    for f in os.listdir("templates"):
+    for f in os.listdir(cfg.TEMPLATE_DIR):
         if f.startswith('.') or not f.lower().endswith('.png'): continue
-        img = cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48))
+        img = cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48))
         if f.startswith("background"): raw_tpls['bg'].append(img)
         elif "_" in f:
             tier = f.split("_")[0]

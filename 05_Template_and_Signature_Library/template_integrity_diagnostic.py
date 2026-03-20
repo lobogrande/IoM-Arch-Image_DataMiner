@@ -1,9 +1,13 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
 
 # --- CONFIG ---
-TEMPLATE_DIR = "templates"
+TEMPLATE_DIR = cfg.TEMPLATE_DIR
 
 def get_feature_mask():
     mask = np.zeros((48, 48), dtype=np.uint8)

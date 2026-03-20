@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import os
 
@@ -7,7 +11,7 @@ DIG_X1, DIG_X2 = 250, 281
 THRESH_VAL = 195 # The v39.0 "Gold Standard"
 
 # Dataset to probe
-DATASET_DIR = "capture_buffer_0"
+DATASET_DIR = cfg.get_buffer_path(0)
 OUTPUT_DIR = "diagnostic_phase_1"
 
 def run_visual_audit():

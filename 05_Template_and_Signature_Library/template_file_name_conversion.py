@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import os
 import shutil
@@ -5,7 +9,7 @@ import glob
 
 # --- CONFIGURATION ---
 INPUT_ROOT = "Standardized_Templates_Raw"
-OUTPUT_DIR = "templates"
+OUTPUT_DIR = cfg.TEMPLATE_DIR
 
 # --- MAPPINGS ---
 ORE_TYPES = { '1': 'dirt', '2': 'com', '3': 'rare', '4': 'epic', '5': 'leg', '6': 'myth', '7': 'div' }

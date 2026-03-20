@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import pandas as pd
 import json
 
@@ -6,7 +10,7 @@ BOSS_DATA = {11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
 
 def audit_ore_accuracy(mining_csv):
     df = pd.read_csv(mining_csv)
-    boss_floors = BOSS_DATA.keys()
+    boss_floors = cfg.BOSS_DATA.keys()
     
     results = []
     total_checks = 0
@@ -17,11 +21,11 @@ def audit_ore_accuracy(mining_csv):
     for floor in boss_floors:
         # Get expected layout
         expected = {}
-        if BOSS_DATA[floor].get('tier') == 'mixed':
-            expected = BOSS_DATA[floor]['special']
+        if cfg.BOSS_DATA[floor].get('tier') == 'mixed':
+            expected = cfg.BOSS_DATA[floor]['special']
         else:
             # Full floor of one tier
-            expected = {i: BOSS_DATA[floor]['tier'] for i in range(24)}
+            expected = {i: cfg.BOSS_DATA[floor]['tier'] for i in range(24)}
         
         # Get Miner's calls for this floor (across all runs)
         for run_id in df['run'].unique():

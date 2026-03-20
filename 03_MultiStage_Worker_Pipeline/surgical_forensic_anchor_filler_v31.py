@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -7,7 +11,7 @@ import sys
 
 # --- 1. CONFIGURATION ---
 BUFFER_DIR = "capture_buffer"
-TEMPLATE_DIR = "templates"
+TEMPLATE_DIR = cfg.TEMPLATE_DIR
 RECOVERY_DIR = "forensic_verification_locked"
 CSV_FILE = "FINAL_TOTAL_AUDIT_v31_44.csv"
 
@@ -15,19 +19,7 @@ START_FLOOR = 1
 START_IMAGE_NAME = "frame_20260306_231742_176023.jpg"
 
 # --- 2. BOSS DATA (Restored & Explicit) ---
-BOSS_DATA = {
-    11: {'tier': 'dirt1'}, 17: {'tier': 'com1'}, 23: {'tier': 'dirt2'},
-    25: {'tier': 'rare1'}, 29: {'tier': 'epic1'}, 31: {'tier': 'leg1'},
-    34: {'tier': 'mixed', 'special': {8: 'myth1', 9: 'myth1', 14: 'myth1', 15: 'myth1',
-                   **{i: 'com2' for i in range(24) if i not in [8, 9, 14, 15]}}},
-    49: {'tier': 'mixed', 'special': {**{i: 'dirt3' for i in range(0, 6)}, **{i: 'com3' for i in range(6, 12)},
-                   **{i: 'rare3' for i in range(12, 18)}, **{i: 'myth2' for i in range(18, 24)}}},
-    74: {'tier': 'mixed', 'special': {20: 'div1', 21: 'div1', **{i: 'dirt3' for i in range(24) if i not in [20, 21]}}},
-    98: {'tier': 'myth3'},
-    99: {'tier': 'mixed', 'special': {**{i: 'com3' for i in [0, 6, 12, 18]}, **{i: 'rare3' for i in [1, 7, 13, 19]},
-                   **{i: 'epic3' for i in [2, 8, 14, 20]}, **{i: 'leg3' for i in [3, 9, 15, 21]},
-                   **{i: 'myth3' for i in [4, 10, 16, 22]}, **{i: 'div2' for i in [5, 11, 17, 23]}}}
-}
+# cfg.BOSS_DATA moved to project_config
 
 # --- 3. DUAL-GRID MAPPING ---
 # A. THE AI GRID (The "Golden" Search Pixels)
@@ -135,7 +127,7 @@ def run_v31_44_audit():
                 census_ptr = min(curr_ptr + 6, idx_end)
                 census_img = cv2.imread(os.path.join(BUFFER_DIR, frames[census_ptr]))
                 
-                ores, hud_img = run_census_and_draw_hud(census_img, actual_f, BOSS_DATA, templates)
+                ores, hud_img = run_census_and_draw_hud(census_img, actual_f, cfg.BOSS_DATA, templates)
                 
                 for slot, data in ores.items():
                     writer.writerow([frames[census_ptr], actual_f, slot, data['tier'], data['score'], "v31.44_Surgical"])

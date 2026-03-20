@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -8,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 START_IDX = 2020
 BASE_IDX = 2021  # The frame we use as the "Truth" for Floor 27
 END_IDX = 2100
-BUFFER_ROOT = "capture_buffer_0"
+BUFFER_ROOT = cfg.get_buffer_path(0)
 
 # --- GAME CONSTANTS ---
 SLOT1_CENTER = (74, 261)
@@ -55,8 +59,8 @@ def run_forensic_dna_audit():
 
     # 1. Load Templates (Biome-filtered for Floor 27)
     raw_tpls = {'ore': {}, 'bg': []}
-    for f in os.listdir("templates"):
-        img = cv2.imread(os.path.join("templates", f), 0)
+    for f in os.listdir(cfg.TEMPLATE_DIR):
+        img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is None: continue
         img = cv2.resize(img, (48, 48))
         if f.startswith("background"): raw_tpls['bg'].append(img)

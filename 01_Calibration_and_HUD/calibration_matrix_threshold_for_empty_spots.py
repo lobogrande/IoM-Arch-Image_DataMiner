@@ -1,3 +1,7 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import numpy as np
 import os
@@ -21,7 +25,7 @@ SETTINGS = [
 def run_calibration_matrix():
     # Load Templates
     templates = {'ore': {}, 'bg': []}
-    t_path = "templates"
+    t_path = cfg.TEMPLATE_DIR
     for f in os.listdir(t_path):
         img = cv2.imread(os.path.join(t_path, f), 0)
         if img is None: continue

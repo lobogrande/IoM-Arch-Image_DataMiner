@@ -1,7 +1,11 @@
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import project_config as cfg
+
 import cv2
 import os
 
-DIGITS_DIR = "digits"
+DIGITS_DIR = cfg.DIGIT_DIR
 HEADER_MAX_HEIGHT = 12 # Our current Y2-Y1
 
 def audit_template_geometry():
