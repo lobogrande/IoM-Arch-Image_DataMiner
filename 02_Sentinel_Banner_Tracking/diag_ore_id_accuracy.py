@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 7.8 (Scale-Sweep Diagnostic: Finding the Optical Fit)
+# Version: 7.9 (Optical Peak Search: Finding the Scale & Y-Offset Sweet Spot)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -28,20 +28,19 @@ GROUND_TRUTH = {
 DIM_ID  = 48  
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
-JITTER = 2 
+X_JITTER = 2 
+Y_JITTER = 2 # New vertical sweep to find vertical alignment peak
 
-# SCALING CONSTANTS
-SCALES = [0.90, 0.95, 1.00, 1.05, 1.10]
+# SCALING CONSTANTS - Shifted up based on v7.8 results
+SCALES = [1.05, 1.10, 1.15, 1.20, 1.25]
 
 def get_spatial_mask(dim):
     mask = np.zeros((dim, dim), dtype=np.uint8)
-    # Scale the mask radius proportionally to the dimension
     radius = int(18 * (dim / 48))
     cv2.circle(mask, (dim//2, dim//2), radius, 255, -1)
     return mask
 
 def load_all_templates():
-    """Loads templates and pre-computes scaled versions for resolution sweep."""
     templates = {'ore_id': {}}
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
@@ -58,7 +57,6 @@ def load_all_templates():
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
             
-        # Generate Scaled Versions
         for s in SCALES:
             new_dim = int(DIM_ID * s)
             img_scaled = cv2.resize(img_raw, (new_dim, new_dim), interpolation=cv2.INTER_AREA)
@@ -77,7 +75,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     if img_gray is None: return []
     
     r4_dna = dna_map.get(f_idx, "000000")
-    row4_y = int(ORE0_Y + (3 * STEP))
+    row4_y_base = int(ORE0_Y + (3 * STEP))
     slot_matches = {}
 
     for col in range(6):
@@ -88,22 +86,26 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         cx = int(ORE0_X + (col * STEP))
         all_candidates = []
         
-        # We sweep the templates across the jittered search window
         for tier, variants in templates['ore_id'].items():
             for tpl in variants:
-                # We crop a ROI large enough to accommodate the scale and jitter
-                # Jitter is +/- 2, so we need DIM + 4
-                pad = 4 
                 side = tpl['img'].shape[0]
-                x1, y1 = int(cx - (side//2) - 2), int(row4_y - (side//2) - 2)
-                roi = img_gray[y1 : y1 + side + 4, x1 : x1 + side + 4]
+                # ROI covers X and Y jitter
+                pad = 4 
+                x1, y1 = int(cx - (side//2) - X_JITTER), int(row4_y_base - (side//2) - Y_JITTER)
+                roi = img_gray[y1 : y1 + side + (Y_JITTER*2), x1 : x1 + side + (X_JITTER*2)]
                 
                 if roi.shape[0] < side or roi.shape[1] < side: continue
                 
                 res = cv2.matchTemplate(roi, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=tpl['mask'])
-                _, score, _, _ = cv2.minMaxLoc(res)
+                _, score, _, max_loc = cv2.minMaxLoc(res)
+                
+                # max_loc tells us the local jitter offset (0,0 is top-left of search window)
+                # x_off = max_loc[0] - X_JITTER, y_off = max_loc[1] - Y_JITTER
+                y_offset = max_loc[1] - Y_JITTER
+
                 all_candidates.append({
-                    'tier': tier, 'id': tpl['id'], 'score': score, 'scale': tpl['scale']
+                    'tier': tier, 'id': tpl['id'], 'score': score, 
+                    'scale': tpl['scale'], 'y_off': y_offset
                 })
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
@@ -119,33 +121,32 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         is_valid = False
         if data['status'] == 'empty_dna':
             detected = 'empty_dna'
-            final = {'tier': 'empty_dna', 'score': 0.0, 'scale': 1.0}
+            final = {'tier': 'empty_dna', 'score': 0.0, 'scale': 1.0, 'y_off': 0}
         else:
             final = data['candidates'][0]
-            is_valid = final['score'] > 0.82 
+            is_valid = final['score'] > 0.78 # Slightly lowered gate to see peaks better
             detected = final['tier'] if is_valid else "low_conf_id"
         
         # --- GROUND TRUTH FORENSICS ---
         truth_tier = GROUND_TRUTH.get((f_idx, col))
-        truth_data = {'rank': -1, 'score': 0.0, 'scale': 0.0}
+        truth_data = {'rank': -1, 'score': 0.0, 'scale': 0.0, 'y_off': 0}
         if truth_tier and truth_tier != 'empty_dna':
             for rank, c in enumerate(data.get('candidates', [])):
                 if c['tier'] == truth_tier:
-                    truth_data = {'rank': rank + 1, 'score': round(c['score'], 4), 'scale': c['scale']}
-                    # We break at the FIRST occurrence of this tier in the sorted multi-scale list
+                    truth_data = {'rank': rank + 1, 'score': round(c['score'], 4), 'scale': c['scale'], 'y_off': c['y_off']}
                     break
         
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == 'empty_dna': color = (100, 100, 100)
         
         cx = int(ORE0_X + (col * STEP))
-        rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
+        rx1, ry1 = int(cx - DIM_ID//2), int(row4_y_base - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
         
         label = f"{detected} ({final['score']:.2f})"
         if truth_tier and detected != truth_tier:
             cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+DIM_ID+2, ry1+DIM_ID+2), (255, 0, 0), 1)
-            label += f" [T:{truth_data['rank']} @{truth_data['scale']}]"
+            label += f" [T:{truth_data['rank']} @{truth_data['scale']} Y:{truth_data['y_off']}]"
         
         cv2.putText(img_color, label, (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
         if is_valid: has_detections = True
@@ -155,11 +156,11 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'score': round(final['score'], 4), 'win_scale': final['scale'],
             'truth_tier': truth_tier if truth_tier else 'none',
             'truth_rank': truth_data['rank'], 'truth_score': truth_data['score'],
-            'truth_scale': truth_data['scale']
+            'truth_scale': truth_data['scale'], 'truth_y_off': truth_data['y_off']
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"sweep_v78_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"peak_v79_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_surgical_audit():
@@ -177,7 +178,7 @@ def run_surgical_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(100 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v7.8: MULTI-SCALE SWEEP ---")
+    print(f"--- ORE ID AUDIT v7.9: OPTICAL PEAK SEARCH ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -188,16 +189,18 @@ def run_surgical_audit():
             all_results.extend(future.result())
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.8_forensic.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.9_forensic.csv"), index=False)
     
-    print(f"\n--- SWEEP ERROR ANALYSIS ---")
+    print(f"\n--- PEAK ERROR ANALYSIS ---")
     gt_only = audit_df[audit_df['truth_tier'] != 'none']
     if not gt_only.empty:
         ores_only = gt_only[gt_only['truth_tier'] != 'empty_dna']
         if not ores_only.empty:
             print(f"Avg Truth Rank: {ores_only['truth_rank'].mean():.1f}")
-            print("\nWinning Scales for Truth:")
+            print("\nTruth Peak Scales:")
             print(ores_only['truth_scale'].value_counts())
+            print("\nTruth Peak Y-Offsets:")
+            print(ores_only['truth_y_off'].value_counts())
     print(f"\n--- DETECTION SUMMARY ---")
     print(audit_df['detected'].value_counts())
 
