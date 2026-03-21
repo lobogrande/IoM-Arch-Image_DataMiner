@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Ground Truth Error Analysis.
-# Version: 7.4 (Explicit Empty-Slot Ground Truth Handling)
+# Version: 7.4.1 (Bugfix: Resolve UnboundLocalError for is_valid)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -19,36 +19,67 @@ DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 # Add (frame_idx, slot_id): 'correct_tier' pairs here to analyze failures.
 # For empty slots, use the string 'empty_dna'.
 GROUND_TRUTH = {
+
     (0, 0): 'empty_dna', 
+
     (0, 1): 'empty_dna',
+
     (0, 2): 'dirt1',
+
     (0, 3): 'com1',
+
     (0, 4): 'com1',
+
     (0, 5): 'dirt1',
+
     (1, 0): 'empty_dna', 
+
     (1, 1): 'empty_dna',
+
     (1, 2): 'dirt1',
+
     (1, 3): 'com1',
+
     (1, 4): 'com1',
+
     (1, 5): 'dirt1',
+
     (2, 0): 'empty_dna', 
+
     (2, 1): 'empty_dna',
+
     (2, 2): 'dirt1',
+
     (2, 3): 'com1',
+
     (2, 4): 'com1',
+
     (2, 5): 'dirt1',
+
     (121, 0): 'dirt1', 
+
     (121, 1): 'dirt1',
+
     (121, 2): 'empty_dna',
+
     (121, 3): 'empty_dna',
+
     (121, 4): 'empty_dna',
+
     (121, 5): 'dirt1',
+
     (264, 0): 'empty_dna', 
+
     (264, 1): 'dirt2',
+
     (264, 2): 'empty_dna',
+
     (264, 3): 'epic1',
+
     (264, 4): 'dirt2',
+
     (264, 5): 'empty_dna'
+
 }
 
 # ROI CONSTANTS
@@ -169,6 +200,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     anchor = {'tier': 'none', 'score': -1.0, 'z': 0.0, 'range': (1, 999), 'col': -1}
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna': continue
+        if not data['candidates']: continue
         top = data['candidates'][0]
         if data['z_score'] > anchor['z'] and data['z_score'] > Z_SCORE_THRESHOLD:
             anchor = {
@@ -193,6 +225,8 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     for col in range(6):
         data = slot_matches.get(col)
         if not data: continue
+        
+        is_valid = False # Initialize to False for this slot
 
         if data['status'] == 'empty_dna':
             detected = 'empty_dna'
@@ -239,7 +273,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
         
-        label = f"{detected} Z:{data['z_score']:.1f}"
+        label = f"{detected} Z:{data.get('z_score', 0.0):.1f}"
         if truth_tier:
             # If we missed the truth, highlight the slot with a Blue border
             if detected != truth_tier:
@@ -251,7 +285,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
 
         frame_results.append({
             'frame': f_idx, 'slot': col, 'detected': detected, 
-            'score': round(final['score'], 4), 'z_score': round(data['z_score'], 2),
+            'score': round(final['score'], 4), 'z_score': round(data.get('z_score', 0.0), 2),
             'truth_tier': truth_tier if truth_tier else 'none',
             'truth_rank': truth_data['rank'],
             'truth_score': truth_data['score'],
@@ -280,7 +314,7 @@ def run_surgical_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v7.4: GROUND TRUTH FORENSICS ---")
+    print(f"--- ORE ID AUDIT v7.4.1: GROUND TRUTH FORENSICS ---")
 
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
