@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 8.5 (The Shadow-Core Resolver: 50% Masking & Gamma Lifting)
+# Version: 8.8 (Precision Visuals & Z-Trust Final Fix)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -19,12 +19,10 @@ DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 GROUND_TRUTH = {
     (0, 0): 'empty_dna', (0, 1): 'empty_dna', (0, 2): 'dirt1', (0, 3): 'com1', (0, 4): 'com1', (0, 5): 'dirt1',
     (1, 0): 'empty_dna', (1, 1): 'empty_dna', (1, 2): 'dirt1', (1, 3): 'com1', (1, 4): 'com1', (1, 5): 'dirt1',
-    (2, 0): 'empty_dna', (2, 1): 'empty_dna', (2, 2): 'dirt1', (2, 3): 'com1', (2, 4): (0, 5), # Note: 0,4 was com1
+    (2, 0): 'empty_dna', (2, 1): 'empty_dna', (2, 2): 'dirt1', (2, 3): 'com1', (2, 4): 'com1', (2, 5): 'dirt1',
     (121, 0): 'dirt1', (121, 1): 'dirt1', (121, 2): 'empty_dna', (121, 3): 'empty_dna', (121, 4): 'empty_dna', (121, 5): 'dirt1',
     (264, 0): 'empty_dna', (264, 1): 'dirt2', (264, 2): 'empty_dna', (264, 3): 'epic1', (264, 4): 'dirt2', (264, 5): 'empty_dna'
 }
-# Correction for manual logic in dictionary (fixing overlaps)
-GROUND_TRUTH.update({(2, 4): 'com1', (2, 5): 'dirt1'})
 
 # ROI CONSTANTS
 DIM_ID  = 48  
@@ -38,22 +36,17 @@ TARGET_SCALE = 1.20
 ROW4_Y_PERSPECTIVE_SHIFT = 2 
 
 # LOGIC THRESHOLDS
-ORE_STRICT_GATE = 0.68  # Lowered slightly to account for the more restrictive 50% mask
-Z_SCORE_THRESHOLD = 1.8 
-TIER_CONF_BUFFER = 0.08 # Margin for Dirt recovery
+ORE_STRICT_GATE = 0.65  
+Z_TRUST_THRESHOLD = 2.2 # Statistical dominance override
+TIER_CONF_BUFFER = 0.08 
 COMPLEXITY_PENALTY_COEFF = 0.00025 
 
 # BULLY PENALTY MAP
-# Expanded to include leg3, myth2, and epic3 based on hallucination data
 BULLY_PENALTIES = {
-    'leg1': 0.08,
-    'leg2': 0.05,
-    'leg3': 0.06,
-    'myth1': 0.04,
-    'myth2': 0.07,
-    'myth3': 0.08,
-    'div3': 0.12,
-    'epic3': 0.04
+    'leg1': 0.08, 'leg2': 0.05, 'leg3': 0.10,
+    'myth1': 0.04, 'myth2': 0.07, 'myth3': 0.08,
+    'div3': 0.12, 'epic3': 0.05,
+    'com3': 0.06, 'rare3': 0.06
 }
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
@@ -64,7 +57,6 @@ ORE_RESTRICTIONS = {
 }
 
 def apply_gamma_lift(img, gamma=0.5):
-    """Lifts shadows without over-normalizing noise."""
     invGamma = 1.0 / gamma
     table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
     return cv2.LUT(img, table)
@@ -73,16 +65,11 @@ def get_complexity(img):
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def get_spatial_mask(dim, is_core_only=False):
-    """
-    Excludes top 1/2 of the tile to aggressively ignore all Mod/HUD noise.
-    """
     mask = np.zeros((dim, dim), dtype=np.uint8)
     base_r = 12 if is_core_only else 18
     radius = int(base_r * (dim / 48))
     cv2.circle(mask, (dim//2, dim//2), radius, 255, -1)
-    
-    # NEW: Exclude Top 1/2 of the tile (The Mod Zone)
-    top_exclude_limit = int(dim * (1/2))
+    top_exclude_limit = int(dim * 0.40)
     mask[0:top_exclude_limit, :] = 0
     return mask
 
@@ -106,26 +93,20 @@ def load_all_templates():
     templates = {'ore_id': {}}
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
-
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
         if f.startswith(("background", "negative_ui")): continue
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
-        
         parts = f.split("_")
         if len(parts) < 2: continue
         tier = parts[0]
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
-            
         new_dim = int(DIM_ID * TARGET_SCALE)
         img_scaled = cv2.resize(img_raw, (new_dim, new_dim), interpolation=cv2.INTER_AREA)
-        
-        # Pre-compute Complexity on Gamma-Lifted templates
         lifted_tpl = apply_gamma_lift(img_scaled, 0.6)
         comp = get_complexity(lifted_tpl)
-        
         templates['ore_id'][tier].append({
             'id': f, 'img': img_scaled, 'comp': comp,
             'mask_std': get_spatial_mask(new_dim, False),
@@ -133,6 +114,11 @@ def load_all_templates():
             'tier': tier
         })
     return templates
+
+def draw_shadow_text(img, text, pos, font, scale, color, thick):
+    # Draw black outline/shadow first
+    cv2.putText(img, text, (pos[0]+1, pos[1]+1), font, scale, (0,0,0), thick+1)
+    cv2.putText(img, text, pos, font, scale, color, thick)
 
 def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     f_idx = frame_data['frame_idx']
@@ -150,66 +136,46 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         if r4_dna[col] == '0':
             slot_matches[col] = {'status': 'empty_dna', 'candidates': [], 'xhair': 'none'}
             continue
-
         cx = int(ORE0_X + (col * STEP))
         side_px = int(DIM_ID * TARGET_SCALE)
         tx1, ty1 = int(cx - side_px//2), int(row4_y_base - side_px//2)
         roi_bgr = img_color[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         roi_gray = img_gray[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         
-        # 1. Shadow Recovery via Gamma Lift
         if roi_gray.size > 0:
             roi_lifted = apply_gamma_lift(roi_gray, 0.5)
             roi_complexity = get_complexity(roi_lifted)
         else:
-            roi_lifted = roi_gray
             roi_complexity = 0
-
-        # 2. X-Hair Detection
         xhair = detect_crosshair(roi_bgr)
         use_core_mask = (xhair != "none")
-
         all_candidates = []
         for tier, variants in templates['ore_id'].items():
             bully_penalty = BULLY_PENALTIES.get(tier, 0.0)
-            
             for tpl in variants:
                 active_mask = tpl['mask_core'] if use_core_mask else tpl['mask_std']
-                
                 side = tpl['img'].shape[0]
                 x1, y1 = int(cx - (side//2) - X_JITTER), int(row4_y_base - (side//2) - Y_JITTER)
                 search_area = img_gray[y1 : y1 + side + (Y_JITTER*2), x1 : x1 + side + (X_JITTER*2)]
-                
                 if search_area.shape[0] < side or search_area.shape[1] < side: continue
-                
-                # Apply Gamma Lift to Search Area to match ROI
                 search_lifted = apply_gamma_lift(search_area, 0.5)
-                
                 res = cv2.matchTemplate(search_lifted, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
-                
-                # Structural Parity Check
                 comp_diff = max(0, tpl['comp'] - roi_complexity)
-                struct_penalty = comp_diff * COMPLEXITY_PENALTY_COEFF
-                
-                weighted_score = score - bully_penalty - struct_penalty
-                all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': weighted_score, 'raw': score})
-        
+                weighted_score = score - bully_penalty - (comp_diff * COMPLEXITY_PENALTY_COEFF)
+                all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': weighted_score})
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
-        z_score = (all_candidates[0]['score'] - np.mean(scores)) / np.std(scores) if scores else 0
-        
-        slot_matches[col] = {
-            'status': 'occupied', 'candidates': all_candidates, 
-            'z_score': z_score, 'xhair': xhair
-        }
+        z_score = (all_candidates[0]['score'] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 0) else 0
+        slot_matches[col] = {'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'xhair': xhair}
 
-    # --- ANCHOR & RESOLUTION ---
+    # Resolution
     anchor = {'tier': 'none', 'score': -1.0, 'z': 0.0, 'range': (1, 999), 'col': -1}
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
         top = data['candidates'][0]
-        if data['z_score'] > anchor['z'] and data['z_score'] > Z_SCORE_THRESHOLD:
+        # FIXED: Corrected reference to Z_TRUST_THRESHOLD
+        if data['z_score'] > anchor['z'] and data['z_score'] > Z_TRUST_THRESHOLD:
             anchor = {'tier': top['tier'], 'score': top['score'], 'z': data['z_score'],
                       'range': ORE_RESTRICTIONS.get(top['tier'], (1, 999)), 'col': col}
 
@@ -217,7 +183,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     has_detections = False
     family_champions = {}
     for col, data in slot_matches.items():
-        if data['status'] == 'empty_dna': continue
+        if data['status'] == 'empty_dna' or not data['candidates']: continue
         for cand in data['candidates']:
             t_range = ORE_RESTRICTIONS.get(cand['tier'], (1, 999))
             if t_range[0] <= anchor['range'][1] and t_range[1] >= anchor['range'][0]:
@@ -229,28 +195,23 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         data = slot_matches.get(col)
         if not data: continue
         is_valid = False
-
         if data['status'] == 'empty_dna':
-            detected = 'empty_dna'
-            final = {'tier': 'empty_dna', 'score': 0.0}
+            detected, final = 'empty_dna', {'tier': 'empty_dna', 'score': 0.0}
         else:
-            valid_options = [c for c in data['candidates'] if get_family(c['tier']) in [get_family(f) for f in family_champions.keys()]]
+            valid_options = [c for c in data['candidates'] if get_family(c['tier']) in family_champions]
             valid_options = [c for c in valid_options if c['tier'] == family_champions[get_family(c['tier'])]['tier']]
             valid_options.sort(key=lambda x: x['score'], reverse=True)
-            
             if not valid_options:
                 detected, final = 'low_conf_id', {'tier': 'none', 'score': 0.0}
             else:
                 final = valid_options[0]
-                # Dirt3 Recovery Bias
                 for challenger in valid_options[1:]:
                     if 'dirt' in challenger['tier'] and challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
                         final = challenger
-                
-                is_valid = final['score'] > 0.40 # Lowered slightly for precision
+                is_valid = (final['score'] > ORE_STRICT_GATE) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.30)
                 detected = final['tier'] if is_valid else "low_conf_id"
         
-        # Forensics
+        # Overlay Logic
         truth_tier = GROUND_TRUTH.get((f_idx, col))
         truth_rank = -1
         if truth_tier and truth_tier != 'empty_dna':
@@ -263,22 +224,28 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         if detected == 'empty_dna': color = (100, 100, 100)
         if col == anchor['col']: color = (0, 255, 255)
         
-        cx = int(ORE0_X + (col * STEP))
-        rx1, ry1 = int(cx - (DIM_ID*TARGET_SCALE)//2), int(row4_y_base - (DIM_ID*TARGET_SCALE)//2)
-        cv2.rectangle(img_color, (rx1, ry1), (rx1+int(DIM_ID*TARGET_SCALE), ry1+int(DIM_ID*TARGET_SCALE)), color, 1)
+        cx, side_px = int(ORE0_X + (col * STEP)), int(DIM_ID * TARGET_SCALE)
+        rx1, ry1 = int(cx - side_px//2), int(row4_y_base - side_px//2)
+        cv2.rectangle(img_color, (rx1, ry1), (rx1+side_px, ry1+side_px), color, 1)
         
-        xhair_str = f"|{data['xhair']}" if data['xhair'] != 'none' else ""
-        label = f"{detected}{xhair_str} ({final['score']:.2f})"
+        # 1. Tier Name (Bottom-Left)
+        draw_shadow_text(img_color, detected, (rx1 + 3, ry1 + side_px - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        
+        # 2. Stats (Top-Left - Staggered Vertically to prevent overlap)
+        y_stagger = 10 if col % 2 == 0 else 20
+        stats_label = f"{final['score']:.2f} Z:{data.get('z_score', 0):.1f}"
+        draw_shadow_text(img_color, stats_label, (rx1 + 3, ry1 + y_stagger), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+
+        # 3. Truth Rank (Top-Right on Error)
         if truth_tier and detected != truth_tier:
-            cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+int(DIM_ID*TARGET_SCALE)+2, ry1+int(DIM_ID*TARGET_SCALE)+2), (255, 0, 0), 1)
-            label += f" [T:{truth_rank}]"
+            cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+side_px+2, ry1+side_px+2), (255, 0, 0), 1)
+            draw_shadow_text(img_color, f"T:{truth_rank}", (rx1 + side_px - 25, ry1 + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
         
-        cv2.putText(img_color, label, (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
         if is_valid: has_detections = True
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data['xhair'], 'truth_rank': truth_rank})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"resolver_v85_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"resolver_v88_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -289,14 +256,13 @@ def run_precision_audit():
     df = pd.read_csv(STEP1_CSV)
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
-    
     truth_frames = list(set([k[0] for k in GROUND_TRUTH.keys()]))
     df_sample = df[df['frame_idx'].isin(truth_frames)]
     if len(df_sample) < 400:
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v8.5: THE SHADOW-CORE RESOLVER ---")
+    print(f"--- ORE ID AUDIT v8.8: THE PROBABILISTIC RESOLVER ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -304,16 +270,8 @@ def run_precision_audit():
         futures = {executor.submit(worker_func, task): task for task in tasks}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             all_results.extend(future.result())
-
-    audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.5_precision.csv"), index=False)
-    
-    print(f"\n--- PRECISION ERROR ANALYSIS ---")
-    ores_only = audit_df[audit_df['truth_rank'] != -1]
-    if not ores_only.empty:
-        print(f"Average Rank of True Ore: {ores_only['truth_rank'].mean():.1f}")
-    print(f"\n--- DETECTION SUMMARY ---")
-    print(audit_df['detected'].value_counts())
+    pd.DataFrame(all_results).to_csv(os.path.join(OUT_DIR, "ore_id_v8.8_precision.csv"), index=False)
+    print(f"\n--- DONE ---")
 
 if __name__ == "__main__":
     run_precision_audit()
