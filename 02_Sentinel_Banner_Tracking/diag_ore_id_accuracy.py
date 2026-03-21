@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 9.2 (The Consensus Resolver: Row-Wide Voting & X-Hair Refusal)
+# Version: 9.3 (The Optical Shield: Robust Sensing & Ambiguity Suppression)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -38,16 +38,18 @@ ROTATION_VARIANTS = [-3, 0, 3]
 
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
-Z_XHAIR_REFUSAL_FLOOR = 2.5 # Obscured ores must be VERY confident to get named
-TIER_CONF_BUFFER = 0.09 
-AFFINITY_BONUS_COEFF = 0.04 
+Z_XHAIR_REFUSAL_FLOOR = 2.6 
+AMBIGUITY_DELTA_GATE = 0.025 # If Rank 1 and 2 are this close, refuse to guess
+TIER_CONF_BUFFER = 0.08 
+AFFINITY_BONUS_COEFF = 0.035 
 
 # BULLY PENALTY MAP
+# Increased Leg/Myth penalties to stop the "Dirt3 Hallucination"
 BULLY_PENALTIES = {
-    'leg1': 0.08, 'leg2': 0.05, 'leg3': 0.10,
-    'myth1': 0.04, 'myth2': 0.07, 'myth3': 0.08,
-    'div3': 0.12, 'epic3': 0.05,
-    'com3': 0.06, 'rare3': 0.06
+    'leg1': 0.10, 'leg2': 0.07, 'leg3': 0.12,
+    'myth1': 0.05, 'myth2': 0.08, 'myth3': 0.10,
+    'div3': 0.15, 'epic3': 0.06,
+    'com3': 0.07, 'rare3': 0.07
 }
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
@@ -71,7 +73,6 @@ def get_complexity(img):
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def get_tier_gate(tier_name, is_sha):
-    """Returns a family-specific threshold. Low-contrast tiers need lower gates."""
     base = 0.40 if is_sha else 0.64
     if 'dirt' in tier_name or 'com1' in tier_name:
         return base - 0.10 
@@ -89,17 +90,28 @@ def get_spatial_mask(dim, is_core_only=False):
     return mask
 
 def detect_crosshair(roi_bgr):
-    if roi_bgr is None or roi_bgr.size == 0: return "none"
+    """Detects colored crosshair rings using strict HSV density."""
+    if roi_bgr is None or roi_bgr.size == 0: return "none", 0
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    
+    # Strict ranges: Sat/Val must be high to avoid neutral-tone ghosting
     ranges = {
-        'GOLD': ([18, 100, 100], [35, 255, 255]),
-        'BLUE': ([100, 100, 100], [130, 255, 255]),
-        'RED':  ([0, 100, 100], [10, 255, 255])
+        'GOLD': ([16, 140, 140], [36, 255, 255]),
+        'BLUE': ([100, 140, 140], [135, 255, 255]),
+        'RED1': ([0, 140, 140], [10, 255, 255]),
+        'RED2': ([170, 140, 140], [180, 255, 255])
     }
+    
+    max_px = 0
+    detected_name = "none"
     for name, (low, high) in ranges.items():
         mask = cv2.inRange(hsv, np.array(low), np.array(high))
-        if np.sum(mask) > 100: return name
-    return "none"
+        cnt = cv2.countNonZero(mask)
+        if cnt > 25 and cnt > max_px: # 25px threshold to ignore noise
+            max_px = cnt
+            detected_name = name.rstrip('12')
+            
+    return detected_name, max_px
 
 def get_family(tier_name):
     return ''.join([i for i in tier_name if not i.isdigit()])
@@ -168,7 +180,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         else:
             roi_complexity = 0
 
-        xhair = detect_crosshair(roi_bgr)
+        xhair, xhair_px = detect_crosshair(roi_bgr)
         use_core_mask = (xhair != "none")
         all_candidates = []
         for tier, variants in templates['ore_id'].items():
@@ -192,7 +204,10 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
         z_score = (all_candidates[0]['score'] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 0) else 0
-        slot_matches[col] = {'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'xhair': xhair, 'is_sha': is_sha}
+        slot_matches[col] = {
+            'status': 'occupied', 'candidates': all_candidates, 
+            'z_score': z_score, 'xhair': xhair, 'xhair_px': xhair_px, 'is_sha': is_sha
+        }
 
     # --- ROW-WIDE CONSENSUS ELECTION ---
     floor_votes = []
@@ -200,7 +215,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         if data['status'] == 'empty_dna' or not data['candidates']: continue
         top = data['candidates'][0]
         gate = get_tier_gate(top['tier'], data['is_sha'])
-        # Only confident votes or high-Z votes count for the election
         if top['score'] > gate or data['z_score'] > Z_TRUST_THRESHOLD:
             floor_votes.append(ORE_RESTRICTIONS.get(top['tier'], (1, 999)))
     
@@ -217,7 +231,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         if data['status'] == 'empty_dna' or not data['candidates']: continue
         for cand in data['candidates']:
             t_range = ORE_RESTRICTIONS.get(cand['tier'], (1, 999))
-            # Match strictly against Consensus floor
             if t_range[0] <= consensus_range[1] and t_range[1] >= consensus_range[0]:
                 fam = get_family(cand['tier'])
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
@@ -242,16 +255,23 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                     if 'dirt' in challenger['tier'] and challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
                         final = challenger
                 
-                # REVISED ADAPTIVE GATING
+                # --- AMBIGUITY GATE ---
+                # Check distance between Rank 1 and Rank 2 to prevent coin-flips
+                if len(valid_options) > 1:
+                    score_delta = final['score'] - valid_options[1]['score']
+                else:
+                    score_delta = 9.9
+                
                 gate = get_tier_gate(final['tier'], data['is_sha'])
-                # Lower Z-Trust floor specifically for Dirt to recover f196-style cases
-                z_floor = 0.25 if 'dirt' in final['tier'] else 0.30
+                z_floor = 0.22 if 'dirt' in final['tier'] else 0.28
                 
                 is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > z_floor)
                 
-                # --- X-HAIR REFUSAL HEURISTIC ---
-                # If behind a crosshair, we refuse to identify unless it's statistically massive
-                if data['xhair'] != 'none' and is_valid:
+                # Suppress if ambiguous
+                if is_valid and score_delta < AMBIGUITY_DELTA_GATE:
+                    is_valid = False
+                    detected = "ambiguous_id"
+                elif data['xhair'] != 'none' and is_valid:
                     if data['z_score'] < Z_XHAIR_REFUSAL_FLOOR:
                         is_valid = False
                         detected = "xhair_obscured"
@@ -270,7 +290,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == 'empty_dna': color = (100, 100, 100)
-        if detected == 'xhair_obscured': color = (0, 255, 255) # Yellow for refusal
+        if detected in ['xhair_obscured', 'ambiguous_id']: color = (0, 255, 255)
         
         cx, side_px = int(ORE0_X + (col * STEP)), int(DIM_ID * TARGET_SCALE)
         rx1, ry1 = int(cx - side_px//2), int(row4_y_base - side_px//2)
@@ -280,7 +300,8 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         draw_shadow_text(img_color, detected, (rx1 + 3, y_label), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
         
         y_stats = ry1 + 10 if col % 2 == 0 else ry1 + 22
-        stats_label = f"{final['score']:.2f} Z:{data.get('z_score', 0):.1f} R:{final.get('angle',0)}"
+        xh_str = f" PX:{data.get('xhair_px',0)}" if data['xhair'] != 'none' else ""
+        stats_label = f"{final['score']:.2f} Z:{data.get('z_score', 0):.1f}{xh_str}"
         draw_shadow_text(img_color, stats_label, (rx1 + 3, y_stats), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if truth_tier and detected != truth_tier:
@@ -291,7 +312,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data['xhair'], 'truth_rank': truth_rank})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"consensus_v92_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"shield_v93_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -308,7 +329,7 @@ def run_precision_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v9.2: THE CONSENSUS RESOLVER ---")
+    print(f"--- ORE ID AUDIT v9.3: THE OPTICAL SHIELD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -318,7 +339,7 @@ def run_precision_audit():
             all_results.extend(future.result())
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v9.2_precision.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v9.3_precision.csv"), index=False)
     
     print(f"\n--- PRECISION ERROR ANALYSIS ---")
     ores_only = audit_df[audit_df['truth_rank'] != -1]
