@@ -119,9 +119,9 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     f_idx = frame_data['frame_idx']
     filename = frame_data['filename']
     img_path = os.path.join(buffer_dir, filename)
-    img_bgr = cv2.imread(img_path)
-    if img_bgr is None: return []
-    img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    img_color = cv2.imread(img_path)
+    if img_color is None: return []
+    img_gray = cv2.cvtColor(img_color, cv2.COLOR_BGR2GRAY)
     
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y_base = int(ORE0_Y + (3 * STEP)) + ROW4_Y_PERSPECTIVE_SHIFT
@@ -135,7 +135,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         cx = int(ORE0_X + (col * STEP))
         side_px = int(DIM_ID * TARGET_SCALE)
         tx1, ty1 = int(cx - side_px//2), int(row4_y_base - side_px//2)
-        roi_bgr = img_bgr[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
+        roi_bgr = img_color[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         roi_gray = img_gray[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         
         # 1. State & Crosshair Detection
