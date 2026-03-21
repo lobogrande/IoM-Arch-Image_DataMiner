@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic Ore Identification with Ground Truth Error Analysis.
-# Version: 7.4.1 (Bugfix: Resolve UnboundLocalError for is_valid)
+# Purpose: Forensic Ore Identification with Structural and Physical Constraints.
+# Version: 7.5 (Sobel Gradient Matching & Contrast Normalization)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -17,69 +17,37 @@ DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 
 # --- GROUND TRUTH SECTION ---
 # Add (frame_idx, slot_id): 'correct_tier' pairs here to analyze failures.
-# For empty slots, use the string 'empty_dna'.
 GROUND_TRUTH = {
-
     (0, 0): 'empty_dna', 
-
     (0, 1): 'empty_dna',
-
     (0, 2): 'dirt1',
-
     (0, 3): 'com1',
-
     (0, 4): 'com1',
-
     (0, 5): 'dirt1',
-
     (1, 0): 'empty_dna', 
-
     (1, 1): 'empty_dna',
-
     (1, 2): 'dirt1',
-
     (1, 3): 'com1',
-
     (1, 4): 'com1',
-
     (1, 5): 'dirt1',
-
     (2, 0): 'empty_dna', 
-
     (2, 1): 'empty_dna',
-
     (2, 2): 'dirt1',
-
     (2, 3): 'com1',
-
     (2, 4): 'com1',
-
     (2, 5): 'dirt1',
-
     (121, 0): 'dirt1', 
-
     (121, 1): 'dirt1',
-
     (121, 2): 'empty_dna',
-
     (121, 3): 'empty_dna',
-
     (121, 4): 'empty_dna',
-
     (121, 5): 'dirt1',
-
     (264, 0): 'empty_dna', 
-
     (264, 1): 'dirt2',
-
     (264, 2): 'empty_dna',
-
     (264, 3): 'epic1',
-
     (264, 4): 'dirt2',
-
     (264, 5): 'empty_dna'
-
 }
 
 # ROI CONSTANTS
@@ -89,22 +57,15 @@ STEP = 59.0
 JITTER = 2 
 
 # THRESHOLDS
-ORE_STRICT_GATE = 0.78  
-Z_SCORE_THRESHOLD = 2.0  
-STRUCTURAL_WEIGHT_COEFF = 0.0003 
+ORE_STRICT_GATE = 0.65  # Lowered for Gradient matching (Coefficient is stricter)
+Z_SCORE_THRESHOLD = 1.8  
+STRUCTURAL_WEIGHT_COEFF = 0.0001 
 
-# BULLY PENALTY MAP
+# BULLY PENALTY MAP (Adjusted for Gradient logic)
 BULLY_PENALTIES = {
-    'div3_sha_plain_0.png': 0.15,
-    'com3_act_pmod_hbar_xhair_0.png': 0.10,
-    'rare1_act_pmod_6.png': 0.05,
-    'rare1_act_plain_3.png': 0.05,
-    'dirt1_act_pmod_9.png': 0.06,
-    'leg2_act_xhair_0.png': 0.04,
-    'dirt1_act_pmod_2.png': 0.06,
-    'div2_sha_pmod_1.png': 0.08,
-    'dirt2_act_xhair_0.png': 0.04,
-    'dirt1_act_plain_2.png': 0.06
+    'div3_sha_plain_0.png': 0.10,
+    'com3_act_pmod_hbar_xhair_0.png': 0.05,
+    'leg1_act_pmod_6.png': 0.05
 }
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
@@ -113,6 +74,15 @@ ORE_RESTRICTIONS = {
     'dirt2': (12, 23), 'com2': (18, 28), 'rare2': (26, 35), 'epic2': (30, 41), 'leg2': (32, 44), 'myth2': (36, 49), 'div2': (75, 99),
     'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
 }
+
+def get_gradient_map(img):
+    """Generates a Sobel gradient magnitude map to emphasize structural lines."""
+    sobelx = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(img, cv2.CV_64F, 0, 1, ksize=3)
+    mag = np.sqrt(sobelx**2 + sobely**2)
+    mag = np.uint8(np.clip(mag, 0, 255))
+    # Apply contrast stretching
+    return cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
 
 def get_complexity(img):
     return cv2.Laplacian(img, cv2.CV_64F).var()
@@ -136,13 +106,19 @@ def load_all_templates():
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
         img_id = cv2.resize(img_raw, (DIM_ID, DIM_ID))
+        
+        # Pre-compute Gradient Map for templates
+        grad_map = get_gradient_map(img_id)
         complexity = get_complexity(img_id)
+        
         parts = f.split("_")
         if len(parts) < 2: continue
         tier, state = parts[0], parts[1]
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
-        templates['ore_id'][tier].append({'id': f, 'img': img_id, 'comp': complexity, 'tier': tier})
+        templates['ore_id'][tier].append({
+            'id': f, 'img': grad_map, 'orig': img_id, 'comp': complexity, 'tier': tier
+        })
     return templates
 
 def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
@@ -167,16 +143,21 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
         if search_id.shape[0] < DIM_ID or search_id.shape[1] < DIM_ID: continue
         
+        # Transform ROI to Gradient Space
+        grad_roi = get_gradient_map(search_id)
         roi_comp = get_complexity(search_id)
+        
         all_candidates = []
-
         for tier, states in templates['ore_id'].items():
             for tpl in states:
-                res = cv2.matchTemplate(search_id, tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
+                # Use CCOEFF_NORMED on Gradient maps
+                res = cv2.matchTemplate(grad_roi, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=mask)
                 score = cv2.minMaxLoc(res)[1]
+                
                 penalty = BULLY_PENALTIES.get(tpl['id'], 0.0)
                 comp_diff = abs(roi_comp - tpl['comp'])
                 structural_penalty = comp_diff * STRUCTURAL_WEIGHT_COEFF
+                
                 weighted_score = score - penalty - structural_penalty
                 all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': weighted_score, 'raw': score})
         
@@ -185,13 +166,11 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         scores = [c['score'] for c in all_candidates]
         mean_s = np.mean(scores)
         std_s = np.std(scores) if np.std(scores) > 0 else 1.0
-        winner = all_candidates[0]
-        z_score = (winner['score'] - mean_s) / std_s
+        z_score = (all_candidates[0]['score'] - mean_s) / std_s
         
         slot_matches[col] = {
             'status': 'occupied',
             'candidates': all_candidates, 
-            'roi_comp': roi_comp, 
             'z_score': z_score,
             'mean_score': mean_s
         }
@@ -211,8 +190,8 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     # --- RESOLUTION ---
     frame_results = []
     has_detections = False
-    
     family_champions = {}
+    
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna': continue
         for cand in data['candidates']:
@@ -225,8 +204,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     for col in range(6):
         data = slot_matches.get(col)
         if not data: continue
-        
-        is_valid = False # Initialize to False for this slot
+        is_valid = False
 
         if data['status'] == 'empty_dna':
             detected = 'empty_dna'
@@ -245,40 +223,32 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
                 final = {'tier': 'none', 'score': 0.0, 'id': 'none'}
             else:
                 final = valid_options[0]
-                is_valid = final['score'] > 0.60 
+                is_valid = final['score'] > 0.45 # Gradient matching scores are generally lower
                 detected = final['tier'] if is_valid else "low_conf_id"
         
         # --- GROUND TRUTH FORENSICS ---
         truth_tier = GROUND_TRUTH.get((f_idx, col))
         truth_data = {'rank': -1, 'score': 0.0}
-        
         if truth_tier:
-            if truth_tier == 'empty_dna':
-                # Special handling for Empty-Slot ground truth
-                truth_data = {'rank': 0, 'score': 0.0}
-            else:
-                # Find where the 'Truth' ranked in the unfiltered 23-tier candidate list
+            if truth_tier != 'empty_dna':
                 for rank, c in enumerate(data.get('candidates', [])):
                     if c['tier'] == truth_tier:
                         truth_data = {'rank': rank + 1, 'score': round(c['score'], 4)}
                         break
         
         # Visual Annotation
-        is_anchor = (col == anchor['col'])
         color = (0, 255, 0) if (detected != 'low_conf_id' and detected != 'empty_dna') else (0, 0, 255)
-        if detected == 'empty_dna': color = (100, 100, 100) # Gray
-        if col == anchor['col']: color = (0, 255, 255) # Yellow
+        if detected == 'empty_dna': color = (100, 100, 100)
+        if col == anchor['col']: color = (0, 255, 255)
         
         cx = int(ORE0_X + (col * STEP))
         rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
         
         label = f"{detected} Z:{data.get('z_score', 0.0):.1f}"
-        if truth_tier:
-            # If we missed the truth, highlight the slot with a Blue border
-            if detected != truth_tier:
-                cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+DIM_ID+2, ry1+DIM_ID+2), (255, 0, 0), 1)
-                label += f" (T:{truth_data['rank']})"
+        if truth_tier and detected != truth_tier:
+            cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+DIM_ID+2, ry1+DIM_ID+2), (255, 0, 0), 1)
+            label += f" (T:{truth_data['rank']})"
         
         cv2.putText(img_color, label, (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
         if is_valid: has_detections = True
@@ -287,13 +257,12 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             'frame': f_idx, 'slot': col, 'detected': detected, 
             'score': round(final['score'], 4), 'z_score': round(data.get('z_score', 0.0), 2),
             'truth_tier': truth_tier if truth_tier else 'none',
-            'truth_rank': truth_data['rank'],
-            'truth_score': truth_data['score'],
-            'ore_id': final['id'], 'is_anchor': is_anchor
+            'truth_rank': truth_data['rank'], 'truth_score': truth_data['score'],
+            'ore_id': final['id'], 'is_anchor': (col == anchor['col'])
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"truth_v74_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"gradient_v75_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_surgical_audit():
@@ -306,16 +275,13 @@ def run_surgical_audit():
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
-    # Process specific frames for Ground Truth if they exist, otherwise sample
     truth_frames = list(set([k[0] for k in GROUND_TRUTH.keys()]))
     df_sample = df[df['frame_idx'].isin(truth_frames)]
-    
     if len(df_sample) < 400:
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v7.4.1: GROUND TRUTH FORENSICS ---")
-
+    print(f"--- ORE ID AUDIT v7.5: GRADIENT STRUCTURAL MATCHING ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
     
@@ -327,26 +293,18 @@ def run_surgical_audit():
             if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.4_forensic.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.5_forensic.csv"), index=False)
     
     print(f"\n--- GROUND TRUTH ERROR ANALYSIS ---")
     gt_only = audit_df[audit_df['truth_tier'] != 'none']
     if not gt_only.empty:
-        # Separate Ore vs Empty accuracy
         ores_only = gt_only[gt_only['truth_tier'] != 'empty_dna']
-        empty_only = gt_only[gt_only['truth_tier'] == 'empty_dna']
-        
         if not ores_only.empty:
             correct_ores = len(ores_only[ores_only['detected'] == ores_only['truth_tier']])
             print(f"Ore Identification Accuracy: {correct_ores}/{len(ores_only)} ({correct_ores/len(ores_only)*100:.1f}%)")
             missed = ores_only[ores_only['detected'] != ores_only['truth_tier']]
             if not missed.empty:
                 print(f"  Average Rank of True Ore when missed: {missed['truth_rank'].mean():.1f}")
-        
-        if not empty_only.empty:
-            correct_empty = len(empty_only[empty_only['detected'] == 'empty_dna'])
-            print(f"Empty-Space Detection Accuracy: {correct_empty}/{len(empty_only)} ({correct_empty/len(empty_only)*100:.1f}%)")
-
     print(f"\n--- DETECTION SUMMARY ---")
     print(audit_df['detected'].value_counts())
 
