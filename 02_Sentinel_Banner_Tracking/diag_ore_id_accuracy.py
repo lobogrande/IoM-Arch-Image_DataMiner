@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 8.0 (The Precision Resolver: Corrected Scale & Alignment)
+# Version: 8.1 (The Precision Resolver: Mod-Exclusion Masking)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -29,14 +29,14 @@ DIM_ID  = 48
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 X_JITTER = 2 
-Y_JITTER = 1 # Reduced now that we know the base offset
+Y_JITTER = 1 
 
-# OPTICAL CONSTANTS (Baked in from v7.9 discoveries)
+# OPTICAL CONSTANTS (Baked in from v7.9/v8.0 discoveries)
 TARGET_SCALE = 1.20
 ROW4_Y_PERSPECTIVE_SHIFT = 2 
 
 # LOGIC THRESHOLDS
-ORE_STRICT_GATE = 0.72  # Adjusted for high-scale noise
+ORE_STRICT_GATE = 0.72  
 Z_SCORE_THRESHOLD = 1.8 
 TIER_CONF_BUFFER = 0.03
 
@@ -48,9 +48,19 @@ ORE_RESTRICTIONS = {
 }
 
 def get_spatial_mask(dim):
+    """
+    Creates a circular mask, but excludes the top 1/3 where pickaxe 
+    mods and health bars typically appear in the tile.
+    """
     mask = np.zeros((dim, dim), dtype=np.uint8)
     radius = int(18 * (dim / 48))
+    # Draw the base circular focus
     cv2.circle(mask, (dim//2, dim//2), radius, 255, -1)
+    
+    # NEW: Exclude the top 1/3 (The Mod Zone)
+    top_exclude_limit = int(dim * (1/3))
+    mask[0:top_exclude_limit, :] = 0
+    
     return mask
 
 def get_family(tier_name):
@@ -174,7 +184,8 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 final = {'tier': 'none', 'score': 0.0}
             else:
                 final = valid_options[0]
-                is_valid = final['score'] > 0.45 # Conservative gate for first pass
+                # Keep conservative gate to ensure high-confidence anchors
+                is_valid = final['score'] > 0.45 
                 detected = final['tier'] if is_valid else "low_conf_id"
         
         # --- GROUND TRUTH FORENSICS ---
@@ -191,12 +202,13 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         if col == anchor['col']: color = (0, 255, 255)
         
         cx = int(ORE0_X + (col * STEP))
-        rx1, ry1 = int(cx - (DIM_ID*TARGET_SCALE)//2), int(row4_y_base - (DIM_ID*TARGET_SCALE)//2)
-        cv2.rectangle(img_color, (rx1, ry1), (rx1+int(DIM_ID*TARGET_SCALE), ry1+int(DIM_ID*TARGET_SCALE)), color, 1)
+        side_px = int(DIM_ID * TARGET_SCALE)
+        rx1, ry1 = int(cx - (side_px)//2), int(row4_y_base - (side_px)//2)
+        cv2.rectangle(img_color, (rx1, ry1), (rx1 + side_px, ry1 + side_px), color, 1)
         
         label = f"{detected} ({final['score']:.2f})"
         if truth_tier and detected != truth_tier:
-            cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+int(DIM_ID*TARGET_SCALE)+2, ry1+int(DIM_ID*TARGET_SCALE)+2), (255, 0, 0), 1)
+            cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1 + side_px + 2, ry1 + side_px + 2), (255, 0, 0), 1)
             label += f" [T:{truth_data['rank']}]"
         
         cv2.putText(img_color, label, (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
@@ -211,7 +223,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"precision_v80_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"precision_v81_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -229,7 +241,7 @@ def run_precision_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v8.0: PRECISION RESOLVER ---")
+    print(f"--- ORE ID AUDIT v8.1: PRECISION RESOLVER (MOD-EXCLUSION) ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -240,7 +252,7 @@ def run_precision_audit():
             all_results.extend(future.result())
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.0_precision.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.1_precision.csv"), index=False)
     
     print(f"\n--- PRECISION ERROR ANALYSIS ---")
     gt_only = audit_df[audit_df['truth_tier'] != 'none']
