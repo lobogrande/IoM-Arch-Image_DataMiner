@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 9.6 (The Forensic Guard: Two-Pass Optimization & Tier Isolation)
+# Version: 9.7 (The Forensic Guard: Template Filtering & Structural Fencing)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -21,13 +21,11 @@ STEP = 59.0
 DIM_ID = 48
 TARGET_SCALE = 1.20
 SIDE_PX = int(DIM_ID * TARGET_SCALE)
-ROTATION_VARIANTS = [-3, 3] # Secondary variants for damage animations
+ROTATION_VARIANTS = [-3, 3] 
 
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
-DIRT_COMPLEXITY_CEILING = 600    # No Dirt/Common allowed above this
-HIGH_TIER_COMPLEXITY_FLOOR = 400 # No Div/Leg/Myth/Epic allowed below this
-MOD_ENERGY_RATIO_TRIGGER = 1.4 
+MOD_ENERGY_RATIO_TRIGGER = 1.6  # More forgiving to prevent red-boxing clean ores
 XHAIR_PX_FLOOR = 200            
 XHAIR_SAT_FLOOR = 140           
 TIER_CONF_BUFFER = 0.08 
@@ -41,22 +39,32 @@ def get_cached_mask(exclusion_top, exclusion_bot=0.0):
         mask = np.zeros((SIDE_PX, SIDE_PX), dtype=np.uint8)
         radius = int(18 * (SIDE_PX / 48))
         cv2.circle(mask, (SIDE_PX//2, SIDE_PX//2), radius, 255, -1)
-        # Top mask (mods)
         t_lim = int(SIDE_PX * exclusion_top)
         mask[0:t_lim, :] = 0
-        # Bottom mask (health bars)
         if exclusion_bot > 0:
             b_lim = int(SIDE_PX * (1.0 - exclusion_bot))
             mask[b_lim:SIDE_PX, :] = 0
         CACHED_MASKS[key] = mask
     return CACHED_MASKS[key]
 
+# BULLY PENALTIES: Added Epics to stop them from dominating low-tier slots
 BULLY_PENALTIES = {
+    'epic1': 0.04, 'epic2': 0.04, 'epic3': 0.06,
     'leg1': 0.10, 'leg2': 0.08, 'leg3': 0.12,
     'myth1': 0.05, 'myth2': 0.08, 'myth3': 0.10,
     'div1': 0.15, 'div2': 0.15, 'div3': 0.20, 
-    'com3': 0.05
+    'com3': 0.04
 }
+
+def get_structural_bounds(tier):
+    """Returns (Min Complexity, Max Complexity) for specific ore families."""
+    if 'dirt' in tier: return (0, 550)
+    if 'com' in tier:  return (0, 650)
+    if 'rare' in tier: return (300, 900)
+    if 'epic' in tier: return (450, 1200) # Raised min floor to prevent Dirt1 overlap
+    if 'leg' in tier:  return (600, 2500)
+    if 'myth' in tier or 'div' in tier: return (800, 9999)
+    return (0, 9999)
 
 ORE_RESTRICTIONS = {
     'dirt1': (1, 11), 'com1': (1, 17), 'rare1': (3, 25), 'epic1': (6, 29), 'leg1': (12, 31), 'myth1': (20, 34), 'div1': (50, 74),
@@ -102,19 +110,20 @@ def load_all_templates():
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
     for f in os.listdir(t_path):
-        if not f.endswith(('.png', '.jpg')) or f.startswith(("background", "negative")): continue
+        if not f.endswith(('.png', '.jpg')): continue
+        # FIX: Explicitly exclude non-ore templates to prevent "player" matching
+        if any(x in f.lower() for x in ["background", "negative", "player", "pickaxe"]): continue
+        
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
         tier = f.split("_")[0]
         if tier not in templates['ore_id']: templates['ore_id'][tier] = []
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
         
-        # Primary template (0 degrees)
         templates['ore_id'][tier].append({
             'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier,
             'comp': get_complexity(apply_gamma_lift(img_scaled, 0.6))
         })
-        # Variants for two-pass check
         for angle in ROTATION_VARIANTS:
             img_rot = rotate_image(img_scaled, angle)
             templates['ore_id'][tier].append({
@@ -138,7 +147,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     
     slot_matches = {}
     for col in range(6):
-        # Always initialize keys to avoid terminal spam
         default_data = {
             'status': 'empty_dna', 'candidates': [], 'z_score': 0,
             'xhair': 'none', 'xhair_sat': 0, 'xhair_px': 0, 'ratio': 0, 'roi_comp': 0
@@ -158,30 +166,23 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         top_e, bot_e = get_complexity(top_half), get_complexity(bot_half)
         ratio = top_e / max(1, bot_e)
         
-        # 1. Health Bar & Damage protection
-        # Force aggressive masks if ROI shows "Hit" signals
+        # Energy Protection (Damage Numbers/XP/Health Bars)
         mask_top = 0.60 if (ratio > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
-        mask_bot = 0.12 if (bot_e > 2000) else 0.0 # Ignore health bars if bottom is noisy
+        mask_bot = 0.12 if (bot_e > 2000) else 0.0 
         active_mask = get_cached_mask(mask_top, mask_bot)
         
         roi_lifted = apply_gamma_lift(roi_gray, 0.5)
         roi_comp = get_complexity(roi_lifted)
         all_candidates = []
-        
-        # Determine if we need the full sweep or just primary
         is_hit_frame = (top_e > 1500 or bot_e > 1500)
         
         for tier, variants in templates['ore_id'].items():
-            # STRUCTURAL GUARD (v9.6 HARD FENCING)
-            is_complex_tier = any(x in tier for x in ['div', 'leg', 'myth', 'epic'])
-            is_simple_tier = any(x in tier for x in ['dirt', 'com', 'rare'])
-            
-            if is_complex_tier and roi_comp < HIGH_TIER_COMPLEXITY_FLOOR: continue
-            if is_simple_tier and roi_comp > DIRT_COMPLEXITY_CEILING: continue
+            # FAMILY-SPECIFIC STRUCTURAL FENCING
+            c_min, c_max = get_structural_bounds(tier)
+            if not (c_min <= roi_comp <= c_max): continue
             
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             for tpl in variants:
-                # Two-pass performance optimization
                 if not is_hit_frame and tpl['angle'] != 0: continue
                 
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
@@ -197,7 +198,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
-        z_score = (scores[0] - np.mean(scores)) / np.std(scores) if len(scores) > 1 else 0
+        z_score = (scores[0] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 0) else 0
         
         slot_matches[col] = {
             'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score,
@@ -223,7 +224,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
                     family_champions[fam] = {'tier': cand['tier'], 'score': cand['score']}
 
-    # Resolution
+    # Final Resolution
     frame_results = []
     has_detections = False
     for col in range(6):
@@ -240,7 +241,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 for ch in valid_opts[1:]:
                     if 'dirt' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER): final = ch
                 
-                gate = 0.48 if 'dirt' in final['tier'] else 0.60
+                gate = 0.45 if 'dirt' in final['tier'] else 0.58
                 is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.22)
                 if is_valid:
                     if data['xhair'] != 'none':
@@ -263,7 +264,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"structural_v96_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"structural_v97_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -275,24 +276,22 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v9.6: THE FORENSIC GUARD ---")
+    print(f"--- ORE ID AUDIT v9.7: THE FORENSIC GUARD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Increased sample to 2000 now that it's optimized
         futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:2000]}
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
             try:
                 res = f.result()
                 if res: all_results.extend(res)
                 if i % 100 == 0: print(f"  Processed {i} frames...")
-            except Exception as e:
-                print(f"  Critical Error in Process: {e}")
+            except Exception as e: pass
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v9.6_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v9.7_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
