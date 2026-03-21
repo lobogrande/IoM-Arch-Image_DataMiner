@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 7.7 (Naked Forensic Baseline: Identifying the "True" Signal Rank)
+# Version: 7.8 (Scale-Sweep Diagnostic: Finding the Optical Fit)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -16,50 +16,32 @@ OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 
 # --- GROUND TRUTH SECTION ---
-# Using your updated array for frames 0, 1, 2, 121, and 264.
 GROUND_TRUTH = {
-    (0, 0): 'empty_dna', 
-    (0, 1): 'empty_dna',
-    (0, 2): 'dirt1',
-    (0, 3): 'com1',
-    (0, 4): 'com1',
-    (0, 5): 'dirt1',
-    (1, 0): 'empty_dna', 
-    (1, 1): 'empty_dna',
-    (1, 2): 'dirt1',
-    (1, 3): 'com1',
-    (1, 4): 'com1',
-    (1, 5): 'dirt1',
-    (2, 0): 'empty_dna', 
-    (2, 1): 'empty_dna',
-    (2, 2): 'dirt1',
-    (2, 3): 'com1',
-    (2, 4): 'com1',
-    (2, 5): 'dirt1',
-    (121, 0): 'dirt1', 
-    (121, 1): 'dirt1',
-    (121, 2): 'empty_dna',
-    (121, 3): 'empty_dna',
-    (121, 4): 'empty_dna',
-    (121, 5): 'dirt1',
-    (264, 0): 'empty_dna', 
-    (264, 1): 'dirt2',
-    (264, 2): 'empty_dna',
-    (264, 3): 'epic1',
-    (264, 4): 'dirt2',
-    (264, 5): 'empty_dna'
+    (0, 0): 'empty_dna', (0, 1): 'empty_dna', (0, 2): 'dirt1', (0, 3): 'com1', (0, 4): 'com1', (0, 5): 'dirt1',
+    (1, 0): 'empty_dna', (1, 1): 'empty_dna', (1, 2): 'dirt1', (1, 3): 'com1', (1, 4): 'com1', (1, 5): 'dirt1',
+    (2, 0): 'empty_dna', (2, 1): 'empty_dna', (2, 2): 'dirt1', (2, 3): 'com1', (2, 4): 'com1', (2, 5): 'dirt1',
+    (121, 0): 'dirt1', (121, 1): 'dirt1', (121, 2): 'empty_dna', (121, 3): 'empty_dna', (121, 4): 'empty_dna', (121, 5): 'dirt1',
+    (264, 0): 'empty_dna', (264, 1): 'dirt2', (264, 2): 'empty_dna', (264, 3): 'epic1', (264, 4): 'dirt2', (264, 5): 'empty_dna'
 }
 
 # ROI CONSTANTS
 DIM_ID  = 48  
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
-JITTER = 2 # Search window ±2 pixels
+JITTER = 2 
 
-def get_family(tier_name):
-    return ''.join([i for i in tier_name if not i.isdigit()])
+# SCALING CONSTANTS
+SCALES = [0.90, 0.95, 1.00, 1.05, 1.10]
+
+def get_spatial_mask(dim):
+    mask = np.zeros((dim, dim), dtype=np.uint8)
+    # Scale the mask radius proportionally to the dimension
+    radius = int(18 * (dim / 48))
+    cv2.circle(mask, (dim//2, dim//2), radius, 255, -1)
+    return mask
 
 def load_all_templates():
+    """Loads templates and pre-computes scaled versions for resolution sweep."""
     templates = {'ore_id': {}}
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
@@ -69,14 +51,21 @@ def load_all_templates():
         if f.startswith(("background", "negative_ui")): continue
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
-        img_id = cv2.resize(img_raw, (DIM_ID, DIM_ID))
         
         parts = f.split("_")
         if len(parts) < 2: continue
         tier = parts[0]
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
-        templates['ore_id'][tier].append({'id': f, 'img': img_id, 'tier': tier})
+            
+        # Generate Scaled Versions
+        for s in SCALES:
+            new_dim = int(DIM_ID * s)
+            img_scaled = cv2.resize(img_raw, (new_dim, new_dim), interpolation=cv2.INTER_AREA)
+            mask_scaled = get_spatial_mask(new_dim)
+            templates['ore_id'][tier].append({
+                'id': f, 'img': img_scaled, 'mask': mask_scaled, 'scale': s, 'tier': tier
+            })
     return templates
 
 def process_single_frame(frame_data, dna_map, templates, buffer_dir):
@@ -97,36 +86,29 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             continue
 
         cx = int(ORE0_X + (col * STEP))
-        # Search ROI includes jitter space
-        x1, y1 = int(cx - (DIM_ID//2) - JITTER), int(row4_y - (DIM_ID//2) - JITTER)
-        search_roi = img_gray[y1 : y1 + DIM_ID + (JITTER*2), x1 : x1 + DIM_ID + (JITTER*2)]
-        
-        if search_roi.shape[0] < DIM_ID or search_roi.shape[1] < DIM_ID: continue
-        
         all_candidates = []
-        for tier, states in templates['ore_id'].items():
-            for tpl in states:
-                # NAKED MATCH: No mask, No CLAHE, No Gradients
-                # Using TM_CCOEFF_NORMED as the standard baseline
-                res = cv2.matchTemplate(search_roi, tpl['img'], cv2.TM_CCOEFF_NORMED)
+        
+        # We sweep the templates across the jittered search window
+        for tier, variants in templates['ore_id'].items():
+            for tpl in variants:
+                # We crop a ROI large enough to accommodate the scale and jitter
+                # Jitter is +/- 2, so we need DIM + 4
+                pad = 4 
+                side = tpl['img'].shape[0]
+                x1, y1 = int(cx - (side//2) - 2), int(row4_y - (side//2) - 2)
+                roi = img_gray[y1 : y1 + side + 4, x1 : x1 + side + 4]
+                
+                if roi.shape[0] < side or roi.shape[1] < side: continue
+                
+                res = cv2.matchTemplate(roi, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=tpl['mask'])
                 _, score, _, _ = cv2.minMaxLoc(res)
-                all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': score})
+                all_candidates.append({
+                    'tier': tier, 'id': tpl['id'], 'score': score, 'scale': tpl['scale']
+                })
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Calculate Z-score for diagnostics
-        scores = [c['score'] for c in all_candidates]
-        mean_s = np.mean(scores)
-        std_s = np.std(scores) if np.std(scores) > 0 else 1.0
-        z_score = (all_candidates[0]['score'] - mean_s) / std_s
-        
-        slot_matches[col] = {
-            'status': 'occupied',
-            'candidates': all_candidates, 
-            'z_score': z_score
-        }
+        slot_matches[col] = {'status': 'occupied', 'candidates': all_candidates}
 
-    # --- RESOLUTION (NO CONSTRAINTS RUN) ---
     frame_results = []
     has_detections = False
     
@@ -137,23 +119,22 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         is_valid = False
         if data['status'] == 'empty_dna':
             detected = 'empty_dna'
-            final = {'tier': 'empty_dna', 'score': 0.0, 'id': 'none'}
+            final = {'tier': 'empty_dna', 'score': 0.0, 'scale': 1.0}
         else:
-            # In the Naked run, the winner is just the top global candidate
             final = data['candidates'][0]
             is_valid = final['score'] > 0.82 
             detected = final['tier'] if is_valid else "low_conf_id"
         
         # --- GROUND TRUTH FORENSICS ---
         truth_tier = GROUND_TRUTH.get((f_idx, col))
-        truth_data = {'rank': -1, 'score': 0.0}
+        truth_data = {'rank': -1, 'score': 0.0, 'scale': 0.0}
         if truth_tier and truth_tier != 'empty_dna':
             for rank, c in enumerate(data.get('candidates', [])):
                 if c['tier'] == truth_tier:
-                    truth_data = {'rank': rank + 1, 'score': round(c['score'], 4)}
+                    truth_data = {'rank': rank + 1, 'score': round(c['score'], 4), 'scale': c['scale']}
+                    # We break at the FIRST occurrence of this tier in the sorted multi-scale list
                     break
         
-        # Visual Annotation
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == 'empty_dna': color = (100, 100, 100)
         
@@ -164,21 +145,21 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         label = f"{detected} ({final['score']:.2f})"
         if truth_tier and detected != truth_tier:
             cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+DIM_ID+2, ry1+DIM_ID+2), (255, 0, 0), 1)
-            label += f" [T:{truth_data['rank']}]"
+            label += f" [T:{truth_data['rank']} @{truth_data['scale']}]"
         
         cv2.putText(img_color, label, (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
         if is_valid: has_detections = True
 
         frame_results.append({
             'frame': f_idx, 'slot': col, 'detected': detected, 
-            'score': round(final['score'], 4), 'z_score': round(data.get('z_score', 0.0), 2),
+            'score': round(final['score'], 4), 'win_scale': final['scale'],
             'truth_tier': truth_tier if truth_tier else 'none',
             'truth_rank': truth_data['rank'], 'truth_score': truth_data['score'],
-            'ore_id': final['id']
+            'truth_scale': truth_data['scale']
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"naked_v77_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"sweep_v78_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_surgical_audit():
@@ -192,11 +173,11 @@ def run_surgical_audit():
     
     truth_frames = list(set([k[0] for k in GROUND_TRUTH.keys()]))
     df_sample = df[df['frame_idx'].isin(truth_frames)]
-    if len(df_sample) < 400:
-        remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
+    if len(df_sample) < 100:
+        remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(100 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v7.7: NAKED SIGNAL BASELINE ---")
+    print(f"--- ORE ID AUDIT v7.8: MULTI-SCALE SWEEP ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -205,21 +186,18 @@ def run_surgical_audit():
         futures = {executor.submit(worker_func, task): task for task in tasks}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             all_results.extend(future.result())
-            if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.7_forensic.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.8_forensic.csv"), index=False)
     
-    print(f"\n--- BASELINE ERROR ANALYSIS ---")
+    print(f"\n--- SWEEP ERROR ANALYSIS ---")
     gt_only = audit_df[audit_df['truth_tier'] != 'none']
     if not gt_only.empty:
         ores_only = gt_only[gt_only['truth_tier'] != 'empty_dna']
         if not ores_only.empty:
-            correct_ores = len(ores_only[ores_only['detected'] == ores_only['truth_tier']])
-            print(f"Ore Identification Accuracy: {correct_ores}/{len(ores_only)} ({correct_ores/len(ores_only)*100:.1f}%)")
-            missed = ores_only[ores_only['detected'] != ores_only['truth_tier']]
-            if not missed.empty:
-                print(f"  Average Rank of True Ore when missed: {missed['truth_rank'].mean():.1f}")
+            print(f"Avg Truth Rank: {ores_only['truth_rank'].mean():.1f}")
+            print("\nWinning Scales for Truth:")
+            print(ores_only['truth_scale'].value_counts())
     print(f"\n--- DETECTION SUMMARY ---")
     print(audit_df['detected'].value_counts())
 
