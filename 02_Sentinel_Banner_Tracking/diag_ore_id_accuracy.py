@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 7.5 (Sobel Gradient Matching & Contrast Normalization)
+# Version: 7.6 (Hybrid Signal Recovery: CLAHE & Multi-Metric Matching)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -17,6 +17,7 @@ DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 
 # --- GROUND TRUTH SECTION ---
 # Add (frame_idx, slot_id): 'correct_tier' pairs here to analyze failures.
+# Using your updated array for frames 0, 1, 2, 121, and 264.
 GROUND_TRUTH = {
     (0, 0): 'empty_dna', 
     (0, 1): 'empty_dna',
@@ -57,14 +58,14 @@ STEP = 59.0
 JITTER = 2 
 
 # THRESHOLDS
-ORE_STRICT_GATE = 0.65  # Lowered for Gradient matching (Coefficient is stricter)
+ORE_STRICT_GATE = 0.70  
 Z_SCORE_THRESHOLD = 1.8  
-STRUCTURAL_WEIGHT_COEFF = 0.0001 
+STRUCTURAL_WEIGHT_COEFF = 0.0002 
 
-# BULLY PENALTY MAP (Adjusted for Gradient logic)
+# BULLY PENALTY MAP
 BULLY_PENALTIES = {
-    'div3_sha_plain_0.png': 0.10,
-    'com3_act_pmod_hbar_xhair_0.png': 0.05,
+    'div3_sha_plain_0.png': 0.12,
+    'com3_act_pmod_hbar_xhair_0.png': 0.08,
     'leg1_act_pmod_6.png': 0.05
 }
 
@@ -75,14 +76,10 @@ ORE_RESTRICTIONS = {
     'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
 }
 
-def get_gradient_map(img):
-    """Generates a Sobel gradient magnitude map to emphasize structural lines."""
-    sobelx = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=3)
-    sobely = cv2.Sobel(img, cv2.CV_64F, 0, 1, ksize=3)
-    mag = np.sqrt(sobelx**2 + sobely**2)
-    mag = np.uint8(np.clip(mag, 0, 255))
-    # Apply contrast stretching
-    return cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+def apply_clahe(img):
+    """Applies Contrast Limited Adaptive Histogram Equalization to pop local features."""
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    return clahe.apply(img)
 
 def get_complexity(img):
     return cv2.Laplacian(img, cv2.CV_64F).var()
@@ -107,8 +104,8 @@ def load_all_templates():
         if img_raw is None: continue
         img_id = cv2.resize(img_raw, (DIM_ID, DIM_ID))
         
-        # Pre-compute Gradient Map for templates
-        grad_map = get_gradient_map(img_id)
+        # Pre-process templates with CLAHE to match incoming ROIs
+        proc_img = apply_clahe(img_id)
         complexity = get_complexity(img_id)
         
         parts = f.split("_")
@@ -117,7 +114,7 @@ def load_all_templates():
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
         templates['ore_id'][tier].append({
-            'id': f, 'img': grad_map, 'orig': img_id, 'comp': complexity, 'tier': tier
+            'id': f, 'img': proc_img, 'comp': complexity, 'tier': tier
         })
     return templates
 
@@ -143,17 +140,18 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
         if search_id.shape[0] < DIM_ID or search_id.shape[1] < DIM_ID: continue
         
-        # Transform ROI to Gradient Space
-        grad_roi = get_gradient_map(search_id)
+        # Apply CLAHE to the ROI
+        proc_roi = apply_clahe(search_id)
         roi_comp = get_complexity(search_id)
         
         all_candidates = []
         for tier, states in templates['ore_id'].items():
             for tpl in states:
-                # Use CCOEFF_NORMED on Gradient maps
-                res = cv2.matchTemplate(grad_roi, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=mask)
+                # Use CCOEFF_NORMED on CLAHE-enhanced Grayscale
+                res = cv2.matchTemplate(proc_roi, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=mask)
                 score = cv2.minMaxLoc(res)[1]
                 
+                # Structural Penalty (Complexity Parity)
                 penalty = BULLY_PENALTIES.get(tpl['id'], 0.0)
                 comp_diff = abs(roi_comp - tpl['comp'])
                 structural_penalty = comp_diff * STRUCTURAL_WEIGHT_COEFF
@@ -223,7 +221,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
                 final = {'tier': 'none', 'score': 0.0, 'id': 'none'}
             else:
                 final = valid_options[0]
-                is_valid = final['score'] > 0.45 # Gradient matching scores are generally lower
+                is_valid = final['score'] > 0.65 
                 detected = final['tier'] if is_valid else "low_conf_id"
         
         # --- GROUND TRUTH FORENSICS ---
@@ -262,7 +260,7 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"gradient_v75_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"hybrid_v76_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_surgical_audit():
@@ -281,7 +279,7 @@ def run_surgical_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v7.5: GRADIENT STRUCTURAL MATCHING ---")
+    print(f"--- ORE ID AUDIT v7.6: HYBRID SIGNAL RECOVERY ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
     
@@ -293,7 +291,7 @@ def run_surgical_audit():
             if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.5_forensic.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.6_forensic.csv"), index=False)
     
     print(f"\n--- GROUND TRUTH ERROR ANALYSIS ---")
     gt_only = audit_df[audit_df['truth_tier'] != 'none']
