@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 8.8 (Precision Visuals & Z-Trust Final Fix)
+# Version: 8.9 (Adaptive Context Gating & Forensic Restoration)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -35,9 +35,10 @@ Y_JITTER = 1
 TARGET_SCALE = 1.20
 ROW4_Y_PERSPECTIVE_SHIFT = 2 
 
-# LOGIC THRESHOLDS
-ORE_STRICT_GATE = 0.65  
-Z_TRUST_THRESHOLD = 2.2 # Statistical dominance override
+# ADAPTIVE GATING
+ACTIVE_GATE = 0.65
+SHADOW_GATE = 0.42  # Lower floor for dark slots
+Z_TRUST_THRESHOLD = 2.2 
 TIER_CONF_BUFFER = 0.08 
 COMPLEXITY_PENALTY_COEFF = 0.00025 
 
@@ -116,7 +117,6 @@ def load_all_templates():
     return templates
 
 def draw_shadow_text(img, text, pos, font, scale, color, thick):
-    # Draw black outline/shadow first
     cv2.putText(img, text, (pos[0]+1, pos[1]+1), font, scale, (0,0,0), thick+1)
     cv2.putText(img, text, pos, font, scale, color, thick)
 
@@ -134,7 +134,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     slot_matches = {}
     for col in range(6):
         if r4_dna[col] == '0':
-            slot_matches[col] = {'status': 'empty_dna', 'candidates': [], 'xhair': 'none'}
+            slot_matches[col] = {'status': 'empty_dna', 'candidates': [], 'xhair': 'none', 'is_sha': False}
             continue
         cx = int(ORE0_X + (col * STEP))
         side_px = int(DIM_ID * TARGET_SCALE)
@@ -142,11 +142,15 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_bgr = img_color[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         roi_gray = img_gray[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         
+        is_sha = False
         if roi_gray.size > 0:
+            mean_lum = np.mean(roi_gray)
+            is_sha = mean_lum < 85
             roi_lifted = apply_gamma_lift(roi_gray, 0.5)
             roi_complexity = get_complexity(roi_lifted)
         else:
             roi_complexity = 0
+
         xhair = detect_crosshair(roi_bgr)
         use_core_mask = (xhair != "none")
         all_candidates = []
@@ -164,17 +168,17 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 comp_diff = max(0, tpl['comp'] - roi_complexity)
                 weighted_score = score - bully_penalty - (comp_diff * COMPLEXITY_PENALTY_COEFF)
                 all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': weighted_score})
+        
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
         z_score = (all_candidates[0]['score'] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 0) else 0
-        slot_matches[col] = {'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'xhair': xhair}
+        slot_matches[col] = {'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'xhair': xhair, 'is_sha': is_sha}
 
     # Resolution
     anchor = {'tier': 'none', 'score': -1.0, 'z': 0.0, 'range': (1, 999), 'col': -1}
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
         top = data['candidates'][0]
-        # FIXED: Corrected reference to Z_TRUST_THRESHOLD
         if data['z_score'] > anchor['z'] and data['z_score'] > Z_TRUST_THRESHOLD:
             anchor = {'tier': top['tier'], 'score': top['score'], 'z': data['z_score'],
                       'range': ORE_RESTRICTIONS.get(top['tier'], (1, 999)), 'col': col}
@@ -208,10 +212,12 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 for challenger in valid_options[1:]:
                     if 'dirt' in challenger['tier'] and challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
                         final = challenger
-                is_valid = (final['score'] > ORE_STRICT_GATE) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.30)
+                
+                # ADAPTIVE GATE: Higher for Active, lower for Shadow
+                gate = SHADOW_GATE if data['is_sha'] else ACTIVE_GATE
+                is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.35)
                 detected = final['tier'] if is_valid else "low_conf_id"
         
-        # Overlay Logic
         truth_tier = GROUND_TRUTH.get((f_idx, col))
         truth_rank = -1
         if truth_tier and truth_tier != 'empty_dna':
@@ -228,15 +234,11 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         rx1, ry1 = int(cx - side_px//2), int(row4_y_base - side_px//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+side_px, ry1+side_px), color, 1)
         
-        # 1. Tier Name (Bottom-Left)
+        # Overlays
         draw_shadow_text(img_color, detected, (rx1 + 3, ry1 + side_px - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        
-        # 2. Stats (Top-Left - Staggered Vertically to prevent overlap)
         y_stagger = 10 if col % 2 == 0 else 20
         stats_label = f"{final['score']:.2f} Z:{data.get('z_score', 0):.1f}"
         draw_shadow_text(img_color, stats_label, (rx1 + 3, ry1 + y_stagger), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-
-        # 3. Truth Rank (Top-Right on Error)
         if truth_tier and detected != truth_tier:
             cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+side_px+2, ry1+side_px+2), (255, 0, 0), 1)
             draw_shadow_text(img_color, f"T:{truth_rank}", (rx1 + side_px - 25, ry1 + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
@@ -245,7 +247,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data['xhair'], 'truth_rank': truth_rank})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"resolver_v88_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"resolver_v89_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -256,13 +258,14 @@ def run_precision_audit():
     df = pd.read_csv(STEP1_CSV)
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
+    
     truth_frames = list(set([k[0] for k in GROUND_TRUTH.keys()]))
     df_sample = df[df['frame_idx'].isin(truth_frames)]
     if len(df_sample) < 400:
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v8.8: THE PROBABILISTIC RESOLVER ---")
+    print(f"--- ORE ID AUDIT v8.9: THE ADAPTIVE CONTEXT RESOLVER ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -270,7 +273,19 @@ def run_precision_audit():
         futures = {executor.submit(worker_func, task): task for task in tasks}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             all_results.extend(future.result())
-    pd.DataFrame(all_results).to_csv(os.path.join(OUT_DIR, "ore_id_v8.8_precision.csv"), index=False)
+
+    audit_df = pd.DataFrame(all_results)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.9_precision.csv"), index=False)
+    
+    print(f"\n--- PRECISION ERROR ANALYSIS ---")
+    ores_only = audit_df[audit_df['truth_rank'] != -1]
+    if not ores_only.empty:
+        correct = len(ores_only[ores_only['detected'] == ores_only['truth_rank'].apply(lambda x: GROUND_TRUTH.get((ores_only.loc[ores_only.index[0], 'frame'], ores_only.loc[ores_only.index[0], 'slot'])))]) # Simplified check
+        # More robust accuracy print
+        print(f"Average Rank of True Ore: {ores_only['truth_rank'].mean():.1f}")
+    
+    print(f"\n--- DETECTION SUMMARY ---")
+    print(audit_df['detected'].value_counts())
     print(f"\n--- DONE ---")
 
 if __name__ == "__main__":
