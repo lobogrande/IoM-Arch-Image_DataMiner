@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 8.1 (The Precision Resolver: Mod-Exclusion Masking)
+# Version: 8.2 (The Precision Resolver: Shadow-State Filtering)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -39,6 +39,7 @@ ROW4_Y_PERSPECTIVE_SHIFT = 2
 ORE_STRICT_GATE = 0.72  
 Z_SCORE_THRESHOLD = 1.8 
 TIER_CONF_BUFFER = 0.03
+SHADOW_LUMINANCE_THRESHOLD = 85 # Intensity below which we assume it's a shadow ore
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
 ORE_RESTRICTIONS = {
@@ -54,10 +55,9 @@ def get_spatial_mask(dim):
     """
     mask = np.zeros((dim, dim), dtype=np.uint8)
     radius = int(18 * (dim / 48))
-    # Draw the base circular focus
     cv2.circle(mask, (dim//2, dim//2), radius, 255, -1)
     
-    # NEW: Exclude the top 1/3 (The Mod Zone)
+    # Exclude the top 1/3 (The Mod Zone)
     top_exclude_limit = int(dim * (1/3))
     mask[0:top_exclude_limit, :] = 0
     
@@ -79,16 +79,21 @@ def load_all_templates():
         
         parts = f.split("_")
         if len(parts) < 2: continue
-        tier = parts[0]
+        tier, state = parts[0], parts[1]
+        
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
             
-        # Standardize at the target Row 4 scale
         new_dim = int(DIM_ID * TARGET_SCALE)
         img_scaled = cv2.resize(img_raw, (new_dim, new_dim), interpolation=cv2.INTER_AREA)
         mask_scaled = get_spatial_mask(new_dim)
+        
         templates['ore_id'][tier].append({
-            'id': f, 'img': img_scaled, 'mask': mask_scaled, 'tier': tier
+            'id': f, 
+            'img': img_scaled, 
+            'mask': mask_scaled, 
+            'tier': tier,
+            'is_shadow': True if '_sha_' in f else False
         })
     return templates
 
@@ -101,20 +106,36 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     if img_gray is None: return []
     
     r4_dna = dna_map.get(f_idx, "000000")
-    # Bake in the +2 perspective shift for Row 4
     row4_y_base = int(ORE0_Y + (3 * STEP)) + ROW4_Y_PERSPECTIVE_SHIFT
     
     slot_matches = {}
     for col in range(6):
         if r4_dna[col] == '0':
-            slot_matches[col] = {'status': 'empty_dna', 'candidates': [], 'z_score': 0.0}
+            slot_matches[col] = {'status': 'empty_dna', 'candidates': [], 'z_score': 0.0, 'is_sha': False}
             continue
 
         cx = int(ORE0_X + (col * STEP))
-        all_candidates = []
         
+        # PRE-SCAN: Detect Shadow State
+        # We look at the actual center region of the slot to determine if it's dark
+        side_px = int(DIM_ID * TARGET_SCALE)
+        tx1, ty1 = int(cx - side_px//2), int(row4_y_base - side_px//2)
+        base_roi = img_gray[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
+        
+        # Calculate mean of the non-masked region (or just the whole ROI for simple state check)
+        if base_roi.size > 0:
+            mean_lum = np.mean(base_roi)
+            is_shadow_state = mean_lum < SHADOW_LUMINANCE_THRESHOLD
+        else:
+            is_shadow_state = False
+
+        all_candidates = []
         for tier, variants in templates['ore_id'].items():
             for tpl in variants:
+                # RULE: Only match templates that correspond to the detected lighting state
+                if is_shadow_state != tpl['is_shadow']:
+                    continue
+
                 side = tpl['img'].shape[0]
                 x1, y1 = int(cx - (side//2) - X_JITTER), int(row4_y_base - (side//2) - Y_JITTER)
                 roi = img_gray[y1 : y1 + side + (Y_JITTER*2), x1 : x1 + side + (X_JITTER*2)]
@@ -125,14 +146,31 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 _, score, _, _ = cv2.minMaxLoc(res)
                 all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': score})
         
+        if not all_candidates:
+            # Fallback: if no candidates in state, allow all (safety valve)
+            for tier, variants in templates['ore_id'].items():
+                for tpl in variants:
+                    side = tpl['img'].shape[0]
+                    x1, y1 = int(cx - (side//2) - X_JITTER), int(row4_y_base - (side//2) - Y_JITTER)
+                    roi = img_gray[y1 : y1 + side + (Y_JITTER*2), x1 : x1 + side + (X_JITTER*2)]
+                    if roi.shape[0] < side or roi.shape[1] < side: continue
+                    res = cv2.matchTemplate(roi, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=tpl['mask'])
+                    _, score, _, _ = cv2.minMaxLoc(res)
+                    all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': score})
+
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         
         scores = [c['score'] for c in all_candidates]
-        mean_s = np.mean(scores)
-        std_s = np.std(scores) if np.std(scores) > 0 else 1.0
-        z_score = (all_candidates[0]['score'] - mean_s) / std_s
+        mean_s = np.mean(scores) if scores else 0
+        std_s = np.std(scores) if (scores and np.std(scores) > 0) else 1.0
+        z_score = (all_candidates[0]['score'] - mean_s) / std_s if all_candidates else 0
         
-        slot_matches[col] = {'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score}
+        slot_matches[col] = {
+            'status': 'occupied', 
+            'candidates': all_candidates, 
+            'z_score': z_score,
+            'is_sha': is_shadow_state
+        }
 
     if not slot_matches: return []
 
@@ -140,6 +178,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     anchor = {'tier': 'none', 'score': -1.0, 'z': 0.0, 'range': (1, 999), 'col': -1}
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna': continue
+        if not data['candidates']: continue
         top = data['candidates'][0]
         if data['z_score'] > anchor['z'] and data['z_score'] > Z_SCORE_THRESHOLD:
             anchor = {
@@ -152,7 +191,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     has_detections = False
     family_champions = {}
     
-    # Restrict to Anchor's Floor Range
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna': continue
         for cand in data['candidates']:
@@ -184,7 +222,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 final = {'tier': 'none', 'score': 0.0}
             else:
                 final = valid_options[0]
-                # Keep conservative gate to ensure high-confidence anchors
                 is_valid = final['score'] > 0.45 
                 detected = final['tier'] if is_valid else "low_conf_id"
         
@@ -206,7 +243,8 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         rx1, ry1 = int(cx - (side_px)//2), int(row4_y_base - (side_px)//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1 + side_px, ry1 + side_px), color, 1)
         
-        label = f"{detected} ({final['score']:.2f})"
+        state_str = "SHA" if data['is_sha'] else "ACT"
+        label = f"{detected} [{state_str}] ({final['score']:.2f})"
         if truth_tier and detected != truth_tier:
             cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1 + side_px + 2, ry1 + side_px + 2), (255, 0, 0), 1)
             label += f" [T:{truth_data['rank']}]"
@@ -217,13 +255,14 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({
             'frame': f_idx, 'slot': col, 'detected': detected, 
             'score': round(final['score'], 4), 'z_score': round(data.get('z_score', 0.0), 2),
+            'is_sha': data['is_sha'],
             'truth_tier': truth_tier if truth_tier else 'none',
             'truth_rank': truth_data['rank'], 'truth_score': truth_data['score'],
             'is_anchor': (col == anchor['col'])
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"precision_v81_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"precision_v82_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -241,7 +280,7 @@ def run_precision_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v8.1: PRECISION RESOLVER (MOD-EXCLUSION) ---")
+    print(f"--- ORE ID AUDIT v8.2: PRECISION RESOLVER (SHADOW FILTERING) ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -252,7 +291,7 @@ def run_precision_audit():
             all_results.extend(future.result())
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.1_precision.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.2_precision.csv"), index=False)
     
     print(f"\n--- PRECISION ERROR ANALYSIS ---")
     gt_only = audit_df[audit_df['truth_tier'] != 'none']
