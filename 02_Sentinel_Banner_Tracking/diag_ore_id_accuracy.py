@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 9.0 (The Kinetic Resolver: Rotational Sweep & Neighborhood Voting)
+# Version: 9.1 (The Affinity Resolver: Dynamic Gating & UI Polish)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -34,14 +34,12 @@ Y_JITTER = 1
 # OPTICAL CONSTANTS
 TARGET_SCALE = 1.20
 ROW4_Y_PERSPECTIVE_SHIFT = 2 
-ROTATION_VARIANTS = [-5, -2, 0, 2, 5] # Sweep angles to handle damage animation rotation
+ROTATION_VARIANTS = [-3, 0, 3] # Optimized 3-point sweep for speed and hit-detection
 
-# ADAPTIVE GATING
-ACTIVE_GATE = 0.64
-SHADOW_GATE = 0.40
+# LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
 TIER_CONF_BUFFER = 0.09 
-COMPLEXITY_PENALTY_COEFF = 0.00022 
+AFFINITY_BONUS_COEFF = 0.05 # Bonus for matching complexity profile
 
 # BULLY PENALTY MAP
 BULLY_PENALTIES = {
@@ -59,7 +57,6 @@ ORE_RESTRICTIONS = {
 }
 
 def rotate_image(image, angle):
-    """Rotates an image about its center."""
     center = (image.shape[1] // 2, image.shape[0] // 2)
     rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
     return cv2.warpAffine(image, rot_mat, (image.shape[1], image.shape[0]), flags=cv2.INTER_LINEAR)
@@ -71,6 +68,15 @@ def apply_gamma_lift(img, gamma=0.5):
 
 def get_complexity(img):
     return cv2.Laplacian(img, cv2.CV_64F).var()
+
+def get_tier_gate(tier_name, is_sha):
+    """Returns a family-specific threshold. Low-contrast tiers need lower gates."""
+    base = 0.40 if is_sha else 0.65
+    if 'dirt' in tier_name or 'com1' in tier_name:
+        return base - 0.10 # Allow smoother ores a lower floor
+    if 'leg' in tier_name or 'myth' in tier_name:
+        return base + 0.05 # Require complex ores to prove high match
+    return base
 
 def get_spatial_mask(dim, is_core_only=False):
     mask = np.zeros((dim, dim), dtype=np.uint8)
@@ -114,7 +120,6 @@ def load_all_templates():
         new_dim = int(DIM_ID * TARGET_SCALE)
         img_scaled = cv2.resize(img_raw, (new_dim, new_dim), interpolation=cv2.INTER_AREA)
         
-        # Generate Rotational Variants to handle damage animations
         for angle in ROTATION_VARIANTS:
             img_rot = rotate_image(img_scaled, angle) if angle != 0 else img_scaled
             lifted_tpl = apply_gamma_lift(img_rot, 0.6)
@@ -176,8 +181,13 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 search_lifted = apply_gamma_lift(search_area, 0.5)
                 res = cv2.matchTemplate(search_lifted, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
-                comp_diff = max(0, tpl['comp'] - roi_complexity)
-                weighted_score = score - bully_penalty - (comp_diff * COMPLEXITY_PENALTY_COEFF)
+                
+                # --- AFFINITY LOGIC ---
+                # Reward templates that share the same structural density as the ROI
+                comp_diff = abs(tpl['comp'] - roi_complexity)
+                affinity_bonus = AFFINITY_BONUS_COEFF if comp_diff < 15.0 else 0
+                
+                weighted_score = score - bully_penalty + affinity_bonus
                 all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': weighted_score, 'angle': tpl['angle']})
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
@@ -185,7 +195,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         z_score = (all_candidates[0]['score'] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 0) else 0
         slot_matches[col] = {'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'xhair': xhair, 'is_sha': is_sha}
 
-    # Resolution
     anchor = {'tier': 'none', 'score': -1.0, 'z': 0.0, 'range': (1, 999), 'col': -1}
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
@@ -206,7 +215,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
                     family_champions[fam] = {'tier': cand['tier'], 'score': cand['score'], 'id': cand['id']}
 
-    # Final Resolution Loop with Neighborhood Smoothing
     for col in range(6):
         data = slot_matches.get(col)
         if not data: continue
@@ -225,12 +233,10 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                     if 'dirt' in challenger['tier'] and challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
                         final = challenger
                 
-                # ADAPTIVE GATE + KINETIC ROTATION TRUST
-                gate = SHADOW_GATE if data['is_sha'] else ACTIVE_GATE
-                is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.35)
-                
-                # Neighborhood Continuity Check: If neighbors match anchor but this is borderline, trust the rank 1
-                if not is_valid and final['tier'] == anchor['tier']: is_valid = (final['score'] > 0.32)
+                # ADAPTIVE FAMILY GATING
+                gate = get_tier_gate(final['tier'], data['is_sha'])
+                is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.30)
+                if not is_valid and final['tier'] == anchor['tier']: is_valid = (final['score'] > (gate - 0.05))
 
                 detected = final['tier'] if is_valid else "low_conf_id"
         
@@ -250,10 +256,14 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         rx1, ry1 = int(cx - side_px//2), int(row4_y_base - side_px//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+side_px, ry1+side_px), color, 1)
         
-        draw_shadow_text(img_color, detected, (rx1 + 3, ry1 + side_px - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        y_stagger = 10 if col % 2 == 0 else 20
+        # UI POLISH: Prefix only, inside corners, staggering
+        y_label = ry1 + side_px - 5 if col % 2 == 0 else ry1 + side_px - 15
+        draw_shadow_text(img_color, detected, (rx1 + 3, y_label), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        
+        y_stats = ry1 + 10 if col % 2 == 0 else ry1 + 22
         stats_label = f"{final['score']:.2f} Z:{data.get('z_score', 0):.1f} R:{final.get('angle',0)}"
-        draw_shadow_text(img_color, stats_label, (rx1 + 3, ry1 + y_stagger), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
+        draw_shadow_text(img_color, stats_label, (rx1 + 3, y_stats), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
+        
         if truth_tier and detected != truth_tier:
             cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+side_px+2, ry1+side_px+2), (255, 0, 0), 1)
             draw_shadow_text(img_color, f"T:{truth_rank}", (rx1 + side_px - 20, ry1 + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
@@ -262,7 +272,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data['xhair'], 'truth_rank': truth_rank})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"kinetic_v90_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"affinity_v91_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -273,14 +283,13 @@ def run_precision_audit():
     df = pd.read_csv(STEP1_CSV)
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
-    
     truth_frames = list(set([k[0] for k in GROUND_TRUTH.keys()]))
     df_sample = df[df['frame_idx'].isin(truth_frames)]
     if len(df_sample) < 400:
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v9.0: THE KINETIC RESOLVER ---")
+    print(f"--- ORE ID AUDIT v9.1: THE AFFINITY RESOLVER ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -290,7 +299,7 @@ def run_precision_audit():
             all_results.extend(future.result())
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v9.0_precision.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v9.1_precision.csv"), index=False)
     
     print(f"\n--- PRECISION ERROR ANALYSIS ---")
     ores_only = audit_df[audit_df['truth_rank'] != -1]
