@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 9.5 (The Structural Guard: Optimization & Identity Fencing)
+# Version: 9.6 (The Forensic Guard: Two-Pass Optimization & Tier Isolation)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -21,35 +21,40 @@ STEP = 59.0
 DIM_ID = 48
 TARGET_SCALE = 1.20
 SIDE_PX = int(DIM_ID * TARGET_SCALE)
-ROTATION_VARIANTS = [-3, 0, 3] 
+ROTATION_VARIANTS = [-3, 3] # Secondary variants for damage animations
 
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
-DIRT_COMPLEXITY_CEILING = 600   # Dirt cannot be this "busy"
-HIGH_TIER_STRUCTURAL_FLOOR = 450 # Div/Leg/Myth cannot be in "smooth" slots
+DIRT_COMPLEXITY_CEILING = 600    # No Dirt/Common allowed above this
+HIGH_TIER_COMPLEXITY_FLOOR = 400 # No Div/Leg/Myth/Epic allowed below this
 MOD_ENERGY_RATIO_TRIGGER = 1.4 
-XHAIR_PX_FLOOR = 200            # Raised to eliminate f3671 ghosting
-XHAIR_SAT_FLOOR = 140           # Tighter vibrancy floor
+XHAIR_PX_FLOOR = 200            
+XHAIR_SAT_FLOOR = 140           
 TIER_CONF_BUFFER = 0.08 
 
-# Pre-cached masks for performance
+# Pre-cached masks
 CACHED_MASKS = {}
 
-def get_cached_mask(exclusion_percent):
-    key = int(exclusion_percent * 100)
+def get_cached_mask(exclusion_top, exclusion_bot=0.0):
+    key = (int(exclusion_top * 100), int(exclusion_bot * 100))
     if key not in CACHED_MASKS:
         mask = np.zeros((SIDE_PX, SIDE_PX), dtype=np.uint8)
         radius = int(18 * (SIDE_PX / 48))
         cv2.circle(mask, (SIDE_PX//2, SIDE_PX//2), radius, 255, -1)
-        top_limit = int(SIDE_PX * exclusion_percent)
-        mask[0:top_limit, :] = 0
+        # Top mask (mods)
+        t_lim = int(SIDE_PX * exclusion_top)
+        mask[0:t_lim, :] = 0
+        # Bottom mask (health bars)
+        if exclusion_bot > 0:
+            b_lim = int(SIDE_PX * (1.0 - exclusion_bot))
+            mask[b_lim:SIDE_PX, :] = 0
         CACHED_MASKS[key] = mask
     return CACHED_MASKS[key]
 
 BULLY_PENALTIES = {
     'leg1': 0.10, 'leg2': 0.08, 'leg3': 0.12,
     'myth1': 0.05, 'myth2': 0.08, 'myth3': 0.10,
-    'div1': 0.12, 'div2': 0.12, 'div3': 0.18, 
+    'div1': 0.15, 'div2': 0.15, 'div3': 0.20, 
     'com3': 0.05
 }
 
@@ -103,8 +108,15 @@ def load_all_templates():
         tier = f.split("_")[0]
         if tier not in templates['ore_id']: templates['ore_id'][tier] = []
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
+        
+        # Primary template (0 degrees)
+        templates['ore_id'][tier].append({
+            'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier,
+            'comp': get_complexity(apply_gamma_lift(img_scaled, 0.6))
+        })
+        # Variants for two-pass check
         for angle in ROTATION_VARIANTS:
-            img_rot = rotate_image(img_scaled, angle) if angle != 0 else img_scaled
+            img_rot = rotate_image(img_scaled, angle)
             templates['ore_id'][tier].append({
                 'id': f, 'img': img_rot, 'angle': angle, 'tier': tier,
                 'comp': get_complexity(apply_gamma_lift(img_rot, 0.6))
@@ -126,8 +138,14 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     
     slot_matches = {}
     for col in range(6):
+        # Always initialize keys to avoid terminal spam
+        default_data = {
+            'status': 'empty_dna', 'candidates': [], 'z_score': 0,
+            'xhair': 'none', 'xhair_sat': 0, 'xhair_px': 0, 'ratio': 0, 'roi_comp': 0
+        }
+        
         if r4_dna[col] == '0':
-            slot_matches[col] = {'status': 'empty_dna', 'candidates': []}
+            slot_matches[col] = default_data
             continue
             
         cx = int(ORE0_X + (col * STEP))
@@ -135,30 +153,37 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_bgr = img_color[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         roi_gray = img_gray[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         
-        # 1. Forensic Pass
         xhair, xh_px, xh_sat = detect_vibrant_crosshair(roi_bgr)
         top_half, bot_half = roi_gray[0:SIDE_PX//2, :], roi_gray[SIDE_PX//2:SIDE_PX, :]
         top_e, bot_e = get_complexity(top_half), get_complexity(bot_half)
         ratio = top_e / max(1, bot_e)
         
-        # 2. Peak Energy Detection (Damage Numbers/XP)
-        # If top half is exceptionally noisy (>2500), force aggressive mask
-        mask_lvl = 0.60 if (ratio > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
-        active_mask = get_cached_mask(mask_lvl)
+        # 1. Health Bar & Damage protection
+        # Force aggressive masks if ROI shows "Hit" signals
+        mask_top = 0.60 if (ratio > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
+        mask_bot = 0.12 if (bot_e > 2000) else 0.0 # Ignore health bars if bottom is noisy
+        active_mask = get_cached_mask(mask_top, mask_bot)
         
-        # 3. Match
         roi_lifted = apply_gamma_lift(roi_gray, 0.5)
         roi_comp = get_complexity(roi_lifted)
         all_candidates = []
         
+        # Determine if we need the full sweep or just primary
+        is_hit_frame = (top_e > 1500 or bot_e > 1500)
+        
         for tier, variants in templates['ore_id'].items():
-            # STRUCTURAL GUARD: Prevent High-Tier Hallucinations on smooth Dirt slots
-            is_high_tier = any(x in tier for x in ['div', 'leg', 'myth'])
-            if is_high_tier and roi_comp < HIGH_TIER_STRUCTURAL_FLOOR: continue
-            if 'dirt' in tier and roi_comp > DIRT_COMPLEXITY_CEILING: continue
+            # STRUCTURAL GUARD (v9.6 HARD FENCING)
+            is_complex_tier = any(x in tier for x in ['div', 'leg', 'myth', 'epic'])
+            is_simple_tier = any(x in tier for x in ['dirt', 'com', 'rare'])
+            
+            if is_complex_tier and roi_comp < HIGH_TIER_COMPLEXITY_FLOOR: continue
+            if is_simple_tier and roi_comp > DIRT_COMPLEXITY_CEILING: continue
             
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             for tpl in variants:
+                # Two-pass performance optimization
+                if not is_hit_frame and tpl['angle'] != 0: continue
+                
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
                 search_area = img_gray[y1:y1+SIDE_PX+2, x1:x1+SIDE_PX+4]
                 if search_area.shape[0] < SIDE_PX or search_area.shape[1] < SIDE_PX: continue
@@ -176,7 +201,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         slot_matches[col] = {
             'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score,
-            'xhair': xhair, 'xhair_sat': xh_sat, 'ratio': ratio, 'roi_comp': roi_comp
+            'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp
         }
 
     # Consensus Voting
@@ -215,8 +240,8 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 for ch in valid_opts[1:]:
                     if 'dirt' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER): final = ch
                 
-                gate = 0.50 if 'dirt' in final['tier'] else 0.62
-                is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.25)
+                gate = 0.48 if 'dirt' in final['tier'] else 0.60
+                is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.22)
                 if is_valid:
                     if data['xhair'] != 'none':
                         detected, is_valid = "xhair_obscured", False
@@ -238,7 +263,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"structural_v95_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"structural_v96_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -250,22 +275,24 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v9.5: THE STRUCTURAL GUARD ---")
+    print(f"--- ORE ID AUDIT v9.6: THE FORENSIC GUARD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:1500]}
+        # Increased sample to 2000 now that it's optimized
+        futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:2000]}
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
             try:
-                all_results.extend(f.result())
+                res = f.result()
+                if res: all_results.extend(res)
                 if i % 100 == 0: print(f"  Processed {i} frames...")
             except Exception as e:
-                print(f"  Worker Error: {e}")
+                print(f"  Critical Error in Process: {e}")
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v9.5_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v9.6_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
