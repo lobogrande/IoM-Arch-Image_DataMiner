@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 8.4 (The Anti-Bully Resolver: Complexity Parity & Bully Suppression)
+# Version: 8.5 (The Shadow-Core Resolver: 50% Masking & Gamma Lifting)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -19,10 +19,12 @@ DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 GROUND_TRUTH = {
     (0, 0): 'empty_dna', (0, 1): 'empty_dna', (0, 2): 'dirt1', (0, 3): 'com1', (0, 4): 'com1', (0, 5): 'dirt1',
     (1, 0): 'empty_dna', (1, 1): 'empty_dna', (1, 2): 'dirt1', (1, 3): 'com1', (1, 4): 'com1', (1, 5): 'dirt1',
-    (2, 0): 'empty_dna', (2, 1): 'empty_dna', (2, 2): 'dirt1', (2, 3): 'com1', (2, 4): 'com1', (2, 5): 'dirt1',
+    (2, 0): 'empty_dna', (2, 1): 'empty_dna', (2, 2): 'dirt1', (2, 3): 'com1', (2, 4): (0, 5), # Note: 0,4 was com1
     (121, 0): 'dirt1', (121, 1): 'dirt1', (121, 2): 'empty_dna', (121, 3): 'empty_dna', (121, 4): 'empty_dna', (121, 5): 'dirt1',
     (264, 0): 'empty_dna', (264, 1): 'dirt2', (264, 2): 'empty_dna', (264, 3): 'epic1', (264, 4): 'dirt2', (264, 5): 'empty_dna'
 }
+# Correction for manual logic in dictionary (fixing overlaps)
+GROUND_TRUTH.update({(2, 4): 'com1', (2, 5): 'dirt1'})
 
 # ROI CONSTANTS
 DIM_ID  = 48  
@@ -36,18 +38,22 @@ TARGET_SCALE = 1.20
 ROW4_Y_PERSPECTIVE_SHIFT = 2 
 
 # LOGIC THRESHOLDS
-ORE_STRICT_GATE = 0.72  
+ORE_STRICT_GATE = 0.68  # Lowered slightly to account for the more restrictive 50% mask
 Z_SCORE_THRESHOLD = 1.8 
-TIER_CONF_BUFFER = 0.07 # Boosted margin for Dirt3 recovery
-COMPLEXITY_PENALTY_COEFF = 0.0003 # Penalty per unit of complexity mismatch
+TIER_CONF_BUFFER = 0.08 # Margin for Dirt recovery
+COMPLEXITY_PENALTY_COEFF = 0.00025 
 
 # BULLY PENALTY MAP
-# These templates are naturally "louder" and need an anchor penalty
+# Expanded to include leg3, myth2, and epic3 based on hallucination data
 BULLY_PENALTIES = {
     'leg1': 0.08,
+    'leg2': 0.05,
+    'leg3': 0.06,
+    'myth1': 0.04,
+    'myth2': 0.07,
+    'myth3': 0.08,
     'div3': 0.12,
-    'leg2': 0.04,
-    'myth2': 0.04
+    'epic3': 0.04
 }
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
@@ -57,16 +63,26 @@ ORE_RESTRICTIONS = {
     'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
 }
 
+def apply_gamma_lift(img, gamma=0.5):
+    """Lifts shadows without over-normalizing noise."""
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+    return cv2.LUT(img, table)
+
 def get_complexity(img):
-    """Measures structural detail/busyness using Laplacian variance."""
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def get_spatial_mask(dim, is_core_only=False):
+    """
+    Excludes top 1/2 of the tile to aggressively ignore all Mod/HUD noise.
+    """
     mask = np.zeros((dim, dim), dtype=np.uint8)
     base_r = 12 if is_core_only else 18
     radius = int(base_r * (dim / 48))
     cv2.circle(mask, (dim//2, dim//2), radius, 255, -1)
-    top_exclude_limit = int(dim * (1/3))
+    
+    # NEW: Exclude Top 1/2 of the tile (The Mod Zone)
+    top_exclude_limit = int(dim * (1/2))
     mask[0:top_exclude_limit, :] = 0
     return mask
 
@@ -74,13 +90,13 @@ def detect_crosshair(roi_bgr):
     if roi_bgr is None or roi_bgr.size == 0: return "none"
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
     ranges = {
-        'GOLD': ([20, 100, 100], [35, 255, 255]),
+        'GOLD': ([18, 100, 100], [35, 255, 255]),
         'BLUE': ([100, 100, 100], [130, 255, 255]),
         'RED':  ([0, 100, 100], [10, 255, 255])
     }
     for name, (low, high) in ranges.items():
         mask = cv2.inRange(hsv, np.array(low), np.array(high))
-        if np.sum(mask) > 150: return name
+        if np.sum(mask) > 100: return name
     return "none"
 
 def get_family(tier_name):
@@ -106,14 +122,15 @@ def load_all_templates():
         new_dim = int(DIM_ID * TARGET_SCALE)
         img_scaled = cv2.resize(img_raw, (new_dim, new_dim), interpolation=cv2.INTER_AREA)
         
-        # Pre-compute Complexity for Structural Parity
-        comp = get_complexity(img_scaled)
+        # Pre-compute Complexity on Gamma-Lifted templates
+        lifted_tpl = apply_gamma_lift(img_scaled, 0.6)
+        comp = get_complexity(lifted_tpl)
         
         templates['ore_id'][tier].append({
             'id': f, 'img': img_scaled, 'comp': comp,
             'mask_std': get_spatial_mask(new_dim, False),
             'mask_core': get_spatial_mask(new_dim, True),
-            'tier': tier, 'is_sha': True if '_sha_' in f else False
+            'tier': tier
         })
     return templates
 
@@ -140,13 +157,12 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_bgr = img_color[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         roi_gray = img_gray[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         
-        # 1. Luminance Normalization (Min-Max Stretch)
-        # Instead of shadow bias, we make the ROI "lighting neutral"
+        # 1. Shadow Recovery via Gamma Lift
         if roi_gray.size > 0:
-            roi_norm = cv2.normalize(roi_gray, None, 0, 255, cv2.NORM_MINMAX)
-            roi_complexity = get_complexity(roi_norm)
+            roi_lifted = apply_gamma_lift(roi_gray, 0.5)
+            roi_complexity = get_complexity(roi_lifted)
         else:
-            roi_norm = roi_gray
+            roi_lifted = roi_gray
             roi_complexity = 0
 
         # 2. X-Hair Detection
@@ -166,14 +182,13 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 
                 if search_area.shape[0] < side or search_area.shape[1] < side: continue
                 
-                # Normalize search area to match normalized ROI
-                search_norm = cv2.normalize(search_area, None, 0, 255, cv2.NORM_MINMAX)
+                # Apply Gamma Lift to Search Area to match ROI
+                search_lifted = apply_gamma_lift(search_area, 0.5)
                 
-                res = cv2.matchTemplate(search_norm, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
+                res = cv2.matchTemplate(search_lifted, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
-                # --- NEW: Structural Parity Penalty ---
-                # If a complex template tries to match a smooth ROI, penalize it
+                # Structural Parity Check
                 comp_diff = max(0, tpl['comp'] - roi_complexity)
                 struct_penalty = comp_diff * COMPLEXITY_PENALTY_COEFF
                 
@@ -232,7 +247,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                     if 'dirt' in challenger['tier'] and challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
                         final = challenger
                 
-                is_valid = final['score'] > 0.45 
+                is_valid = final['score'] > 0.40 # Lowered slightly for precision
                 detected = final['tier'] if is_valid else "low_conf_id"
         
         # Forensics
@@ -263,7 +278,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data['xhair'], 'truth_rank': truth_rank})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"resolver_v84_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"resolver_v85_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -281,7 +296,7 @@ def run_precision_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v8.4: ANTI-BULLY RESOLVER ---")
+    print(f"--- ORE ID AUDIT v8.5: THE SHADOW-CORE RESOLVER ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -291,7 +306,7 @@ def run_precision_audit():
             all_results.extend(future.result())
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.4_precision.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.5_precision.csv"), index=False)
     
     print(f"\n--- PRECISION ERROR ANALYSIS ---")
     ores_only = audit_df[audit_df['truth_rank'] != -1]
