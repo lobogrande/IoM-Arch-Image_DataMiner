@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 8.3 (The Precision Resolver: Crosshair Awareness & Soft Bias)
+# Version: 8.4 (The Anti-Bully Resolver: Complexity Parity & Bully Suppression)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -38,9 +38,17 @@ ROW4_Y_PERSPECTIVE_SHIFT = 2
 # LOGIC THRESHOLDS
 ORE_STRICT_GATE = 0.72  
 Z_SCORE_THRESHOLD = 1.8 
-TIER_CONF_BUFFER = 0.05 # Increased to help Dirt3 against bullies
-SHADOW_LUMINANCE_THRESHOLD = 80 
-STATE_ALIGNMENT_BONUS = 0.06 # Reward for matching detected lighting state
+TIER_CONF_BUFFER = 0.07 # Boosted margin for Dirt3 recovery
+COMPLEXITY_PENALTY_COEFF = 0.0003 # Penalty per unit of complexity mismatch
+
+# BULLY PENALTY MAP
+# These templates are naturally "louder" and need an anchor penalty
+BULLY_PENALTIES = {
+    'leg1': 0.08,
+    'div3': 0.12,
+    'leg2': 0.04,
+    'myth2': 0.04
+}
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
 ORE_RESTRICTIONS = {
@@ -49,38 +57,30 @@ ORE_RESTRICTIONS = {
     'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
 }
 
+def get_complexity(img):
+    """Measures structural detail/busyness using Laplacian variance."""
+    return cv2.Laplacian(img, cv2.CV_64F).var()
+
 def get_spatial_mask(dim, is_core_only=False):
-    """
-    Creates a circular mask. 
-    is_core_only=True uses a tighter radius to avoid crosshair rings.
-    """
     mask = np.zeros((dim, dim), dtype=np.uint8)
-    # Standard radius is 18. Core-only is 12.
     base_r = 12 if is_core_only else 18
     radius = int(base_r * (dim / 48))
     cv2.circle(mask, (dim//2, dim//2), radius, 255, -1)
-    
-    # Exclude Mod Zone
     top_exclude_limit = int(dim * (1/3))
     mask[0:top_exclude_limit, :] = 0
     return mask
 
 def detect_crosshair(roi_bgr):
-    """Detects colored crosshair rings using HSV saturation/hue."""
     if roi_bgr is None or roi_bgr.size == 0: return "none"
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
-    
-    # Define color ranges for crosshairs
     ranges = {
         'GOLD': ([20, 100, 100], [35, 255, 255]),
         'BLUE': ([100, 100, 100], [130, 255, 255]),
-        'RED':  ([0, 100, 100], [10, 255, 255]) # Simplified Red
+        'RED':  ([0, 100, 100], [10, 255, 255])
     }
-    
     for name, (low, high) in ranges.items():
         mask = cv2.inRange(hsv, np.array(low), np.array(high))
-        if np.sum(mask) > 150: # Trigger threshold for the ring
-            return name
+        if np.sum(mask) > 150: return name
     return "none"
 
 def get_family(tier_name):
@@ -106,9 +106,11 @@ def load_all_templates():
         new_dim = int(DIM_ID * TARGET_SCALE)
         img_scaled = cv2.resize(img_raw, (new_dim, new_dim), interpolation=cv2.INTER_AREA)
         
-        # Pre-compute both Standard and Core masks for every template
+        # Pre-compute Complexity for Structural Parity
+        comp = get_complexity(img_scaled)
+        
         templates['ore_id'][tier].append({
-            'id': f, 'img': img_scaled, 
+            'id': f, 'img': img_scaled, 'comp': comp,
             'mask_std': get_spatial_mask(new_dim, False),
             'mask_core': get_spatial_mask(new_dim, True),
             'tier': tier, 'is_sha': True if '_sha_' in f else False
@@ -129,7 +131,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     slot_matches = {}
     for col in range(6):
         if r4_dna[col] == '0':
-            slot_matches[col] = {'status': 'empty_dna', 'candidates': [], 'is_sha': False, 'xhair': 'none'}
+            slot_matches[col] = {'status': 'empty_dna', 'candidates': [], 'xhair': 'none'}
             continue
 
         cx = int(ORE0_X + (col * STEP))
@@ -138,15 +140,24 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_bgr = img_color[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         roi_gray = img_gray[ty1 : ty1 + side_px, tx1 : tx1 + side_px]
         
-        # 1. State & Crosshair Detection
-        is_sha = np.mean(roi_gray) < SHADOW_LUMINANCE_THRESHOLD if roi_gray.size > 0 else False
+        # 1. Luminance Normalization (Min-Max Stretch)
+        # Instead of shadow bias, we make the ROI "lighting neutral"
+        if roi_gray.size > 0:
+            roi_norm = cv2.normalize(roi_gray, None, 0, 255, cv2.NORM_MINMAX)
+            roi_complexity = get_complexity(roi_norm)
+        else:
+            roi_norm = roi_gray
+            roi_complexity = 0
+
+        # 2. X-Hair Detection
         xhair = detect_crosshair(roi_bgr)
         use_core_mask = (xhair != "none")
 
         all_candidates = []
         for tier, variants in templates['ore_id'].items():
+            bully_penalty = BULLY_PENALTIES.get(tier, 0.0)
+            
             for tpl in variants:
-                # Use Core mask if a crosshair is blocking the outer edges
                 active_mask = tpl['mask_core'] if use_core_mask else tpl['mask_std']
                 
                 side = tpl['img'].shape[0]
@@ -155,13 +166,19 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 
                 if search_area.shape[0] < side or search_area.shape[1] < side: continue
                 
-                res = cv2.matchTemplate(search_area, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
+                # Normalize search area to match normalized ROI
+                search_norm = cv2.normalize(search_area, None, 0, 255, cv2.NORM_MINMAX)
+                
+                res = cv2.matchTemplate(search_norm, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
-                # Apply Soft State Bias instead of hard filter
-                if is_sha == tpl['is_sha']: score += STATE_ALIGNMENT_BONUS
+                # --- NEW: Structural Parity Penalty ---
+                # If a complex template tries to match a smooth ROI, penalize it
+                comp_diff = max(0, tpl['comp'] - roi_complexity)
+                struct_penalty = comp_diff * COMPLEXITY_PENALTY_COEFF
                 
-                all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': score})
+                weighted_score = score - bully_penalty - struct_penalty
+                all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': weighted_score, 'raw': score})
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
@@ -169,7 +186,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         slot_matches[col] = {
             'status': 'occupied', 'candidates': all_candidates, 
-            'z_score': z_score, 'is_sha': is_sha, 'xhair': xhair
+            'z_score': z_score, 'xhair': xhair
         }
 
     # --- ANCHOR & RESOLUTION ---
@@ -210,7 +227,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 detected, final = 'low_conf_id', {'tier': 'none', 'score': 0.0}
             else:
                 final = valid_options[0]
-                # Dirt3 Recovery Bias: If dirt family is close to the leader, prefer it
+                # Dirt3 Recovery Bias
                 for challenger in valid_options[1:]:
                     if 'dirt' in challenger['tier'] and challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
                         final = challenger
@@ -235,19 +252,18 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         rx1, ry1 = int(cx - (DIM_ID*TARGET_SCALE)//2), int(row4_y_base - (DIM_ID*TARGET_SCALE)//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+int(DIM_ID*TARGET_SCALE), ry1+int(DIM_ID*TARGET_SCALE)), color, 1)
         
-        state_str = "SHA" if data['is_sha'] else "ACT"
         xhair_str = f"|{data['xhair']}" if data['xhair'] != 'none' else ""
-        label = f"{detected} [{state_str}{xhair_str}] ({final['score']:.2f})"
+        label = f"{detected}{xhair_str} ({final['score']:.2f})"
         if truth_tier and detected != truth_tier:
             cv2.rectangle(img_color, (rx1-2, ry1-2), (rx1+int(DIM_ID*TARGET_SCALE)+2, ry1+int(DIM_ID*TARGET_SCALE)+2), (255, 0, 0), 1)
             label += f" [T:{truth_rank}]"
         
         cv2.putText(img_color, label, (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
         if is_valid: has_detections = True
-        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data['xhair'], 'truth_rank': truth_rank, 'is_sha': data['is_sha']})
+        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data['xhair'], 'truth_rank': truth_rank})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"xhair_v83_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"resolver_v84_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -265,7 +281,7 @@ def run_precision_audit():
         remaining = df[~df['frame_idx'].isin(truth_frames)].sample(min(400 - len(df_sample), len(df)))
         df_sample = pd.concat([df_sample, remaining])
 
-    print(f"--- ORE ID AUDIT v8.3: PRECISION RESOLVER (CROSSHAIR AWARE) ---")
+    print(f"--- ORE ID AUDIT v8.4: ANTI-BULLY RESOLVER ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -275,7 +291,7 @@ def run_precision_audit():
             all_results.extend(future.result())
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.3_precision.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v8.4_precision.csv"), index=False)
     
     print(f"\n--- PRECISION ERROR ANALYSIS ---")
     ores_only = audit_df[audit_df['truth_rank'] != -1]
