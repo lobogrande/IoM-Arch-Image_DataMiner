@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
-# Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 7.1 (Surgical Anchor Election & Entropy Shielding)
+# Purpose: Forensic Ore Identification with Z-Score Significance Profiling.
+# Version: 7.2 (Z-Score Discrimination & SNR Forensic Profiling)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -23,12 +23,12 @@ JITTER = 2
 
 # THRESHOLDS
 ORE_STRICT_GATE = 0.78  
-TIER_CONF_BUFFER = 0.04 
-STRUCTURAL_WEIGHT_COEFF = 0.0003 # Increased for "Entropy Shielding"
+Z_SCORE_THRESHOLD = 2.0  # Winner must be 2.0+ standard deviations above the noise
+STRUCTURAL_WEIGHT_COEFF = 0.0003 
 
-# BULLY PENALTY MAP (Derived from v6.2 Greediness Index)
+# BULLY PENALTY MAP
 BULLY_PENALTIES = {
-    'div3_sha_plain_0.png': 0.15, # Increased penalty for the #1 Bully
+    'div3_sha_plain_0.png': 0.15,
     'com3_act_pmod_hbar_xhair_0.png': 0.10,
     'rare1_act_pmod_6.png': 0.05,
     'rare1_act_plain_3.png': 0.05,
@@ -48,7 +48,6 @@ ORE_RESTRICTIONS = {
 }
 
 def get_complexity(img):
-    """Measures visual detail density (Laplacian variance)."""
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def get_family(tier_name):
@@ -67,22 +66,16 @@ def load_all_templates():
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
         if f.startswith(("background", "negative_ui")): continue
-        
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
-        
         img_id = cv2.resize(img_raw, (DIM_ID, DIM_ID))
         complexity = get_complexity(img_id)
-        
         parts = f.split("_")
         if len(parts) < 2: continue
         tier, state = parts[0], parts[1]
-        
         if tier not in templates['ore_id']:
             templates['ore_id'][tier] = []
-        templates['ore_id'][tier].append({
-            'id': f, 'img': img_id, 'comp': complexity, 'tier': tier
-        })
+        templates['ore_id'][tier].append({'id': f, 'img': img_id, 'comp': complexity, 'tier': tier})
     return templates
 
 def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
@@ -95,13 +88,10 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y = int(ORE0_Y + (3 * STEP))
-    
     slot_matches = {}
 
-    # --- PASS 1: FEATURE-WEIGHTED MATCHING ---
     for col in range(6):
         if r4_dna[col] == '0': continue 
-
         cx = int(ORE0_X + (col * STEP))
         x1_id, y1_id = int(cx - (DIM_ID//2) - JITTER), int(row4_y - (DIM_ID//2) - JITTER)
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
@@ -114,50 +104,48 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             for tpl in states:
                 res = cv2.matchTemplate(search_id, tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                 score = cv2.minMaxLoc(res)[1]
-                
-                # Apply Bully Penalty
                 penalty = BULLY_PENALTIES.get(tpl['id'], 0.0)
-                
-                # Apply Entropy Shield (Penalty for structural mismatch)
                 comp_diff = abs(roi_comp - tpl['comp'])
                 structural_penalty = comp_diff * STRUCTURAL_WEIGHT_COEFF
-                
                 weighted_score = score - penalty - structural_penalty
-                
-                all_candidates.append({
-                    'tier': tier, 'id': tpl['id'], 'score': weighted_score, 
-                    'raw': score, 'comp': tpl['comp'], 'parity': round(structural_penalty, 4)
-                })
+                all_candidates.append({'tier': tier, 'id': tpl['id'], 'score': weighted_score, 'raw': score})
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
-        slot_matches[col] = {'candidates': all_candidates, 'roi_comp': roi_comp}
+        
+        # --- Z-SCORE ANALYSIS ---
+        scores = [c['score'] for c in all_candidates]
+        mean_s = np.mean(scores)
+        std_s = np.std(scores) if np.std(scores) > 0 else 1.0
+        winner = all_candidates[0]
+        z_score = (winner['score'] - mean_s) / std_s
+        
+        slot_matches[col] = {
+            'candidates': all_candidates, 
+            'roi_comp': roi_comp, 
+            'z_score': z_score,
+            'mean_score': mean_s
+        }
 
-    if not slot_matches: return []
-
-    # --- PASS 2: PARITY-WEIGHTED ANCHOR ELECTION ---
-    # We no longer just pick the highest score. We pick the "Most Trustworthy" match.
-    # Trustworthy = High Score AND Low Structural Penalty.
-    anchor = {'tier': 'none', 'score': -1.0, 'range': (1, 999), 'col': -1}
+    # --- ANCHOR ELECTION (Z-Score Based) ---
+    anchor = {'tier': 'none', 'score': -1.0, 'z': 0.0, 'range': (1, 999), 'col': -1}
     for col, data in slot_matches.items():
         top = data['candidates'][0]
-        # An anchor is only valid if it's over the strict gate
-        if top['score'] > anchor['score'] and top['score'] > ORE_STRICT_GATE:
+        # SIGNIFICANCE CHECK: Winner must stand out from the crowd
+        if data['z_score'] > anchor['z'] and data['z_score'] > Z_SCORE_THRESHOLD:
             anchor = {
-                'tier': top['tier'], 'score': top['score'], 
-                'range': ORE_RESTRICTIONS.get(top['tier'], (1, 999)),
-                'col': col
+                'tier': top['tier'], 'score': top['score'], 'z': data['z_score'],
+                'range': ORE_RESTRICTIONS.get(top['tier'], (1, 999)), 'col': col
             }
 
-    # --- PASS 3: PROFILE-STRICT RESOLUTION ---
+    # --- RESOLUTION ---
     frame_results = []
     has_detections = False
     
-    # Identify Champion Tiers for each family WITHIN the anchor's logical range
+    # Restrict Row Profile
     family_champions = {}
     for col, data in slot_matches.items():
         for cand in data['candidates']:
             t_range = ORE_RESTRICTIONS.get(cand['tier'], (1, 999))
-            # Rule: Must overlap with the Anchor's elected floor range
             if t_range[0] <= anchor['range'][1] and t_range[1] >= anchor['range'][0]:
                 fam = get_family(cand['tier'])
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
@@ -167,11 +155,9 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         if r4_dna[col] == '0':
             frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna'})
             continue
-            
         data = slot_matches.get(col)
         if not data: continue
 
-        # Filter candidates to Row-Champion Tiers that fit the floor profile
         valid_options = []
         for fam, champion in family_champions.items():
             for cand in data['candidates']:
@@ -184,34 +170,28 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'low_conf_id'})
             continue
 
-        # Final Tier-Bias Pass
         final = valid_options[0]
-        for challenger in valid_options[1:]:
-            if challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
-                if TIER_RANK_VAL(challenger['tier']) < TIER_RANK_VAL(final['tier']):
-                    final = challenger
-
-        is_valid = final['score'] > 0.60 # Relaxed gate because of higher complexity penalties
+        is_valid = final['score'] > 0.60 
         detected = final['tier'] if is_valid else "low_conf_id"
         
+        # Color coding: Green = Valid, Red = Low Conf, Yellow = Anchor
         color = (0, 255, 0) if is_valid else (0, 0, 255)
-        if col == anchor['col']: color = (0, 255, 255) # Yellow for the Anchor slot
+        if col == anchor['col']: color = (0, 255, 255) 
         
         cx = int(ORE0_X + (col * STEP))
         rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
-        cv2.putText(img_color, f"{detected} ({final['score']:.2f})", (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        cv2.putText(img_color, f"{detected} Z:{data['z_score']:.1f}", (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
         if is_valid: has_detections = True
 
         frame_results.append({
             'frame': f_idx, 'slot': col, 'detected': detected, 
-            'score': round(final['score'], 4), 'ore_id': final['id'],
-            'is_anchor': (col == anchor['col'])
+            'score': round(final['score'], 4), 'z_score': round(data['z_score'], 2),
+            'ore_id': final['id'], 'is_anchor': (col == anchor['col'])
         })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"surgical_v71_f{f_idx}.jpg"), img_color)
-
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"forensic_v72_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def TIER_RANK_VAL(tier):
@@ -221,18 +201,15 @@ def TIER_RANK_VAL(tier):
 def run_surgical_audit():
     if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV): return
     if not os.path.exists(DEBUG_IMG_DIR): os.makedirs(DEBUG_IMG_DIR)
-    
     dna_df = pd.read_csv(DNA_CSV, dtype={'r4_dna': str})
     dna_map = dna_df.set_index('frame_idx')['r4_dna'].to_dict()
     df = pd.read_csv(STEP1_CSV)
-    
     templates = load_all_templates()
     mask = get_spatial_mask()
     buffer_dir = cfg.get_buffer_path(0)
     
     df_sample = df.sample(min(400, len(df)))
-    print(f"--- ORE ID AUDIT v7.1: SURGICAL ANCHOR ELECTION ---")
-    print(f"Consensus Gating: Structural Parity + Floor Logic Restrictions")
+    print(f"--- ORE ID AUDIT v7.2: Z-SCORE FORENSIC PROFILER ---")
 
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
@@ -245,8 +222,9 @@ def run_surgical_audit():
             if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.1_surgical.csv"), index=False)
-    print(f"\n--- SURGICAL AUDIT SUMMARY ---")
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.2_forensic.csv"), index=False)
+    print(f"\n--- FORENSIC SUMMARY ---")
+    print(f"Avg Z-Score of Anchors: {audit_df[audit_df['is_anchor'] == True]['z_score'].mean():.2f}")
     print(audit_df['detected'].value_counts())
 
 if __name__ == "__main__":
