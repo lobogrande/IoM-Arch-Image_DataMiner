@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 7.0 (The Discriminator: Greediness Penalties & Structural Gating)
+# Version: 7.1 (Surgical Anchor Election & Entropy Shielding)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -22,22 +22,22 @@ STEP = 59.0
 JITTER = 2 
 
 # THRESHOLDS
-ORE_STRICT_GATE = 0.78  # High gate for the initial "Anchor" identification
-TIER_CONF_BUFFER = 0.04 # v5.0 logic: prefer lower tiers if scores are close
+ORE_STRICT_GATE = 0.78  
+TIER_CONF_BUFFER = 0.04 
+STRUCTURAL_WEIGHT_COEFF = 0.0003 # Increased for "Entropy Shielding"
 
 # BULLY PENALTY MAP (Derived from v6.2 Greediness Index)
-# These templates were found to be "Noise Magnets" and receive a scoring penalty.
 BULLY_PENALTIES = {
-    'div3_sha_plain_0.png': 0.12,
-    'com3_act_pmod_hbar_xhair_0.png': 0.08,
+    'div3_sha_plain_0.png': 0.15, # Increased penalty for the #1 Bully
+    'com3_act_pmod_hbar_xhair_0.png': 0.10,
     'rare1_act_pmod_6.png': 0.05,
     'rare1_act_plain_3.png': 0.05,
-    'dirt1_act_pmod_9.png': 0.04,
+    'dirt1_act_pmod_9.png': 0.06,
     'leg2_act_xhair_0.png': 0.04,
-    'dirt1_act_pmod_2.png': 0.04,
-    'div2_sha_pmod_1.png': 0.06,
+    'dirt1_act_pmod_2.png': 0.06,
+    'div2_sha_pmod_1.png': 0.08,
     'dirt2_act_xhair_0.png': 0.04,
-    'dirt1_act_plain_2.png': 0.04
+    'dirt1_act_plain_2.png': 0.06
 }
 
 # GAME PHYSICS: ORE FLOOR RESTRICTIONS
@@ -98,34 +98,35 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
     
     slot_matches = {}
 
-    # --- PASS 1: WIDE DISCRIMINATION (Find the Anchor) ---
+    # --- PASS 1: FEATURE-WEIGHTED MATCHING ---
     for col in range(6):
         if r4_dna[col] == '0': continue 
 
         cx = int(ORE0_X + (col * STEP))
         x1_id, y1_id = int(cx - (DIM_ID//2) - JITTER), int(row4_y - (DIM_ID//2) - JITTER)
         search_id = img_gray[y1_id : y1_id + DIM_ID + (JITTER*2), x1_id : x1_id + DIM_ID + (JITTER*2)]
-        
         if search_id.shape[0] < DIM_ID or search_id.shape[1] < DIM_ID: continue
+        
         roi_comp = get_complexity(search_id)
-
         all_candidates = []
+
         for tier, states in templates['ore_id'].items():
             for tpl in states:
                 res = cv2.matchTemplate(search_id, tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                 score = cv2.minMaxLoc(res)[1]
                 
-                # Apply Greediness Penalty
+                # Apply Bully Penalty
                 penalty = BULLY_PENALTIES.get(tpl['id'], 0.0)
                 
-                # Apply Structural Gating (Complexity Mismatch)
-                # Penalize "Smooth" templates on "Busy" ROIs and vice versa
+                # Apply Entropy Shield (Penalty for structural mismatch)
                 comp_diff = abs(roi_comp - tpl['comp'])
-                structural_penalty = comp_diff * 0.0001
+                structural_penalty = comp_diff * STRUCTURAL_WEIGHT_COEFF
                 
-                final_score = score - penalty - structural_penalty
+                weighted_score = score - penalty - structural_penalty
+                
                 all_candidates.append({
-                    'tier': tier, 'id': tpl['id'], 'score': final_score, 'raw': score
+                    'tier': tier, 'id': tpl['id'], 'score': weighted_score, 
+                    'raw': score, 'comp': tpl['comp'], 'parity': round(structural_penalty, 4)
                 })
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
@@ -133,24 +134,30 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
 
     if not slot_matches: return []
 
-    # --- PASS 2: ANCHOR-GATED FLOOR PROFILE ---
-    # Find the single most mathematically certain ore in the row.
-    anchor = {'tier': 'none', 'score': 0.0, 'range': (1, 999)}
+    # --- PASS 2: PARITY-WEIGHTED ANCHOR ELECTION ---
+    # We no longer just pick the highest score. We pick the "Most Trustworthy" match.
+    # Trustworthy = High Score AND Low Structural Penalty.
+    anchor = {'tier': 'none', 'score': -1.0, 'range': (1, 999), 'col': -1}
     for col, data in slot_matches.items():
         top = data['candidates'][0]
-        if top['score'] > anchor['score']:
-            anchor = {'tier': top['tier'], 'score': top['score'], 'range': ORE_RESTRICTIONS.get(top['tier'], (1, 999))}
+        # An anchor is only valid if it's over the strict gate
+        if top['score'] > anchor['score'] and top['score'] > ORE_STRICT_GATE:
+            anchor = {
+                'tier': top['tier'], 'score': top['score'], 
+                'range': ORE_RESTRICTIONS.get(top['tier'], (1, 999)),
+                'col': col
+            }
 
-    # --- PASS 3: RESTRICTED RESOLUTION ---
+    # --- PASS 3: PROFILE-STRICT RESOLUTION ---
     frame_results = []
     has_detections = False
     
-    # Vote on Champion Tiers within the Valid Floor Range
+    # Identify Champion Tiers for each family WITHIN the anchor's logical range
     family_champions = {}
     for col, data in slot_matches.items():
         for cand in data['candidates']:
-            # Only allow ores that overlap with the Anchor's floor range
             t_range = ORE_RESTRICTIONS.get(cand['tier'], (1, 999))
+            # Rule: Must overlap with the Anchor's elected floor range
             if t_range[0] <= anchor['range'][1] and t_range[1] >= anchor['range'][0]:
                 fam = get_family(cand['tier'])
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
@@ -164,10 +171,9 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
         data = slot_matches.get(col)
         if not data: continue
 
-        # Filter slot to only allowed tiers from the Row-Champion list
+        # Filter candidates to Row-Champion Tiers that fit the floor profile
         valid_options = []
         for fam, champion in family_champions.items():
-            # Find the local score for this champion tier
             for cand in data['candidates']:
                 if cand['tier'] == champion['tier']:
                     valid_options.append(cand)
@@ -178,39 +184,41 @@ def process_single_frame(frame_data, dna_map, templates, mask, buffer_dir):
             frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'low_conf_id'})
             continue
 
-        # Final Choice with v5.0 Tier Bias (prefer simpler ores if scores are close)
+        # Final Tier-Bias Pass
         final = valid_options[0]
         for challenger in valid_options[1:]:
             if challenger['score'] > (final['score'] - TIER_CONF_BUFFER):
-                if 'dirt' in final['tier'] and 'dirt' not in challenger['tier']:
-                    pass # Keep dirt as simple
-                elif TIER_RANK_VAL(challenger['tier']) < TIER_RANK_VAL(final['tier']):
+                if TIER_RANK_VAL(challenger['tier']) < TIER_RANK_VAL(final['tier']):
                     final = challenger
 
-        is_valid = final['score'] > 0.65 # Lowered because penalties reduce absolute scores
+        is_valid = final['score'] > 0.60 # Relaxed gate because of higher complexity penalties
         detected = final['tier'] if is_valid else "low_conf_id"
         
-        # Visual Verification
         color = (0, 255, 0) if is_valid else (0, 0, 255)
+        if col == anchor['col']: color = (0, 255, 255) # Yellow for the Anchor slot
+        
         cx = int(ORE0_X + (col * STEP))
         rx1, ry1 = int(cx - DIM_ID//2), int(row4_y - DIM_ID//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+DIM_ID, ry1+DIM_ID), color, 1)
         cv2.putText(img_color, f"{detected} ({final['score']:.2f})", (rx1, ry1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
         if is_valid: has_detections = True
 
-        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'ore_id': final['id']})
+        frame_results.append({
+            'frame': f_idx, 'slot': col, 'detected': detected, 
+            'score': round(final['score'], 4), 'ore_id': final['id'],
+            'is_anchor': (col == anchor['col'])
+        })
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"discriminator_v70_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"surgical_v71_f{f_idx}.jpg"), img_color)
 
     return frame_results
 
 def TIER_RANK_VAL(tier):
-    """Simple rarity rank for tie-breaking."""
     ranks = {'dirt': 1, 'com': 2, 'rare': 3, 'epic': 4, 'myth': 5, 'leg': 6, 'div': 7}
     return ranks.get(get_family(tier), 0)
 
-def run_discriminator_audit():
+def run_surgical_audit():
     if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV): return
     if not os.path.exists(DEBUG_IMG_DIR): os.makedirs(DEBUG_IMG_DIR)
     
@@ -223,8 +231,8 @@ def run_discriminator_audit():
     buffer_dir = cfg.get_buffer_path(0)
     
     df_sample = df.sample(min(400, len(df)))
-    print(f"--- ORE ID AUDIT v7.0: THE DISCRIMINATOR ---")
-    print(f"Gating: Laplacian Structural Mismatch + Greediness Penalties")
+    print(f"--- ORE ID AUDIT v7.1: SURGICAL ANCHOR ELECTION ---")
+    print(f"Consensus Gating: Structural Parity + Floor Logic Restrictions")
 
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, mask=mask, buffer_dir=buffer_dir)
@@ -237,9 +245,9 @@ def run_discriminator_audit():
             if (i+1) % 100 == 0: print(f"  Processed {i+1}/{len(df_sample)} frames...")
 
     audit_df = pd.DataFrame(all_results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.0_discriminator.csv"), index=False)
-    print(f"\n--- DISCRIMINATOR SUMMARY ---")
+    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v7.1_surgical.csv"), index=False)
+    print(f"\n--- SURGICAL AUDIT SUMMARY ---")
     print(audit_df['detected'].value_counts())
 
 if __name__ == "__main__":
-    run_discriminator_audit()
+    run_surgical_audit()
