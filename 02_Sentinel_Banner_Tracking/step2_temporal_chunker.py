@@ -1,7 +1,7 @@
 # step2_temporal_chunker.py
 # Purpose: Execute Master Plan Step 2 - Group frames into distinct floors using 
 #          Kinematic teleportation rules and 12-Bit DNA Despeckling.
-# Version: 6.0 (Pure Data & Kinematic Paradigm)
+# Version: 6.1 (Pure Data & Kinematic Paradigm - dtype fix)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -45,8 +45,11 @@ def run_temporal_chunking():
         print(f"Error: {DNA_CSV} not found. Run Step 1 DNA sensor first.")
         return
 
-    # Load DNA data and ensure chronological sorting
-    df = pd.read_csv(DNA_CSV).sort_values('frame_idx').reset_index(drop=True)
+    # Load DNA data and ensure chronological sorting.
+    # CRITICAL FIX: Force DNA columns to be strings so pandas doesn't parse '001111' as int 1111.
+    df = pd.read_csv(DNA_CSV, dtype={'r3_dna': str, 'r4_dna': str, 'dna_sig': str})
+    df = df.sort_values('frame_idx').reset_index(drop=True)
+    
     buffer_dir = cfg.get_buffer_path(0)
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
