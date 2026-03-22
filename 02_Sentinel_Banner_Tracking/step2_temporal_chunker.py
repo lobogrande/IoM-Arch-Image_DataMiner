@@ -1,7 +1,7 @@
 # step2_temporal_chunker.py
 # Purpose: Execute Master Plan Step 2 - Group frames into distinct floors using 
-#          Kinematic rules, Localized DNA Mode, and Minimum Duration Gating.
-# Version: 6.4 (The Temporal Guard: Reverting Visual Arbiter)
+#          Kinematic rules and Localized DNA Mode.
+# Version: 6.5 (The Micro-Block Fix: Consolidating Attack Pauses)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -10,10 +10,6 @@ import project_config as cfg
 DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_start_candidates.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_verification")
-
-# Minimum physical frames required to clear a floor. 
-# Any floor transition triggered before this duration is considered noise and merged.
-MIN_FLOOR_DURATION = 15
 
 def run_temporal_chunking():
     if not os.path.exists(DNA_CSV):
@@ -27,13 +23,15 @@ def run_temporal_chunking():
     buffer_dir = cfg.get_buffer_path(0)
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v6.4) ---")
-    print(f"Processing {len(df)} frames using Game Physics and Duration Gating...")
+    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v6.5) ---")
+    print(f"Processing {len(df)} frames using Game Physics...")
 
-    # 1. SLOT-STRICT MICRO-BLOCKING
-    # A block breaks ONLY if the slot changes or if there is a gap > 5 frames.
+    # 1. SLOT-STRICT MICRO-BLOCKING (v6.5: Increased Gap Tolerance)
+    # We increase the gap tolerance to 20 frames (~4 seconds).
+    # This prevents minor attack pauses/knockbacks from falsely splitting an attack, 
+    # allowing the mode() function to swallow transient fairy noise across the entire engagement.
     df['gap'] = df['frame_idx'].diff().fillna(0)
-    df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | (df['gap'] > 5)).cumsum()
+    df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | (df['gap'] > 20)).cumsum()
     
     blocks = []
     for block_id, group in df.groupby('block_id'):
@@ -48,42 +46,32 @@ def run_temporal_chunking():
             'size': len(group)
         })
     
-    print(f"Phase 1: Consolidated frames into {len(blocks)} slot-attack blocks.")
+    print(f"Phase 1: Consolidated frames into {len(blocks)} unified slot-attack blocks.")
 
-    # 2. FLOOR GROUPING (Kinematics & Duration Guard)
+    # 2. FLOOR GROUPING (Kinematics & Immutability)
     floors = []
     curr_floor = [blocks[0]]
     
     for b in blocks[1:]:
         prev_b = curr_floor[-1]
         
-        # Calculate how long the CURRENT floor has been alive
-        current_floor_start = curr_floor[0]['start_frame']
-        current_floor_duration = prev_b['end_frame'] - current_floor_start
-        
         is_new_floor = False
         reason = ""
         
-        # LAW 1: Slot Reversal (Guaranteed Reset, overrides duration guard)
+        # LAW 1: Slot Reversal (Guaranteed Reset)
         if b['slot'] < prev_b['slot']:
             is_new_floor = True
             reason = f"Slot Reversal ({prev_b['slot']} -> {b['slot']})"
             
         # LAW 2: Row 4 Immutability Broken
         elif b['r4_mode'] != prev_b['r4_mode']:
-            if current_floor_duration > MIN_FLOOR_DURATION:
-                is_new_floor = True
-                reason = f"R4 DNA Shift ({prev_b['r4_mode']} -> {b['r4_mode']})"
-            else:
-                pass # Rejected: Floor hasn't existed long enough
+            is_new_floor = True
+            reason = f"R4 DNA Shift ({prev_b['r4_mode']} -> {b['r4_mode']})"
                 
         # LAW 3: Row 3 Immutability Broken
         elif b['r3_mode'] != prev_b['r3_mode']:
-            if current_floor_duration > MIN_FLOOR_DURATION:
-                is_new_floor = True
-                reason = f"R3 DNA Shift ({prev_b['r3_mode']} -> {b['r3_mode']})"
-            else:
-                pass # Rejected: Floor hasn't existed long enough
+            is_new_floor = True
+            reason = f"R3 DNA Shift ({prev_b['r3_mode']} -> {b['r3_mode']})"
 
         if is_new_floor:
             b['transition_reason'] = reason
