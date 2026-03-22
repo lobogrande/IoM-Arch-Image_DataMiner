@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 10.1 (The Morphological Guard: Crash-Proofing & Template Diagnostics)
+# Version: 11.0 (The Spatial Guard: Consensus Propagation & Row-Wide Adoption)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -26,10 +26,14 @@ ROTATION_VARIANTS = [-3, 3]
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
 STATE_COMPLEXITY_THRESHOLD = 350 
-LUMINANCE_SHADOW_FLOOR = 90      # Adjusted for better state separation
+LUMINANCE_SHADOW_FLOOR = 90      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
 TIER_CONF_BUFFER = 0.07 
+
+# SPATIAL ADOPTION CONSTANTS
+ANCHOR_TRUST_FLOOR = 0.48      # Score required to become a row anchor
+ADOPTION_SCORE_FLOOR = 0.25    # Lowered gate for neighbors of anchors
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -99,7 +103,7 @@ def detect_vibrant_crosshair(roi_bgr):
     for name, (low, high) in ranges.items():
         mask = cv2.inRange(hsv, np.array(low), np.array(high))
         px_count = cv2.countNonZero(mask)
-        if px_count > 200: # Standardized floor
+        if px_count > 200: 
             mean_sat = cv2.mean(s, mask=mask)[0]
             if mean_sat > 140:
                 return name.rstrip('2'), px_count, round(mean_sat, 1)
@@ -156,11 +160,12 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y_base = int(ORE0_Y + (3 * STEP)) + 2
     
+    # 1. First Pass: Individual Matching
     slot_matches = {}
     for col in range(6):
         default_data = {
-            'status': 'empty_dna', 'candidates': [], 'z_score': 0,
-            'xhair': 'none', 'xhair_sat': 0, 'xhair_px': 0, 'ratio': 0, 'roi_comp': 0
+            'status': 'empty_dna', 'candidates': [], 'z_score': 0, 'is_valid': False, 'detected': 'empty_dna',
+            'xhair': 'none', 'xhair_sat': 0, 'xhair_px': 0, 'ratio': 0, 'roi_comp': 0, 'final_score': 0.0
         }
         if r4_dna[col] == '0':
             slot_matches[col] = default_data
@@ -168,8 +173,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             
         cx = int(ORE0_X + (col * STEP))
         tx1, ty1 = int(cx - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
-        
-        # Boundary protection
         if ty1 < 0 or ty1+SIDE_PX > img_color.shape[0] or tx1 < 0 or tx1+SIDE_PX > img_color.shape[1]:
             slot_matches[col] = default_data
             continue
@@ -195,57 +198,42 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         all_candidates = []
         is_hit_frame = (top_e > 1500 or bot_e > 1500)
         
-        # Identification loop
         for tier, variants in templates[target_state].items():
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             for tpl in variants:
                 if not is_hit_frame and tpl['angle'] != 0: continue
-                
-                shape_bonus = 0.0
-                shape_match_flag = False
+                shape_bonus, shape_match_flag = 0.0, False
                 if not roi_clipped and not tpl['clipped']:
                     shape_dist = cv2.matchShapes(roi_sil, tpl['sil'], cv2.CONTOURS_MATCH_I1, 0)
                     if shape_dist < SHAPE_MATCH_THRESHOLD:
-                        shape_bonus = 0.05
-                        shape_match_flag = True
+                        shape_bonus, shape_match_flag = 0.05, True
                 
-                # Match area (jittering relative to frame)
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
                 search_area = img_gray[y1:y1+SIDE_PX+2, x1:x1+SIDE_PX+4]
                 if search_area.shape[0] < SIDE_PX or search_area.shape[1] < SIDE_PX: continue
-                
                 gamma_lvl = 0.4 if target_state == 'shadow' else 0.5
                 search_lifted = apply_gamma_lift(search_area, gamma_lvl)
-                
                 res = cv2.matchTemplate(search_lifted, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
                 affinity = 0.04 if abs(tpl['comp'] - roi_comp) < 20.0 else 0
                 all_candidates.append({'tier': tier, 'score': score - penalty + affinity + shape_bonus, 'shape_match': shape_match_flag})
         
-        # CRASH PROTECTION: If no candidates were matched for this slot
         if not all_candidates:
-            slot_matches[col] = {
-                'status': 'occupied', 'candidates': [], 'z_score': 0,
-                'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp
-            }
+            slot_matches[col] = default_data
+            slot_matches[col]['status'] = 'occupied'
             continue
 
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
-        
-        # Z-Score Protection
-        if len(scores) > 1 and np.std(scores) > 1e-6:
-            z_score = (scores[0] - np.mean(scores)) / np.std(scores)
-        else:
-            z_score = 0
+        z_score = (scores[0] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 1e-6) else 0
             
         slot_matches[col] = {
-            'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score,
-            'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp
+            'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'is_valid': False,
+            'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 'final_score': scores[0]
         }
 
-    # Voting & Resolution
+    # 2. Consensus Determination
     floor_votes = []
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
@@ -266,28 +254,52 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
                     family_champions[fam] = {'tier': cand['tier'], 'score': cand['score']}
 
+    # 3. Preliminary Identification (Identify Anchors)
+    anchors = []
+    for col in range(6):
+        data = slot_matches[col]
+        if data['status'] == 'empty_dna': continue
+        valid_opts = [c for c in data['candidates'] if c['tier'] in [v['tier'] for v in family_champions.values()]]
+        if valid_opts:
+            valid_opts.sort(key=lambda x: x['score'], reverse=True)
+            final = valid_opts[0]
+            for ch in valid_opts[1:]:
+                if 'dirt' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER): final = ch
+            
+            gate = 0.42 if 'dirt' in final['tier'] else 0.55
+            is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.20)
+            
+            data['is_valid'] = is_valid
+            data['detected'] = final['tier'] if is_valid else 'low_conf_id'
+            data['final_score'] = final['score']
+            
+            if is_valid and final['score'] > ANCHOR_TRUST_FLOOR:
+                anchors.append(final['tier'])
+
+    # 4. Spatial Consensus Propagation (The Adoption Pass)
+    row_signal = Counter(anchors).most_common(1)[0][0] if len(anchors) >= 2 else None
+    
+    for col in range(6):
+        data = slot_matches[col]
+        if data['status'] == 'occupied' and data['detected'] == 'low_conf_id' and row_signal:
+            # Check if this slot's best matching valid candidate is the Row Signal
+            for cand in data['candidates']:
+                if cand['tier'] == row_signal and cand['score'] > ADOPTION_SCORE_FLOOR:
+                    data['detected'] = f"{row_signal}[A]" # [A] for Adopted
+                    data['is_valid'] = True
+                    data['final_score'] = cand['score']
+                    break
+
+    # 5. Final Rendering & Data Export
     frame_results = []
     has_detections = False
     for col in range(6):
         data = slot_matches[col]
-        is_valid, detected, final = False, 'low_conf_id', {'tier': 'none', 'score': 0.0}
-        if data['status'] == 'empty_dna':
-            detected = 'empty_dna'
-        else:
-            valid_opts = [c for c in data['candidates'] if c['tier'] in [v['tier'] for v in family_champions.values()]]
-            if valid_opts:
-                valid_opts.sort(key=lambda x: x['score'], reverse=True)
-                final = valid_opts[0]
-                for ch in valid_opts[1:]:
-                    if 'dirt' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER): final = ch
-                
-                gate = 0.42 if 'dirt' in final['tier'] else 0.55
-                is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.20)
-                if is_valid and data['xhair'] != 'none':
-                    detected, is_valid = "xhair_obscured", False
-                elif is_valid:
-                    detected = final['tier']
-
+        is_valid, detected = data['is_valid'], data['detected']
+        
+        if is_valid and data['xhair'] != 'none':
+            detected, is_valid = "xhair_obscured", False
+        
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == 'empty_dna': color = (100, 100, 100)
         elif detected == 'xhair_obscured': color = (0, 255, 255)
@@ -295,15 +307,15 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         rx1, ry1 = int(ORE0_X + (col * STEP) - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
         draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-(5 if col%2==0 else 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        stat_str = f"{final['score']:.2f} Z:{data.get('z_score',0):.1f}"
-        if final.get('shape_match'): stat_str += " [G]" 
+        stat_str = f"{data['final_score']:.2f} Z:{data.get('z_score',0):.1f}"
+        if any(c.get('shape_match') for c in data['candidates'][:1]): stat_str += " [G]" 
         draw_shadow_text(img_color, stat_str, (rx1+3, ry1+(10 if col%2==0 else 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if is_valid: has_detections = True
-        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
+        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(data['final_score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"morph_v101_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"spatial_v110_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -318,7 +330,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v10.1: THE MORPHOLOGICAL GUARD ---")
+    print(f"--- ORE ID AUDIT v11.0: THE SPATIAL CONSENSUS ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -327,22 +339,18 @@ def run_precision_audit():
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
             try:
                 res = f.result()
-                if res: 
-                    all_results.extend(res)
-                if i % 100 == 0: 
-                    print(f"  Processed {i} frames...")
-            except Exception as e: 
-                # Log critical worker errors for debugging
-                print(f"  Worker Critical Error: {e}")
+                if res: all_results.extend(res)
+                if i % 100 == 0: print(f"  Processed {i} frames...")
+            except Exception as e: print(f"  Worker Critical Error: {e}")
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v10.1_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v11.0_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
     else:
-        print("No results generated. Check if templates are loading and DNA sensor is reporting '1' for any slots.")
+        print("No results generated.")
     print(f"--- DONE ---")
 
 if __name__ == "__main__":
