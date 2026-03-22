@@ -1,7 +1,7 @@
 # step2_temporal_chunker.py
 # Purpose: Execute Master Plan Step 2 - Group frames into distinct floors using 
 #          Kinematic rules and Strict Row 4 Immutability.
-# Version: 7.0 (The Row 4 Anchor: Silencing Row 3 Noise)
+# Version: 7.1 (The Final Polish: R4 Micro-Despeckle)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -10,6 +10,32 @@ import project_config as cfg
 DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_start_candidates.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_verification")
+
+def despeckle_series(series, max_glitch_len=2):
+    """
+    A surgical micro-filter to remove 1-to-2 frame falling ore glitches on Row 4.
+    If the sequence shifts A -> B -> A within 2 frames, B is overwritten as noise.
+    Genuine transitions (A -> B -> C) are preserved.
+    """
+    vals = series.tolist()
+    n = len(vals)
+    clean = vals.copy()
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and vals[j] == vals[i]:
+            j += 1
+            
+        glitch_len = j - i
+        
+        # If the duration is very short, check if it reverts
+        if 0 < glitch_len <= max_glitch_len:
+            if i > 0 and j < n and clean[i-1] == vals[j]:
+                # Transient noise detected. Overwrite.
+                for k in range(i, j):
+                    clean[k] = clean[i-1]
+        i = j
+    return pd.Series(clean, index=series.index)
 
 def run_temporal_chunking():
     if not os.path.exists(DNA_CSV):
@@ -24,14 +50,17 @@ def run_temporal_chunking():
     buffer_dir = cfg.get_buffer_path(0)
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v7.0) ---")
+    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v7.1) ---")
     print(f"Processing {len(df)} frames using Row 4 Anchoring...")
 
-    # 1. MICRO-BLOCKING (Slot & Raw R4)
-    # A block breaks ONLY if the slot changes OR the raw Row 4 DNA changes.
-    # We completely ignore Row 3 here to prevent banners from fracturing attacks.
+    # 0. MICRO-DESPECKLE ROW 4
+    # We apply a tiny 2-frame filter to erase falling ores without erasing fast floors.
+    df['r4_clean'] = despeckle_series(df['r4_dna'], max_glitch_len=2)
+
+    # 1. MICRO-BLOCKING (Slot & Cleaned R4)
+    # A block breaks ONLY if the slot changes OR the cleaned Row 4 DNA changes.
     df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | 
-                      (df['r4_dna'] != df['r4_dna'].shift(1))).cumsum()
+                      (df['r4_clean'] != df['r4_clean'].shift(1))).cumsum()
     
     blocks = []
     for block_id, group in df.groupby('block_id'):
@@ -40,10 +69,9 @@ def run_temporal_chunking():
             'end_frame': int(group['frame_idx'].max()),
             'slot': int(group['slot_id'].iloc[0]),
             'filename': group['filename'].iloc[0],
-            # Mode() acts as a localized noise filter for the few frames R4 might glitch
-            'r4_mode': str(group['r4_dna'].mode()[0]),
+            'r4_mode': str(group['r4_clean'].mode()[0]),
             'r3_mode': str(group['r3_dna'].mode()[0]),
-            'gap_to_prev': int(group['gap'].iloc[0]), # The time it took to start this block
+            'gap_to_prev': int(group['gap'].iloc[0]),
             'size': len(group)
         })
     
@@ -65,17 +93,11 @@ def run_temporal_chunking():
             reason = f"Slot Reversal ({prev_b['slot']} -> {b['slot']})"
             
         # LAW 2: Row 4 Immutability Broken
-        # Since Row 4 is at the bottom of the screen, it is immune to scrolling text.
-        # If it changes, the floor layout has physically changed.
         elif b['r4_mode'] != prev_b['r4_mode']:
             is_new_floor = True
             reason = f"R4 DNA Shift ({prev_b['r4_mode']} -> {b['r4_mode']})"
                 
         # LAW 3: The AoE Board Wipe Fallback
-        # If the player uses a massive attack, the board clears, and the next floor starts
-        # on the exact same slot with the exact same Row 4 DNA. 
-        # This takes significant animation time (> 60 frames). 
-        # ONLY in this scenario do we trust Row 3 to confirm the layout changed.
         elif b['slot'] == prev_b['slot'] and b['gap_to_prev'] > 60:
             if b['r3_mode'] != prev_b['r3_mode']:
                 is_new_floor = True
@@ -109,7 +131,6 @@ def run_temporal_chunking():
         }
         final_candidates.append(candidate)
         
-        # OSD AT BOTTOM (Prevents occluding the Stage ROI header)
         img_path = os.path.join(buffer_dir, candidate['filename'])
         vis = cv2.imread(img_path)
         if vis is not None:
