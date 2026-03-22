@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 12.8 (The Forensic Scalpel: Clean-Room Deduplication & Rank Agreement)
+# Version: 12.9 (The Independent Fusion: Signal Integration & Tier Uniqueness)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -24,22 +24,23 @@ SIDE_PX = int(DIM_ID * TARGET_SCALE)
 ROTATION_VARIANTS = [-3, 3] 
 
 # LOGIC THRESHOLDS
-Z_TRUST_THRESHOLD = 2.1 
+Z_TRUST_THRESHOLD = 2.0         # v12.9: Slightly lowered to recover suppressed signals
 STATE_COMPLEXITY_THRESHOLD = 320 
 LUMINANCE_SHADOW_FLOOR = 88      
 TIER_CONF_BUFFER = 0.08 
 
-# DUAL-SENSOR CONSTANTS (v12.8 Refined)
-MIN_SILHOUETTE_GATE = 0.50     
-MIN_TEXTURE_GATE = 0.18        
+# FUSION CONSTANTS (v12.9 Shadows)
+SHADOW_TEX_WEIGHT = 0.55        
+SHADOW_SIL_WEIGHT = 0.45        
+MIN_FUSED_GATE = 0.32           # The "Recovery Floor" for shadow ores
 
 BULLY_PENALTIES = {
-    'rare1': 0.05, # v12.8: Added to prevent rare1 from out-matching high tiers
-    'epic1': 0.08, 'epic2': 0.08, 'epic3': 0.10,
-    'leg1': 0.12, 'leg2': 0.12, 'leg3': 0.14,
-    'myth1': 0.05, 'myth2': 0.08, 'myth3': 0.10,
-    'div1': 0.20, 'div2': 0.20, 'div3': 0.25, 
-    'com3': 0.05, 'dirt3': 0.03
+    'rare1': 0.03,              # v12.9: Reduced to prevent suppression of high tiers
+    'epic1': 0.05, 'epic2': 0.05, 'epic3': 0.07,
+    'leg1': 0.08, 'leg2': 0.08, 'leg3': 0.10,
+    'myth1': 0.04, 'myth2': 0.06, 'myth3': 0.08,
+    'div1': 0.15, 'div2': 0.15, 'div3': 0.20, 
+    'com3': 0.04
 }
 
 # Pre-cached masks
@@ -104,7 +105,7 @@ def load_all_templates():
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
     
-    print(f"Loading Multi-Sensor Standards (Plain Ores)...")
+    print(f"Loading Independent Fusion Standards...")
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
         if "_plain_" not in f.lower(): continue
@@ -129,14 +130,6 @@ def load_all_templates():
             templates[state][tier].append({
                 'id': f, 'img': img_rot, 'sil': get_silhouette_mask(img_rot), 'angle': angle, 'tier': tier, 'comp': get_complexity(img_rot)
             })
-    
-    active_tiers = set(templates['active'].keys())
-    shadow_tiers = set(templates['shadow'].keys())
-    print(f"  [ACTIVE] Loaded {len(active_tiers)} distinct tiers.")
-    print(f"  [SHADOW] Loaded {len(shadow_tiers)} distinct tiers.")
-    missing = active_tiers - shadow_tiers
-    if missing: print(f"  WARNING: Shadow state is missing templates for: {', '.join(missing)}")
-        
     return templates
 
 def draw_shadow_text(img, text, pos, font, scale, color, thick):
@@ -182,79 +175,62 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_proc = apply_texture_enhancement(roi_gray, target_state)
         roi_sil = get_silhouette_mask(roi_proc)
         
-        top_half, bot_half = roi_gray[0:SIDE_PX//2, :], roi_gray[SIDE_PX//2:SIDE_PX, :]
-        bot_e = get_complexity(bot_half)
-        active_mask = get_cached_mask(0.40, 0.12 if bot_e > 2000 else 0.0)
+        active_mask = get_cached_mask(0.40, 0.12 if get_complexity(roi_gray[SIDE_PX//2:,:]) > 2000 else 0.0)
         
-        texture_cands = []
-        sil_cands = []
-        
+        all_cands = []
         for tier, variants in templates[target_state].items():
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             for tpl in variants:
-                # Texture Sensor
                 res_tex = cv2.matchTemplate(roi_proc, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, s_tex, _, _ = cv2.minMaxLoc(res_tex)
-                texture_cands.append({'tier': tier, 'score': s_tex - penalty})
-                
-                # Geometry Sensor
                 res_sil = cv2.matchTemplate(roi_sil, tpl['sil'], cv2.TM_CCOEFF_NORMED)
                 _, s_sil, _, _ = cv2.minMaxLoc(res_sil)
-                sil_cands.append({'tier': tier, 'score': s_sil})
+                all_cands.append({'tier': tier, 'tex': s_tex - penalty, 'sil': s_sil})
 
-        # v12.8: CLEAN-ROOM DEDUPLICATION
-        # Consolidate rotation variants into unique tiers BEFORE ranking
-        t_df = pd.DataFrame(texture_cands).groupby('tier')['score'].max().reset_index().sort_values('score', ascending=False)
-        s_df = pd.DataFrame(sil_cands).groupby('tier')['score'].max().reset_index().sort_values('score', ascending=False)
+        # v12.9: TIER FUSION PIPELINE
+        # 1. Consolidate variants into unique tiers
+        df_raw = pd.DataFrame(all_cands)
+        tier_stats = []
+        for tier, group in df_raw.groupby('tier'):
+            best_tex = group['tex'].max()
+            best_sil = group['sil'].max()
+            # FUSION SCORE
+            if target_state == 'shadow':
+                fused = (best_tex * SHADOW_TEX_WEIGHT) + (best_sil * SHADOW_SIL_WEIGHT)
+            else:
+                fused = best_tex # Active remains texture-dominant
+            tier_stats.append({'tier': tier, 'score': fused, 'tex': best_tex, 'sil': best_sil})
+            
+        df_tiers = pd.DataFrame(tier_stats).sort_values('score', ascending=False)
+        top = df_tiers.iloc[0]
         
-        top_texture = t_df.iloc[0]
-        top_sil = s_df.iloc[0]
+        # 2. Statistical Contrast (Uniqueness)
+        z = (top['score'] - df_tiers['score'].mean()) / max(1e-6, df_tiers['score'].std())
         
         is_valid = False
         detected = 'low_conf_id'
-        final_score = top_texture['score']
         
         if target_state == 'active':
-            # v12.8: Measure Uniqueness against deduplicated tiers
-            z = (top_texture['score'] - t_df['score'].mean()) / max(1e-6, t_df['score'].std())
-            gate = 0.40 if any(f in top_texture['tier'] for f in ['dirt', 'com']) else 0.48
-            
-            is_valid = (top_texture['score'] > gate) or (z > 2.2 and top_texture['score'] > 0.20)
-            detected = top_texture['tier'] if is_valid else 'low_conf_id'
+            gate = 0.40 if any(f in top['tier'] for f in ['dirt', 'com']) else 0.45
+            is_valid = (top['score'] > gate) or (z > Z_TRUST_THRESHOLD and top['score'] > 0.18)
+            detected = top['tier'] if is_valid else 'low_conf_id'
         else:
-            # v12.8: Shadow Handshake (Rank-1 Agreement)
-            if top_texture['tier'] == top_sil['tier']:
-                # Rank 1 Agreement is a very strong signal
-                if top_texture['score'] > MIN_TEXTURE_GATE and top_sil['score'] > MIN_SILHOUETTE_GATE:
-                    detected = f"{top_texture['tier']}[S]"
-                    is_valid = True
-                    final_score = (top_texture['score'] + top_sil['score']) / 2
-            else:
-                # Top-3 Handshake fallback
-                t_list = t_df.head(3)['tier'].tolist()
-                s_list = s_df.head(3)['tier'].tolist()
-                common = [t for t in t_list if t in s_list]
-                if common:
-                    best_tier = common[0]
-                    t_val = t_df[t_df['tier'] == best_tier]['score'].iloc[0]
-                    s_val = s_df[s_df['tier'] == best_tier]['score'].iloc[0]
-                    if t_val > 0.25 and s_val > 0.60: # Higher bar for non-Rank-1 agreement
-                        detected = f"{best_tier}[S]"
-                        is_valid = True
-                        final_score = (t_val + s_val) / 2
+            # Shadow identification via fused agreement
+            is_valid = (top['score'] > MIN_FUSED_GATE) or (z > Z_TRUST_THRESHOLD and top['score'] > 0.15)
+            detected = f"{top['tier']}[F]" if is_valid else 'low_conf_id' # [F] for Fused
 
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         rx1, ry1 = int(ORE0_X + (col * STEP) - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
         draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        stat_str = f"{final_score:.2f} C:{int(roi_comp)}"
+        stat_str = f"{top['score']:.2f} Z:{z:.1f}"
         draw_shadow_text(img_color, stat_str, (rx1+3, ry1+10), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if is_valid: has_detections = True
-        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final_score, 4), 'xhair': xhair})
+        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(top['score'], 4), 'xhair': xhair})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"scalpel_v128_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"fusion_v129_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -266,7 +242,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v12.8: THE FORENSIC SCALPEL ---")
+    print(f"--- ORE ID AUDIT v12.9: THE INDEPENDENT FUSION ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -280,7 +256,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v12.8_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v12.9_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
