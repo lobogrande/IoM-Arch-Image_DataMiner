@@ -1,6 +1,6 @@
 # diag_shape_forensics.py
 # Purpose: Analyze physical silhouettes of ores to verify morphological consistency across all tiers.
-# Version: 1.1 (Comprehensive Tier Analysis)
+# Version: 1.2 (Clipping Detection & Stability Check)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -24,8 +24,10 @@ ROW4_Y = int(ORE0_Y + (3 * STEP)) + 2
 
 def get_silhouette(roi_gray):
     """Extracts a binary mask of the ore using adaptive thresholding."""
+    # Light blur to merge small noise into the background
     blurred = cv2.GaussianBlur(roi_gray, (5, 5), 0)
-    # Using Otsu thresholding to find the physical boundary
+    
+    # Otsu thresholding to find the strongest separation point
     _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
     # Check central region to determine if we need to invert (ensure ore is white)
@@ -37,21 +39,30 @@ def get_silhouette(roi_gray):
     return mask
 
 def analyze_shape(mask):
-    """Calculates geometric properties of the binary silhouette."""
+    """Calculates geometric properties of the binary silhouette and checks for clipping."""
+    h, w = mask.shape
+    max_area = h * w
+    
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours: return None
     
     # Pick the largest blob (the ore)
     cnt = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(cnt)
+    
+    # Logic: If the area is nearly the whole box, the sensor 'clipped' to the boundary
+    clipping = area > (max_area * 0.95)
+    
     moments = cv2.moments(cnt)
     hu = cv2.HuMoments(moments).flatten()
     
     # Log scale Hu moments for stability/readability
-    hu_log = -np.sign(hu) * np.log10(np.abs(hu))
+    hu_log = -np.sign(hu) * np.log10(np.abs(hu)) if np.any(hu) else [0.0]*7
     
     return {
-        'area': cv2.contourArea(cnt),
-        'hu1': hu_log[0]
+        'area': area,
+        'hu1': hu_log[0],
+        'clipping': clipping
     }
 
 def run_shape_audit():
@@ -62,7 +73,7 @@ def run_shape_audit():
 
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
     
-    print(f"--- COMPREHENSIVE MORPHOLOGICAL AUDIT ---")
+    print(f"--- COMPREHENSIVE MORPHOLOGICAL AUDIT v1.2 ---")
     
     all_stats = []
     for tier, pairs in TARGET_FRAMES.items():
@@ -82,24 +93,32 @@ def run_shape_audit():
             stats = analyze_shape(mask)
             
             if stats:
-                print(f"  {state.upper()}: Area={stats['area']:.1f}, Hu1={stats['hu1']:.4f}")
+                clip_tag = " [CLIPPED]" if stats['clipping'] else ""
+                print(f"  {state.upper()}: Area={stats['area']:.1f}, Hu1={stats['hu1']:.4f}{clip_tag}")
                 results.append(stats)
 
         if len(results) == 2:
-            area_diff = abs(results[0]['area'] - results[1]['area']) / max(1, results[0]['area'])
-            hu_diff = abs(results[0]['hu1'] - results[1]['hu1'])
-            print(f"  >> Consistency: Area Var={area_diff*100:.1f}%, Hu1 Delta={hu_diff:.4f}")
-            all_stats.append({
-                'tier': tier,
-                'area_var': round(area_diff, 3),
-                'hu_delta': round(hu_diff, 4)
-            })
+            # We only track consistency if at least one side isn't clipped
+            if not (results[0]['clipping'] and results[1]['clipping']):
+                area_diff = abs(results[0]['area'] - results[1]['area']) / max(1, results[0]['area'])
+                hu_diff = abs(results[0]['hu1'] - results[1]['hu1'])
+                print(f"  >> Consistency: Area Var={area_diff*100:.1f}%, Hu1 Delta={hu_diff:.4f}")
+                all_stats.append({
+                    'tier': tier,
+                    'area_var': round(area_diff, 3),
+                    'hu_delta': round(hu_diff, 4)
+                })
+            else:
+                print(f"  >> Consistency: [INCONCLUSIVE] Both states clipped to boundary.")
 
     if all_stats:
         df = pd.DataFrame(all_stats)
         print(f"\n--- FINAL FORENSIC SUMMARY ---")
-        print(f"Mean Hu1 Delta across library: {df['hu_delta'].mean():.4f}")
-        print(f"Most Consistent Tier: {df.loc[df['hu_delta'].idxmin(), 'tier']}")
+        print(f"Mean Hu1 Delta (Valid Shapes): {df['hu_delta'].mean():.4f}")
+        print(f"Most Geometric Consistent Tier: {df.loc[df['hu_delta'].idxmin(), 'tier']}")
+    else:
+        print("\n--- FINAL FORENSIC SUMMARY ---")
+        print("No valid non-clipped shapes found for consistency tracking.")
 
 if __name__ == "__main__":
     run_shape_audit()
