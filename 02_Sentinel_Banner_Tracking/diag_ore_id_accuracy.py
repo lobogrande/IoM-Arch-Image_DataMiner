@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 11.2 (The Spatial Guard: Bully Suppression & Anchor Recovery)
+# Version: 11.3 (The Spatial Guard: Top-K Rank Consensus)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -29,12 +29,13 @@ STATE_COMPLEXITY_THRESHOLD = 350
 LUMINANCE_SHADOW_FLOOR = 90      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
-TIER_CONF_BUFFER = 0.08 # Increased to favor target tiers over noise
+TIER_CONF_BUFFER = 0.08 
 
-# SPATIAL ADOPTION CONSTANTS (v11.2 Refined)
-ANCHOR_TRUST_FLOOR = 0.45      # Lowered to capture more signals
-ADOPTION_SCORE_FLOOR = 0.22    # Lowered to recover more shadows
-COMPLEXITY_PURITY_TOLERANCE = 0.35 # More lenient for adoption
+# TOP-K CONSENSUS CONSTANTS
+K_DEPTH = 5                    # Number of top candidates to consider per slot
+CONSENSUS_SLOT_MIN = 3         # Minimum number of slots that must agree
+ADOPTION_SCORE_FLOOR = 0.15    # Deep recovery floor
+COMPLEXITY_PURITY_TOLERANCE = 0.30 
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -53,9 +54,8 @@ def get_cached_mask(exclusion_top, exclusion_bot=0.0):
         CACHED_MASKS[key] = mask
     return CACHED_MASKS[key]
 
-# BULLY PENALTIES: Added com1 and increased epics to stop hallucinations
 BULLY_PENALTIES = {
-    'com1': 0.04,  # Targeted suppression for f63/f64 flipping
+    'com1': 0.04,
     'epic1': 0.07, 'epic2': 0.07, 'epic3': 0.09,
     'leg1': 0.10, 'leg2': 0.10, 'leg3': 0.12,
     'myth1': 0.05, 'myth2': 0.08, 'myth3': 0.10,
@@ -144,10 +144,6 @@ def load_all_templates():
                 'id': f, 'img': img_rot, 'angle': angle, 'tier': tier, 'sil': sil_rot, 'clipped': clip_rot,
                 'comp': get_complexity(apply_gamma_lift(img_rot, 0.6))
             })
-    
-    act_count = sum(len(v) for v in templates['active'].values())
-    sha_count = sum(len(v) for v in templates['shadow'].values())
-    print(f"  Loaded {act_count} Active and {sha_count} Shadow variants.")
     return templates
 
 def draw_shadow_text(img, text, pos, font, scale, color, thick):
@@ -163,7 +159,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y_base = int(ORE0_Y + (3 * STEP)) + 2
     
-    # 1. First Pass: Individual Slot Matching
+    # 1. First Pass: Exhaustive Slot Matching
     slot_matches = {}
     for col in range(6):
         default_data = {
@@ -214,7 +210,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
                 search_area = img_gray[y1:y1+SIDE_PX+2, x1:x1+SIDE_PX+4]
                 if search_area.shape[0] < SIDE_PX or search_area.shape[1] < SIDE_PX: continue
-                # Deep shadow gamma pass
                 gamma_lvl = 0.35 if target_state == 'shadow' else 0.5
                 search_lifted = apply_gamma_lift(search_area, gamma_lvl)
                 res = cv2.matchTemplate(search_lifted, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
@@ -237,95 +232,98 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 'final_score': scores[0]
         }
 
-    # 2. Global Consensus Engine
-    floor_votes = []
-    for col, data in slot_matches.items():
-        if data['status'] == 'empty_dna' or not data['candidates']: continue
-        top = data['candidates'][0]
-        vote_weight = 1.5 if top.get('shape_match') else 1.0
-        if top['score'] > 0.42 or data['z_score'] > Z_TRUST_THRESHOLD:
-            for _ in range(int(vote_weight)):
-                floor_votes.append(ORE_RESTRICTIONS.get(top['tier'], (1, 999)))
-    
-    consensus_range = Counter(floor_votes).most_common(1)[0][0] if floor_votes else (1, 999)
-    family_champions = {}
-    for col, data in slot_matches.items():
-        if data['status'] == 'empty_dna': continue
-        for cand in data['candidates']:
-            t_range = ORE_RESTRICTIONS.get(cand['tier'], (1, 999))
-            if t_range[0] <= consensus_range[1] and t_range[1] >= consensus_range[0]:
-                fam = ''.join([i for i in cand['tier'] if not i.isdigit()])
-                if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
-                    family_champions[fam] = {'tier': cand['tier'], 'score': cand['score']}
-
-    # 3. Anchor Identification (v11.2 Weighted Analysis)
-    row_votes = defaultdict(float)
+    # 2. Top-K Rank Consensus Engine (v11.3)
+    # Collect Top-K tiers for every slot in the row
+    row_top_k_counts = Counter()
+    slot_top_tiers = {}
     anchor_complexities = defaultdict(list)
     
     for col in range(6):
         data = slot_matches[col]
         if data['status'] == 'empty_dna': continue
-        valid_opts = [c for c in data['candidates'] if c['tier'] in [v['tier'] for v in family_champions.values()]]
-        if valid_opts:
-            valid_opts.sort(key=lambda x: x['score'], reverse=True)
-            final = valid_opts[0]
-            for ch in valid_opts[1:]:
-                # TIER_CONF_BUFFER Favoring Target Tiers
-                if 'dirt' in ch['tier'] or 'com' in ch['tier']:
-                    if ch['score'] > (final['score'] - TIER_CONF_BUFFER): final = ch
-            
-            gate = 0.42 if 'dirt' in final['tier'] else 0.54
-            is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
-            
-            data['is_valid'] = is_valid
-            data['detected'] = final['tier'] if is_valid else 'low_conf_id'
-            data['final_score'] = final['score']
-            
-            if is_valid and final['score'] > ANCHOR_TRUST_FLOOR:
-                weight = final['score'] * data['z_score']
-                row_votes[final['tier']] += weight
-                anchor_complexities[final['tier']].append(data['roi_comp'])
+        
+        # Get unique tiers in the top K for this slot
+        top_tiers = []
+        seen = set()
+        for cand in data['candidates'][:K_DEPTH]:
+            if cand['tier'] not in seen:
+                top_tiers.append(cand['tier'])
+                seen.add(cand['tier'])
+        
+        slot_top_tiers[col] = top_tiers
+        row_top_k_counts.update(top_tiers)
+        
+        # Record complexity for potential adoption anchoring
+        if data['final_score'] > 0.40:
+             anchor_complexities[data['candidates'][0]['tier']].append(data['roi_comp'])
 
-    # 4. Spatial Propagation (The Purity Pass)
-    sorted_votes = sorted(row_votes.items(), key=lambda x: x[1], reverse=True)
+    # Find the tier that appears in the most Top-K lists
+    sorted_signals = row_top_k_counts.most_common(2)
     row_signal = None
-    
-    if sorted_votes:
-        primary_tier, primary_weight = sorted_votes[0]
-        if len(sorted_votes) > 1:
-            secondary_tier, secondary_weight = sorted_votes[1]
-            if secondary_weight < (primary_weight * 0.6): # Relaxed purity
+    if sorted_signals:
+        primary_tier, freq = sorted_signals[0]
+        if freq >= CONSENSUS_SLOT_MIN:
+            # Purity check: if secondary signal is nearly as common, stay cautious
+            if len(sorted_signals) > 1:
+                sec_tier, sec_freq = sorted_signals[1]
+                if sec_freq < freq:
+                    row_signal = primary_tier
+            else:
                 row_signal = primary_tier
-        else:
-            row_signal = primary_tier
-            
-    if row_signal:
-        avg_anchor_comp = np.mean(anchor_complexities[row_signal])
-        for col in range(6):
-            data = slot_matches[col]
-            if data['status'] == 'occupied' and data['detected'] == 'low_conf_id':
-                comp_diff = abs(data['roi_comp'] - avg_anchor_comp) / max(1, avg_anchor_comp)
-                if comp_diff < COMPLEXITY_PURITY_TOLERANCE:
-                    for cand in data['candidates']:
-                        if cand['tier'] == row_signal and cand['score'] > ADOPTION_SCORE_FLOOR:
-                            data['detected'] = f"{row_signal}[A]"
-                            data['is_valid'] = True
-                            data['final_score'] = cand['score']
-                            break
 
-    # 5. Output and Rendering
+    # 3. Final Resolution with Top-K Adoption
     frame_results = []
     has_detections = False
     for col in range(6):
         data = slot_matches[col]
-        is_valid, detected = data['is_valid'], data['detected']
+        is_valid, detected = False, 'low_conf_id'
         
-        if is_valid and data['xhair'] != 'none':
-            detected, is_valid = "xhair_obscured", False
-        
+        if data['status'] == 'empty_dna':
+            detected = 'empty_dna'
+        else:
+            # Check individual validity first
+            final = data['candidates'][0]
+            # Preference logic for Dirt/Common in ambiguous zones
+            for ch in data['candidates'][1:3]:
+                if 'dirt' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
+                    final = ch
+            
+            gate = 0.42 if 'dirt' in final['tier'] else 0.54
+            is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
+            detected = final['tier'] if is_valid else 'low_conf_id'
+            
+            # Top-K Adoption Recovery
+            if not is_valid and row_signal:
+                # If row_signal is in THIS slot's top K and complexity matches
+                if row_signal in slot_top_tiers[col]:
+                    # Find candidate for row_signal
+                    sig_cand = next((c for c in data['candidates'] if c['tier'] == row_signal), None)
+                    if sig_cand and sig_cand['score'] > ADOPTION_SCORE_FLOOR:
+                        # Optional: Complexity purity gate
+                        if row_signal in anchor_complexities:
+                            avg_comp = np.mean(anchor_complexities[row_signal])
+                            comp_diff = abs(data['roi_comp'] - avg_comp) / max(1, avg_comp)
+                            if comp_diff < COMPLEXITY_PURITY_TOLERANCE:
+                                detected = f"{row_signal}[K]"
+                                is_valid = True
+                                final = sig_cand
+                        else:
+                            # If no strong anchor exists, adopt purely on Top-K rank if count is high (consensus)
+                            if row_top_k_counts[row_signal] >= 4:
+                                detected = f"{row_signal}[K]"
+                                is_valid = True
+                                final = sig_cand
+
+            if is_valid and data['xhair'] != 'none':
+                detected, is_valid = "xhair_obscured", False
+            
+            data['is_valid'] = is_valid
+            data['detected'] = detected
+            data['final_score'] = final['score']
+
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == 'empty_dna': color = (100, 100, 100)
-        elif detected == 'xhair_obscured': color = (0, 255, 255)
+        elif detected == "xhair_obscured": color = (0, 255, 255)
         
         rx1, ry1 = int(ORE0_X + (col * STEP) - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
@@ -338,13 +336,11 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(data['final_score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"spatial_v112_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"spatial_v113_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
-    if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV): 
-        print("Error: Required input CSVs missing.")
-        return
+    if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV): return
     if not os.path.exists(DEBUG_IMG_DIR): os.makedirs(DEBUG_IMG_DIR)
     
     dna_df = pd.read_csv(DNA_CSV, dtype={'r4_dna': str})
@@ -353,28 +349,26 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v11.2: THE FORENSIC ANCHOR ---")
+    print(f"--- ORE ID AUDIT v11.3: TOP-K RANK CONSENSUS ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
+    # Run only on first 500 frames for subset testing as requested
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:2000]}
+        futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:500]}
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
             try:
                 res = f.result()
                 if res: all_results.extend(res)
                 if i % 100 == 0: print(f"  Processed {i} frames...")
-            except Exception as e: print(f"  Worker Critical Error: {e}")
+            except Exception as e: print(f"  Worker Error: {e}")
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v11.2_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v11.3_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
-    else:
-        print("No results generated.")
-    print(f"--- DONE ---")
-
+    
 if __name__ == "__main__":
     run_precision_audit()
