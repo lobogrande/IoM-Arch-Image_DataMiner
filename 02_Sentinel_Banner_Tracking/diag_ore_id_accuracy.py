@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 11.9 (The Forensic Lockdown: Identity Locking & Structural Validation)
+# Version: 12.0 (The Temporal Anchor: State-Weighted Consensus)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -25,19 +25,22 @@ ROTATION_VARIANTS = [-3, 3]
 
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
-Z_LOCK_THRESHOLD = 2.6          # Z-score above which consensus cannot overwrite ID
+Z_LOCK_THRESHOLD = 2.6 
 STATE_COMPLEXITY_THRESHOLD = 320 
 LUMINANCE_SHADOW_FLOOR = 88      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
 TIER_CONF_BUFFER = 0.09 
 
-# CONSENSUS CONSTANTS
-HARD_CONSENSUS_MIN = 4         
+# CONSENSUS CONSTANTS (v12.0 Refined)
 ADOPTION_SCORE_FLOOR = 0.15    
 CONSENSUS_VOTE_FLOOR = 0.22    
 CONSENSUS_OVERWRITE_PROTECTION = 0.16 
-COMPLEXITY_VALIDATION_MARGIN = 0.20 # Max complexity diff for consensus adoption
+COMPLEXITY_VALIDATION_MARGIN = 0.20 
+
+# STATE VOTE WEIGHTS
+ACTIVE_VOTE_WEIGHT = 3.0       # Active ores are highly trusted
+SHADOW_VOTE_WEIGHT = 1.0       # Shadow ores are weak signals
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -215,6 +218,10 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         for tier, variants in templates[target_state].items():
             penalty = BULLY_PENALTIES.get(tier, 0.0)
+            # v12.0: Shadow State Penalty for simple families to prevent blob-defaults
+            if target_state == 'shadow' and any(f in tier for f in ['dirt', 'com']):
+                penalty += 0.05
+                
             for tpl in variants:
                 if not is_hit_frame and tpl['angle'] != 0: continue
                 
@@ -223,7 +230,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 if not roi_clipped and not tpl['clipped']:
                     shape_dist = cv2.matchShapes(roi_sil, tpl['sil'], cv2.CONTOURS_MATCH_I1, 0)
                     if shape_dist < SHAPE_MATCH_THRESHOLD:
-                        # v11.9: Even higher shape bonus for shadows (+0.20)
                         shape_bonus = 0.20 if target_state == 'shadow' else 0.05
                         shape_match_flag = True
                 
@@ -253,22 +259,40 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'final_score': scores[0], 'state': target_state
         }
 
-    # 2. PROACTIVE CONSENSUS PASS (v11.9)
-    row_signals = Counter()
+    # 2. STATE-WEIGHTED PROACTIVE CONSENSUS PASS (v12.0)
+    row_signal_weights = defaultdict(float)
     anchor_complexities = defaultdict(list)
+    has_active_anchor = False
+
+    # First Pass: Establish Anchor weights
     for col, data in slot_matches.items():
         if data['status'] == 'occupied' and data['candidates']:
             top = data['candidates'][0]
             if top['score'] > CONSENSUS_VOTE_FLOOR:
-                row_signals.update([top['tier']])
+                weight = ACTIVE_VOTE_WEIGHT if data['state'] == 'active' else SHADOW_VOTE_WEIGHT
+                row_signal_weights[top['tier']] += weight
                 anchor_complexities[top['tier']].append(top['comp'])
-    
+                if data['state'] == 'active': has_active_anchor = True
+
+    # If we have Active anchors, we discard Shadow votes to prevent noise-poisoning
+    if has_active_anchor:
+        # Re-calculate weights using only Active Ores
+        row_signal_weights = defaultdict(float)
+        for col, data in slot_matches.items():
+            if data['status'] == 'occupied' and data['state'] == 'active' and data['candidates']:
+                top = data['candidates'][0]
+                if top['score'] > CONSENSUS_VOTE_FLOOR:
+                    row_signal_weights[top['tier']] += ACTIVE_VOTE_WEIGHT
+
     consensus_signal = None
-    if row_signals:
-        top_sig, freq = row_signals.most_common(1)[0]
-        dynamic_min = max(3, min(4, occupied_count - 1))
-        if freq >= dynamic_min:
-            consensus_signal = top_sig
+    if row_signal_weights:
+        # Find strongest signal
+        sorted_sigs = sorted(row_signal_weights.items(), key=lambda x: x[1], reverse=True)
+        consensus_signal, total_weight = sorted_sigs[0]
+        
+        # Consensus threshold: Requires at least 3.0 weight (1 high-conf Active or 3 Shadows)
+        if total_weight < 3.0:
+            consensus_signal = None
 
     # 3. Final Resolution
     frame_results = []
@@ -283,13 +307,9 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             continue
             
         final = data['candidates'][0]
-        
-        # v11.9: Surgical Simplicity Bias (f910 fix)
         if data['state'] == 'active':
             for ch in data['candidates'][1:4]:
                 is_simple = any(f in ch['tier'] for f in ['dirt', 'com'])
-                is_complex = not is_simple
-                # Only favor simple over complex if margin is tight
                 if is_simple and any(f in final['tier'] for f in ['rare', 'epic', 'leg', 'myth']):
                     if ch['score'] > (final['score'] - TIER_CONF_BUFFER):
                         final = ch
@@ -300,25 +320,23 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
         detected = final['tier'] if is_valid else 'low_conf_id'
         
-        # v11.9: IDENTITY LOCK (f987 fix)
-        # If this slot has a very unique individual hit, refuse to let consensus override it
         is_locked = (data['z_score'] > Z_LOCK_THRESHOLD)
         
-        # PROACTIVE CONSENSUS ADOPTION with Structural Validation
+        # PROACTIVE CONSENSUS ADOPTION (f73/f910 fix)
         if not is_valid and consensus_signal and not is_locked:
             sig_opt = next((c for c in data['candidates'][:5] if c['tier'] == consensus_signal), None)
             if sig_opt and sig_opt['score'] > ADOPTION_SCORE_FLOOR:
-                # 1. Protection Check
                 score_delta = data['candidates'][0]['score'] - sig_opt['score']
                 if score_delta < CONSENSUS_OVERWRITE_PROTECTION:
-                    # 2. Structural Validation: Does signal complexity match ROI better than current Rank 1?
-                    avg_sig_comp = np.mean(anchor_complexities[consensus_signal])
-                    sig_comp_diff = abs(data['roi_comp'] - avg_sig_comp) / max(1, avg_sig_comp)
-                    
-                    if sig_comp_diff < COMPLEXITY_VALIDATION_MARGIN:
-                        detected = f"{consensus_signal}[C]"
-                        is_valid = True
-                        final = sig_opt
+                    # v12.0: If an Active anchor exists, we are more aggressive with adoption
+                    if has_active_anchor or (consensus_signal in anchor_complexities):
+                        avg_sig_comp = np.mean(anchor_complexities[consensus_signal]) if anchor_complexities[consensus_signal] else data['roi_comp']
+                        sig_comp_diff = abs(data['roi_comp'] - avg_sig_comp) / max(1, avg_sig_comp)
+                        
+                        if sig_comp_diff < COMPLEXITY_VALIDATION_MARGIN:
+                            detected = f"{consensus_signal}[C]"
+                            is_valid = True
+                            final = sig_opt
 
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == "xhair_obscured": color = (0, 255, 255)
@@ -327,14 +345,14 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
         draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-(5 if col%2==0 else 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
         stat_str = f"{final['score']:.2f} Z:{data.get('z_score',0):.1f}"
-        if is_locked: stat_str += " [L]" # [L] for Identity Locked
+        if is_locked: stat_str += " [L]" 
         draw_shadow_text(img_color, stat_str, (rx1+3, ry1+(10 if col%2==0 else 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if is_valid: has_detections = True
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v119_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v120_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -347,7 +365,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v11.9: THE FORENSIC LOCKDOWN ---")
+    print(f"--- ORE ID AUDIT v12.0: THE TEMPORAL ANCHOR ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -363,7 +381,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v11.9_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v12.0_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
