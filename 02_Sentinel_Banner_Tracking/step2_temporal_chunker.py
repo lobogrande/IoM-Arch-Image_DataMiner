@@ -1,7 +1,7 @@
 # step2_temporal_chunker.py
 # Purpose: Execute Master Plan Step 2 - Group frames into distinct floors using 
 #          Kinematic rules and Localized DNA Mode.
-# Version: 6.5 (The Micro-Block Fix: Consolidating Attack Pauses)
+# Version: 6.6 (The Infinite Gap Fix: Perfect Noise Smoothing)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -23,15 +23,17 @@ def run_temporal_chunking():
     buffer_dir = cfg.get_buffer_path(0)
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v6.5) ---")
+    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v6.6) ---")
     print(f"Processing {len(df)} frames using Game Physics...")
 
-    # 1. SLOT-STRICT MICRO-BLOCKING (v6.5: Increased Gap Tolerance)
-    # We increase the gap tolerance to 20 frames (~4 seconds).
-    # This prevents minor attack pauses/knockbacks from falsely splitting an attack, 
-    # allowing the mode() function to swallow transient fairy noise across the entire engagement.
-    df['gap'] = df['frame_idx'].diff().fillna(0)
-    df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | (df['gap'] > 20)).cumsum()
+    # 1. SLOT-STRICT MICRO-BLOCKING (v6.6: Infinite Gap Tolerance)
+    # A block breaks ONLY if the slot changes OR the raw Row 4 DNA changes.
+    # We remove all time-gap logic. If the player attacks Slot 2, pauses for 500 frames, 
+    # and attacks Slot 2 again, it is grouped together to calculate a perfect noise-free mode().
+    # The 'r4_dna' shift check ensures that fast floors (Floor 11 Slot 0 -> Floor 12 Slot 0)
+    # are not accidentally merged.
+    df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | 
+                      (df['r4_dna'] != df['r4_dna'].shift(1))).cumsum()
     
     blocks = []
     for block_id, group in df.groupby('block_id'):
