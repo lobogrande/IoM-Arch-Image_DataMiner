@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 11.7 (The Forensic Balance: Xhair Recalibration & Overwrite Guard)
+# Version: 11.8 (The Forensic Precision: Shadow Primacy & Identity Protection)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -31,11 +31,11 @@ MOD_ENERGY_RATIO_TRIGGER = 1.8
 SHAPE_MATCH_THRESHOLD = 0.05     
 TIER_CONF_BUFFER = 0.09 
 
-# CONSENSUS CONSTANTS
+# CONSENSUS CONSTANTS (v11.8 Hardened)
 HARD_CONSENSUS_MIN = 4         
 ADOPTION_SCORE_FLOOR = 0.15    
-CONSENSUS_VOTE_FLOOR = 0.20    
-CONSENSUS_OVERWRITE_PROTECTION = 0.12 # Rank 1 must not be > 0.12 higher than consensus cand
+CONSENSUS_VOTE_FLOOR = 0.22    # Raised to filter out noise-based voting
+CONSENSUS_OVERWRITE_PROTECTION = 0.16 # Protect individual rank 1 identity from hijack
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -73,7 +73,8 @@ def apply_texture_enhancement(img, state='active'):
     """Uses CLAHE and Normalization to bring out local crystalline texture."""
     if img is None or img.size == 0: return img
     normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-    clip = 2.8 if state == 'shadow' else 1.8
+    # v11.8: Higher clipLimit for shadows to reveal faint geometry
+    clip = 3.0 if state == 'shadow' else 1.8
     clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8,8))
     return clahe.apply(normalized)
 
@@ -96,11 +97,9 @@ def get_silhouette_data(img_gray):
     return thresh, is_clipped
 
 def detect_vibrant_crosshair(roi_bgr):
-    """v11.7: Recalibrated floors to prevent false positives on clean ores."""
     if roi_bgr is None or roi_bgr.size == 0: return "none", 0, 0
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-    # Increased Sat floor to 85 to ensure f185 dirt1 is not caught
     ranges = {
         'GOLD': ([12, 85, 85], [42, 255, 255]),
         'BLUE': ([95, 85, 85], [140, 255, 255]),
@@ -110,7 +109,6 @@ def detect_vibrant_crosshair(roi_bgr):
     for name, (low, high) in ranges.items():
         mask = cv2.inRange(hsv, np.array(low), np.array(high))
         px_count = cv2.countNonZero(mask)
-        # Increased px floor to 180
         if px_count > 180: 
             mean_sat = cv2.mean(s, mask=mask)[0]
             if mean_sat > 110:
@@ -185,7 +183,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_bgr = img_color[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         roi_gray = img_gray[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         
-        # 1. CROSSHAIR BYPASS (v11.7 Recalibrated)
         xhair, xh_px, xh_sat = detect_vibrant_crosshair(roi_bgr)
         if xhair != 'none':
             slot_matches[col] = default_data
@@ -219,11 +216,14 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             for tpl in variants:
                 if not is_hit_frame and tpl['angle'] != 0: continue
-                shape_bonus, shape_match_flag = 0.0, False
+                
+                # v11.8: Increased Shadow Silhouette Bonus (+0.10) to prioritize geometry
+                shape_bonus = 0.0
+                shape_match_flag = False
                 if not roi_clipped and not tpl['clipped']:
                     shape_dist = cv2.matchShapes(roi_sil, tpl['sil'], cv2.CONTOURS_MATCH_I1, 0)
                     if shape_dist < SHAPE_MATCH_THRESHOLD:
-                        shape_bonus = 0.05
+                        shape_bonus = 0.10 if target_state == 'shadow' else 0.05
                         shape_match_flag = True
                 
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
@@ -252,7 +252,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'final_score': scores[0], 'state': target_state
         }
 
-    # 2. PROACTIVE CONSENSUS PASS (v11.7)
+    # 2. PROACTIVE CONSENSUS PASS (v11.8)
     row_signals = Counter()
     for col, data in slot_matches.items():
         if data['status'] == 'occupied' and data['candidates']:
@@ -279,24 +279,28 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             continue
             
         final = data['candidates'][0]
-        if data['state'] == 'active':
-            for ch in data['candidates'][1:3]:
-                if 'dirt1' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
-                    final = ch
         
-        # v11.7: Loosened gate for com/epic recovery
-        gate = 0.40 if 'dirt' in final['tier'] else 0.48
-        if data['z_score'] > 2.5: gate -= 0.05 # Z-Trust bonus recovery
+        # v11.8: Global Simplicity Bias (Favor Dirt and Common families generally)
+        if data['state'] == 'active':
+            for ch in data['candidates'][1:4]:
+                is_simple = any(f in ch['tier'] for f in ['dirt', 'com'])
+                # Only bias if current winner is a 'higher' tier (Rare/Epic/etc)
+                if is_simple and not any(f in final['tier'] for f in ['dirt', 'com']):
+                    if ch['score'] > (final['score'] - TIER_CONF_BUFFER):
+                        final = ch
+        
+        gate = 0.40 if any(f in final['tier'] for f in ['dirt', 'com']) else 0.48
+        if data['z_score'] > 2.5: gate -= 0.05 
         
         is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
         detected = final['tier'] if is_valid else 'low_conf_id'
         
-        # OVERWRITE GUARD (f155 fix): Don't let consensus steal a high-score individual match
+        # OVERWRITE GUARD (f155/f987 fix): Protect high-certainty individual calls
         if not is_valid and consensus_signal:
             sig_opt = next((c for c in data['candidates'][:5] if c['tier'] == consensus_signal), None)
             if sig_opt and sig_opt['score'] > ADOPTION_SCORE_FLOOR:
-                # Only adopt if the Rank 1 score is NOT drastically better than the consensus candidate
-                if (final['score'] - sig_opt['score']) < CONSENSUS_OVERWRITE_PROTECTION:
+                # Rank 1 must not be > 0.16 better than consensus option
+                if (data['candidates'][0]['score'] - sig_opt['score']) < CONSENSUS_OVERWRITE_PROTECTION:
                     detected = f"{consensus_signal}[C]"
                     is_valid = True
                     final = sig_opt
@@ -314,7 +318,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v117_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v118_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -327,7 +331,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v11.7: THE FORENSIC BALANCE ---")
+    print(f"--- ORE ID AUDIT v11.8: THE FORENSIC PRECISION ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -343,7 +347,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v11.7_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v11.8_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
