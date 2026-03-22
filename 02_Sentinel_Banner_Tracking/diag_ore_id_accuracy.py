@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 12.7 (The Forensic Auditor: Tier Deduplication & Rank Agreement)
+# Version: 12.7.1 (The Forensic Recovery: Handshake Expansion & Gate Removal)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -29,10 +29,10 @@ STATE_COMPLEXITY_THRESHOLD = 320
 LUMINANCE_SHADOW_FLOOR = 88      
 TIER_CONF_BUFFER = 0.08 
 
-# DUAL-SENSOR CONSTANTS (v12.7 Shadows)
-MIN_SILHOUETTE_GATE = 0.52     
-MIN_TEXTURE_GATE = 0.20        
-SENSOR_AGREEMENT_DEPTH = 2     # Deduplicated Rank Agreement
+# DUAL-SENSOR CONSTANTS (v12.7.1 Relaxed)
+MIN_SILHOUETTE_GATE = 0.50     
+MIN_TEXTURE_GATE = 0.18        
+SENSOR_AGREEMENT_DEPTH = 5     # Increased from 2 to allow agreement further down the list
 
 BULLY_PENALTIES = {
     'epic1': 0.08, 'epic2': 0.08, 'epic3': 0.10,
@@ -131,9 +131,15 @@ def load_all_templates():
             })
     
     # Audit Diagnostic
-    for state in ['active', 'shadow']:
-        distinct_tiers = list(templates[state].keys())
-        print(f"  [{state.upper()}] Loaded {len(distinct_tiers)} distinct tiers: {', '.join(distinct_tiers)}")
+    active_tiers = set(templates['active'].keys())
+    shadow_tiers = set(templates['shadow'].keys())
+    
+    print(f"  [ACTIVE] Loaded {len(active_tiers)} distinct tiers.")
+    print(f"  [SHADOW] Loaded {len(shadow_tiers)} distinct tiers.")
+    
+    missing = active_tiers - shadow_tiers
+    if missing:
+        print(f"  WARNING: Shadow state is missing templates for: {', '.join(missing)}")
         
     return templates
 
@@ -193,23 +199,22 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 # Sensor 1: Texture
                 res_tex = cv2.matchTemplate(roi_proc, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, s_tex, _, _ = cv2.minMaxLoc(res_tex)
-                texture_cands.append({'tier': tier, 'score': s_tex - penalty})
+                texture_cands.append({'tier': tier, 'score': s_tex - penalty, 'raw_s': s_tex})
                 
                 # Sensor 2: Geometry
                 res_sil = cv2.matchTemplate(roi_sil, tpl['sil'], cv2.TM_CCOEFF_NORMED)
                 _, s_sil, _, _ = cv2.minMaxLoc(res_sil)
                 sil_cands.append({'tier': tier, 'score': s_sil})
 
-        # v12.7: DEDUPLICATION PASS (Group by Tier to prevent Rotation Clogging)
+        # Process Sensor Rankings
         t_df_raw = pd.DataFrame(texture_cands)
         s_df_raw = pd.DataFrame(sil_cands)
         
-        # Keep only the best variant per tier
-        t_df = t_df_raw.groupby('tier')['score'].max().reset_index().sort_values('score', ascending=False)
-        s_df = s_df_raw.groupby('tier')['score'].max().reset_index().sort_values('score', ascending=False)
+        # Deduplication for decision logic
+        t_df_dedup = t_df_raw.groupby('tier')['score'].max().reset_index().sort_values('score', ascending=False)
+        s_df_dedup = s_df_raw.groupby('tier')['score'].max().reset_index().sort_values('score', ascending=False)
         
-        top_texture = t_df.iloc[0]
-        top_sil = s_df.iloc[0]
+        top_texture = t_df_dedup.iloc[0]
         
         is_valid = False
         detected = 'low_conf_id'
@@ -217,35 +222,25 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         if target_state == 'active':
             gate = 0.40 if any(f in top_texture['tier'] for f in ['dirt', 'com']) else 0.48
-            # Z-score on unique tiers only
-            z = (top_texture['score'] - t_df['score'].mean()) / max(1e-6, t_df['score'].std())
+            # v12.7.1: Calculate Z-score on raw variants to maintain contrast sensitivity
+            z = (top_texture['score'] - t_df_raw['score'].mean()) / max(1e-6, t_df_raw['score'].std())
             is_valid = (top_texture['score'] > gate) or (z > 2.5 and top_texture['score'] > 0.20)
             detected = top_texture['tier'] if is_valid else 'low_conf_id'
         else:
-            # Shadow Witness agreement on Deduplicated tiers
-            t_top_list = t_df.head(SENSOR_AGREEMENT_DEPTH)['tier'].tolist()
-            s_top_list = s_df.head(SENSOR_AGREEMENT_DEPTH)['tier'].tolist()
+            # Shadow Handshake Agreement
+            t_top_list = t_df_dedup.head(SENSOR_AGREEMENT_DEPTH)['tier'].tolist()
+            s_top_list = s_df_dedup.head(SENSOR_AGREEMENT_DEPTH)['tier'].tolist()
             
-            # Find agreement
             matches = [t for t in t_top_list if t in s_top_list]
             if matches:
                 best_tier = matches[0]
-                best_sil_val = s_df[s_df['tier'] == best_tier]['score'].iloc[0]
-                best_tex_val = t_df[t_df['tier'] == best_tier]['score'].iloc[0]
+                best_sil_val = s_df_dedup[s_df_dedup['tier'] == best_tier]['score'].iloc[0]
+                best_tex_val = t_df_dedup[t_df_dedup['tier'] == best_tier]['score'].iloc[0]
                 
-                # Success condition: agreement + minimal quality gates
-                if best_sil_val > MIN_SILHOUETTE_GATE and best_tex_val > MIN_TEXTURE_GATE:
+                if best_sil_val > MIN_SIL_HUETTE_GATE and best_tex_val > MIN_TEXTURE_GATE:
                     detected = f"{best_tier}[S]"
                     is_valid = True
                     final_score = (best_sil_val + best_tex_val) / 2
-        
-        # Complexity Validation (v12.7: Tuned bandwidths)
-        if is_valid:
-            is_simple = any(f in detected for f in ['dirt', 'com'])
-            if is_simple and roi_comp > 500: # Slightly relaxed
-                is_valid, detected = False, 'low_conf_id'
-            elif not is_simple and roi_comp < 120: # Slightly relaxed
-                is_valid, detected = False, 'low_conf_id'
 
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         rx1, ry1 = int(ORE0_X + (col * STEP) - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
@@ -258,7 +253,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final_score, 4), 'xhair': xhair})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"auditor_v127_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"auditor_v1271_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -270,7 +265,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v12.7: THE FORENSIC AUDITOR ---")
+    print(f"--- ORE ID AUDIT v12.7.1: THE FORENSIC RECOVERY ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
