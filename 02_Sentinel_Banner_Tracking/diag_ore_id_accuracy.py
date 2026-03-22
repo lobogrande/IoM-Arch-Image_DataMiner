@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 11.5 (The Purity Guard: Strict Xhair Bypass & Consensus Filtering)
+# Version: 11.6 (The Forensic Shield: High-Sensitivity Xhair Guard & State-Aware Bias)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -29,12 +29,11 @@ STATE_COMPLEXITY_THRESHOLD = 320
 LUMINANCE_SHADOW_FLOOR = 88      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
-TIER_CONF_BUFFER = 0.09 # Refined to prevent Dirt1 shadow-bullying
+TIER_CONF_BUFFER = 0.09 
 
-# CONSENSUS CONSTANTS
-HARD_CONSENSUS_MIN = 4         
-ADOPTION_SCORE_FLOOR = 0.20    
-CONSENSUS_VOTE_FLOOR = 0.25    # Minimum score for a candidate to 'vote' for row signal
+# CONSENSUS CONSTANTS (v11.6 Refined)
+ADOPTION_SCORE_FLOOR = 0.15    # Deep recovery for shadow consensus
+CONSENSUS_VOTE_FLOOR = 0.18    # Lower floor to let shadow ores vote
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -72,7 +71,8 @@ def apply_texture_enhancement(img, state='active'):
     """Uses CLAHE and Normalization to bring out local crystalline texture."""
     if img is None or img.size == 0: return img
     normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-    clip = 2.5 if state == 'shadow' else 1.8
+    # Deeper enhancement for shadow states
+    clip = 2.8 if state == 'shadow' else 1.8
     clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8,8))
     return clahe.apply(normalized)
 
@@ -95,21 +95,24 @@ def get_silhouette_data(img_gray):
     return thresh, is_clipped
 
 def detect_vibrant_crosshair(roi_bgr):
+    """v11.6: High-sensitivity color detection to prevent consensus poisoning."""
     if roi_bgr is None or roi_bgr.size == 0: return "none", 0, 0
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
+    # Lowered floors to 70 to ensure f81 blue crosshair is caught
     ranges = {
-        'GOLD': ([12, 110, 110], [42, 255, 255]),
-        'BLUE': ([95, 110, 110], [140, 255, 255]),
-        'RED':  ([0, 110, 110], [10, 255, 255]),
-        'RED2': ([165, 110, 110], [180, 255, 255])
+        'GOLD': ([12, 70, 70], [42, 255, 255]),
+        'BLUE': ([95, 70, 70], [140, 255, 255]),
+        'RED':  ([0, 70, 70], [10, 255, 255]),
+        'RED2': ([165, 70, 70], [180, 255, 255])
     }
     for name, (low, high) in ranges.items():
         mask = cv2.inRange(hsv, np.array(low), np.array(high))
         px_count = cv2.countNonZero(mask)
-        if px_count > 200: 
+        # Reduced px floor to 150 for partial obscuration
+        if px_count > 150: 
             mean_sat = cv2.mean(s, mask=mask)[0]
-            if mean_sat > 140:
+            if mean_sat > 100:
                 return name.rstrip('2'), px_count, round(mean_sat, 1)
     return "none", 0, 0
 
@@ -161,11 +164,13 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y_base = int(ORE0_Y + (3 * STEP)) + 2
     
+    # Track non-obscured occupied slots for consensus logic
+    occupied_count = 0
     slot_matches = {}
     for col in range(6):
         default_data = {
             'status': 'empty_dna', 'candidates': [], 'z_score': 0, 'is_valid': False, 'detected': 'empty_dna',
-            'xhair': 'none', 'xhair_sat': 0, 'xhair_px': 0, 'ratio': 0, 'roi_comp': 0, 'final_score': 0.0
+            'xhair': 'none', 'xhair_sat': 0, 'xhair_px': 0, 'ratio': 0, 'roi_comp': 0, 'final_score': 0.0, 'state': 'none'
         }
         if r4_dna[col] == '0':
             slot_matches[col] = default_data
@@ -180,7 +185,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_bgr = img_color[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         roi_gray = img_gray[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         
-        # 1. IMMEDIATE CROSSHAIR BYPASS (Safety First)
+        # 1. IMMEDIATE HIGH-SENSITIVITY CROSSHAIR BYPASS
         xhair, xh_px, xh_sat = detect_vibrant_crosshair(roi_bgr)
         if xhair != 'none':
             slot_matches[col] = default_data
@@ -190,6 +195,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             })
             continue
 
+        occupied_count += 1
         top_half, bot_half = roi_gray[0:SIDE_PX//2, :], roi_gray[SIDE_PX//2:SIDE_PX, :]
         top_e, bot_e = get_complexity(top_half), get_complexity(bot_half)
         ratio = top_e / max(1, bot_e)
@@ -242,22 +248,24 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             
         slot_matches[col] = {
             'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'is_valid': False,
-            'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 'final_score': scores[0]
+            'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 
+            'final_score': scores[0], 'state': target_state
         }
 
-    # 2. PROACTIVE CONSENSUS PASS (v11.5)
-    # Collect signals based on Top-2 Rankings, but with a VOTE_FLOOR
+    # 2. STATE-AWARE PROACTIVE CONSENSUS PASS (v11.6)
+    # Collect signals based on Top-2 Rankings, requiring VOTE_FLOOR
     row_signals = Counter()
     for col, data in slot_matches.items():
         if data['status'] == 'occupied' and data['candidates']:
-            # Only allow slots with a minimum match score to vote
             valid_votes = [c['tier'] for c in data['candidates'][:2] if c['score'] > CONSENSUS_VOTE_FLOOR]
             row_signals.update(valid_votes)
     
     consensus_signal = None
     if row_signals:
         top_sig, freq = row_signals.most_common(1)[0]
-        if freq >= HARD_CONSENSUS_MIN:
+        # Dynamic Consensus Threshold: Requires a majority of occupied slots
+        dynamic_min = max(3, min(4, occupied_count - 1))
+        if freq >= dynamic_min:
             consensus_signal = top_sig
 
     # 3. Final Resolution
@@ -273,10 +281,13 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             continue
             
         final = data['candidates'][0]
-        # Protect Dirt1 from Rare1 Noise (Simplicity Bias)
-        for ch in data['candidates'][1:3]:
-            if 'dirt1' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
-                final = ch
+        
+        # FIX: Simplicity Bias (Dirt1 Favor) only triggers in ACTIVE states.
+        # This prevents shadow rare1 from being 'downgraded' in f73.
+        if data['state'] == 'active':
+            for ch in data['candidates'][1:3]:
+                if 'dirt1' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
+                    final = ch
         
         gate = 0.40 if 'dirt' in final['tier'] else 0.52
         is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
@@ -284,7 +295,8 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         # PROACTIVE CONSENSUS ADOPTION
         if not is_valid and consensus_signal:
-            sig_opt = next((c for c in data['candidates'][:5] if c['tier'] == consensus_signal), None)
+            # Rank-based verification: only adopt if signal is in Top 3
+            sig_opt = next((c for c in data['candidates'][:3] if c['tier'] == consensus_signal), None)
             if sig_opt and sig_opt['score'] > ADOPTION_SCORE_FLOOR:
                 detected = f"{consensus_signal}[C]"
                 is_valid = True
@@ -303,7 +315,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v115_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v116_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -316,7 +328,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v11.5: THE PURITY GUARD ---")
+    print(f"--- ORE ID AUDIT v11.6: THE FORENSIC SHIELD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -332,7 +344,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v11.5_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v11.6_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
