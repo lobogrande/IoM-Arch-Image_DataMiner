@@ -29,7 +29,7 @@ STATE_COMPLEXITY_THRESHOLD = 320
 LUMINANCE_SHADOW_FLOOR = 88      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
-TIER_CONF_BUFFER = 0.12 # Increased to protect Dirt1 from noise-bullying
+TIER_CONF_BUFFER = 0.12 
 
 # CONSENSUS CONSTANTS
 HARD_CONSENSUS_MIN = 4         # Slots required to force a row-wide ID
@@ -70,17 +70,10 @@ ORE_RESTRICTIONS = {
 def apply_texture_enhancement(img, state='active'):
     """Uses CLAHE and Normalization to bring out local crystalline texture."""
     if img is None or img.size == 0: return img
-    
-    # 1. Histogram Normalization to stretch the dynamic range
     normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-    
-    # 2. CLAHE (Local Contrast)
-    # ClipLimit 2.0-3.0 is sweet spot for ores
     clip = 2.5 if state == 'shadow' else 1.8
     clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8,8))
-    enhanced = clahe.apply(normalized)
-    
-    return enhanced
+    return clahe.apply(normalized)
 
 def rotate_image(image, angle):
     center = (image.shape[1] // 2, image.shape[0] // 2)
@@ -138,7 +131,6 @@ def load_all_templates():
         if tier not in templates[state]: templates[state][tier] = []
         
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
-        # Templates must be processed with the same texture enhancement
         img_proc = apply_texture_enhancement(img_scaled, state)
         sil, clipped = get_silhouette_data(img_proc)
         
@@ -154,6 +146,11 @@ def load_all_templates():
                 'comp': get_complexity(img_rot)
             })
     return templates
+
+def draw_shadow_text(img, text, pos, font, scale, color, thick):
+    """Utility function for high-contrast OSD rendering."""
+    cv2.putText(img, text, (pos[0]+1, pos[1]+1), font, scale, (0,0,0), thick+1)
+    cv2.putText(img, text, pos, font, scale, color, thick)
 
 def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     f_idx = frame_data['frame_idx']
@@ -189,7 +186,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         ratio = top_e / max(1, bot_e)
         mean_lum = np.mean(roi_gray)
         
-        # 1. State Selection & Texture Enhancement
         roi_norm_diag = cv2.normalize(roi_gray, None, 0, 255, cv2.NORM_MINMAX)
         roi_comp = get_complexity(roi_norm_diag)
         target_state = 'active' if (roi_comp > STATE_COMPLEXITY_THRESHOLD or mean_lum > LUMINANCE_SHADOW_FLOOR) else 'shadow'
@@ -240,8 +236,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 'final_score': scores[0]
         }
 
-    # 2. Proactive Consensus Pass (v11.4)
-    # Collect signals based on Top-2 Rankings
+    # 2. Proactive Consensus Pass
     row_signals = Counter()
     for col, data in slot_matches.items():
         if data['status'] == 'occupied' and data['candidates']:
@@ -253,7 +248,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         if freq >= HARD_CONSENSUS_MIN:
             consensus_signal = top_sig
 
-    # 3. Final Resolution with Purity & Consensus Adoption
+    # 3. Final Resolution
     frame_results = []
     has_detections = False
     for col in range(6):
@@ -263,7 +258,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             continue
             
         final = data['candidates'][0]
-        # RECOVERY: Simplicity Bias (Protect Dirt1 from Rare1 Noise)
         for ch in data['candidates'][1:3]:
             if 'dirt1' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
                 final = ch
@@ -272,12 +266,10 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
         detected = final['tier'] if is_valid else 'low_conf_id'
         
-        # PROACTIVE CONSENSUS ADOPTION
         if not is_valid and consensus_signal:
-            # Check if consensus exists in this slot's Top 5
             sig_opt = next((c for c in data['candidates'][:5] if c['tier'] == consensus_signal), None)
             if sig_opt and sig_opt['score'] > ADOPTION_SCORE_FLOOR:
-                detected = f"{consensus_signal}[C]" # [C] for Consensus
+                detected = f"{consensus_signal}[C]"
                 is_valid = True
                 final = sig_opt
 
@@ -315,13 +307,15 @@ def run_precision_audit():
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
+        # Running on first 500 frames for verification
         futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:500]}
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
             try:
                 res = f.result()
                 if res: all_results.extend(res)
                 if i % 100 == 0: print(f"  Processed {i} frames...")
-            except Exception as e: print(f"  Worker Error: {e}")
+            except Exception as e: 
+                print(f"  Worker Error: {e}")
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
