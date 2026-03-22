@@ -1,7 +1,7 @@
 # step3_boundary_verifier.py
 # Purpose: Master Plan Step 3 - Finalize floor boundaries by scanning backward 
 #          from Step 2 anchors to find the exact DNA shift frame.
-# Version: 1.0 (The Boundary Scalpel)
+# Version: 1.1 (The Boundary Scalpel - KeyError Fix)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -71,7 +71,8 @@ def run_boundary_verification():
         # Determine how far back we can scan
         limit_idx = 0
         if i > 0:
-            limit_idx = final_boundaries[-1]['start_frame'] + 1
+            # Fix: Use 'true_start_frame' instead of 'start_frame'
+            limit_idx = final_boundaries[-1]['true_start_frame'] + 1
             
         print(f"Floor {floor_id:03d}: Scanning back from {anchor_idx} (Limit: {limit_idx})...", end="\r")
         
