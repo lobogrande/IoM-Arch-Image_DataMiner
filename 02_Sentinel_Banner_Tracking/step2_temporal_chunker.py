@@ -1,7 +1,7 @@
 # step2_temporal_chunker.py
 # Purpose: Execute Master Plan Step 2 - Group frames into distinct floors using 
 #          Kinematic rules and Strict Row 4 Immutability.
-# Version: 7.1 (The Final Polish: R4 Micro-Despeckle)
+# Version: 7.2 (Slot-Bound R4 Micro-Despeckle)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -50,12 +50,22 @@ def run_temporal_chunking():
     buffer_dir = cfg.get_buffer_path(0)
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v7.1) ---")
+    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v7.2) ---")
     print(f"Processing {len(df)} frames using Row 4 Anchoring...")
 
-    # 0. MICRO-DESPECKLE ROW 4
-    # We apply a tiny 2-frame filter to erase falling ores without erasing fast floors.
-    df['r4_clean'] = despeckle_series(df['r4_dna'], max_glitch_len=2)
+    # 0. MICRO-DESPECKLE ROW 4 (SLOT-BOUND)
+    # We MUST apply this tiny 2-frame filter STRICTLY within a contiguous slot engagement.
+    # If applied globally, it falsely erases genuine 1-2 frame floors (like Floor 31) 
+    # if the DNA happened to revert after the player teleported.
+    df['slot_chunk'] = (df['slot_id'] != df['slot_id'].shift(1)).cumsum()
+    
+    def clean_r4(g):
+        g = g.copy()
+        g['r4_clean'] = despeckle_series(g['r4_dna'], max_glitch_len=2)
+        return g
+        
+    df = df.groupby('slot_chunk', group_keys=False).apply(clean_r4)
+    df = df.sort_values('frame_idx').reset_index(drop=True)
 
     # 1. MICRO-BLOCKING (Slot & Cleaned R4)
     # A block breaks ONLY if the slot changes OR the cleaned Row 4 DNA changes.
