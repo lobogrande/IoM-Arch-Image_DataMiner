@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 12.2 (The Forensic Dictator: Anchor Dominance & Complexity Parity)
+# Version: 12.3 (The Forensic Overdrive: Dictator Overwrite & Gate Relaxation)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -26,22 +26,22 @@ ROTATION_VARIANTS = [-3, 3]
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
 Z_LOCK_THRESHOLD = 2.6 
-Z_SOVEREIGN_LOCK = 3.2          # Higher threshold for absolute immunity
+Z_SOVEREIGN_LOCK = 2.8          # v12.3: Lowered to protect epic1 in f987
 STATE_COMPLEXITY_THRESHOLD = 320 
 LUMINANCE_SHADOW_FLOOR = 88      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
-TIER_CONF_BUFFER = 0.09 
+TIER_CONF_BUFFER = 0.10 
 
-# CONSENSUS CONSTANTS (v12.2 Hardened)
-ADOPTION_SCORE_FLOOR = 0.12    # Deeper recovery for dictator adoption
+# CONSENSUS CONSTANTS
+ADOPTION_SCORE_FLOOR = 0.12    
 CONSENSUS_VOTE_FLOOR = 0.22    
 CONSENSUS_OVERWRITE_PROTECTION = 0.16 
-COMPLEXITY_VALIDATION_MARGIN = 0.25 # Relaxed for cross-state validation
+COMPLEXITY_VALIDATION_MARGIN = 0.40 # v12.3: Relaxed to prevent rejection of valid consensus
 
 # STATE VOTE WEIGHTS
-ACTIVE_VOTE_WEIGHT = 10.0      # Dictatorial weight for active ores
-SHADOW_VOTE_WEIGHT = 0.5       # Shadow votes are treated as noise unless consensus is huge
+ACTIVE_VOTE_WEIGHT = 15.0      # v12.3: Even more dominance for active ores
+SHADOW_VOTE_WEIGHT = 0.5       
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -219,7 +219,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         for tier, variants in templates[target_state].items():
             penalty = BULLY_PENALTIES.get(tier, 0.0)
-            if target_state == 'shadow' and any(f in tier for f in ['dirt', 'com']): penalty += 0.08
+            if target_state == 'shadow' and any(f in tier for f in ['dirt', 'com']): penalty += 0.10 # Hardened
             
             for tpl in variants:
                 if not is_hit_frame and tpl['angle'] != 0: continue
@@ -240,9 +240,8 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 res = cv2.matchTemplate(search_proc, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
-                # Surgical affinity for tie-breaking com1/dirt2
                 affinity = 0.0
-                if tier == 'com1' and ratio > 1.2: affinity += 0.05
+                if tier == 'com1' and ratio > 1.4: affinity += 0.08 # Targeted com1 fix
                 elif tier == 'dirt2' and ratio < 0.9: affinity += 0.05
                 
                 all_candidates.append({'tier': tier, 'score': score - penalty + affinity + shape_bonus, 'shape_match': shape_match_flag, 'comp': tpl['comp']})
@@ -262,9 +261,8 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'final_score': scores[0], 'state': target_state
         }
 
-    # 2. DICTATOR ANCHOR PASS (v12.2)
+    # 2. DICTATOR ANCHOR PASS (v12.3)
     row_signal_weights = defaultdict(float)
-    anchor_complexities = defaultdict(lambda: defaultdict(list)) # nested: tier -> state -> list
     has_active_anchor = False
 
     for col, data in slot_matches.items():
@@ -273,10 +271,9 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             if top['score'] > CONSENSUS_VOTE_FLOOR:
                 weight = ACTIVE_VOTE_WEIGHT if data['state'] == 'active' else SHADOW_VOTE_WEIGHT
                 row_signal_weights[top['tier']] += weight
-                anchor_complexities[top['tier']][data['state']].append(top['comp'])
-                if data['state'] == 'active' and top['score'] > 0.42: has_active_anchor = True
+                if data['state'] == 'active' and top['score'] > 0.45: has_active_anchor = True
 
-    # Active Sovereign Filter
+    # Dictatorship Filter: If an active anchor exists, ignore shadow "noise" votes
     if has_active_anchor:
         row_signal_weights = defaultdict(float)
         for col, data in slot_matches.items():
@@ -288,7 +285,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     consensus_signal = None
     if row_signal_weights:
         sorted_sigs = sorted(row_signal_weights.items(), key=lambda x: x[1], reverse=True)
-        if sorted_sigs[0][1] >= 5.0: # Requires dictatorial strength
+        if sorted_sigs[0][1] >= 10.0: # v12.3: High bar for Dictatorship
             consensus_signal = sorted_sigs[0][0]
 
     # 3. Final Resolution
@@ -304,13 +301,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             continue
             
         final = data['candidates'][0]
-        
-        # Tie-break bias (f910 fix)
-        if data['state'] == 'active' and not consensus_signal:
-            for ch in data['candidates'][1:3]:
-                if 'com1' in ch['tier'] and data['ratio'] > 1.3:
-                    if ch['score'] > (final['score'] - 0.05): final = ch
-
         gate = 0.40 if any(f in final['tier'] for f in ['dirt', 'com']) else 0.48
         if data['z_score'] > 2.5: gate -= 0.05 
         
@@ -319,21 +309,26 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         
         is_sovereign = (data['z_score'] > Z_SOVEREIGN_LOCK)
         
-        # ACTIVE OVERRIDE ADOPTION (f73 fix)
-        if not is_valid and consensus_signal and not is_sovereign:
+        # DICTATOR OVERWRITE PASS (v12.3: Overwrites even "valid" but wrong shadow calls)
+        if consensus_signal and not is_sovereign:
             sig_opt = next((c for c in data['candidates'][:5] if c['tier'] == consensus_signal), None)
             if sig_opt and sig_opt['score'] > ADOPTION_SCORE_FLOOR:
                 
-                # Cross-State Structural Parity Fix: Use Shadow Template complexity for validation
-                # instead of Active anchor complexity.
+                # Validation Logic: Cross-State Structural Parity
                 target_state_tpls = templates[data['state']].get(consensus_signal, [])
+                pass_struct = False
                 if target_state_tpls:
                     avg_tpl_comp = np.mean([t['comp'] for t in target_state_tpls])
                     sig_comp_diff = abs(data['roi_comp'] - avg_tpl_comp) / max(1, avg_tpl_comp)
+                    if sig_comp_diff < COMPLEXITY_VALIDATION_MARGIN: pass_struct = True
+                
+                if pass_struct:
+                    # OVERWRITE LOGIC: If shadow slot is calling a 'simple' ore, dictator (complex) forces identity
+                    is_simple_call = any(f in detected for f in ['dirt', 'com', 'id'])
+                    is_complex_dictator = any(f in consensus_signal for f in ['rare', 'epic', 'leg', 'myth'])
                     
-                    # Dictator bypass: If an active anchor is present, we are more aggressive with shadows
-                    if sig_comp_diff < COMPLEXITY_VALIDATION_MARGIN:
-                        detected = f"{consensus_signal}[C]"
+                    if (not is_valid) or (data['state'] == 'shadow' and is_simple_call and is_complex_dictator):
+                        detected = f"{consensus_signal}[D]" # [D] for Dictator
                         is_valid = True
                         final = sig_opt
 
@@ -351,7 +346,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v122_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v123_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -364,7 +359,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v12.2: THE FORENSIC DICTATOR ---")
+    print(f"--- ORE ID AUDIT v12.3: THE FORENSIC OVERDRIVE ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -380,7 +375,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v12.2_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v12.3_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
