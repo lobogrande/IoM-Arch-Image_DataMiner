@@ -1,7 +1,7 @@
 # step3_boundary_verifier.py
 # Purpose: Master Plan Step 3 - Finalize floor boundaries by scanning backward 
 #          from Step 2 anchors to find the exact DNA shift frame.
-# Version: 1.2 (The Debounced Scalpel: Tunneling through Noise)
+# Version: 1.3 (The Padded Scalpel: Fixing String Mismatches)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -30,7 +30,7 @@ def load_bg_templates():
     return [t for t in templates if t is not None]
 
 def get_frame_dna(img_gray, templates):
-    """Detects 12-bit DNA for a single frame."""
+    """Detects 12-bit DNA for a single frame, forcing 6-bit padding."""
     def get_bit(r_idx, c_idx):
         y = int(ORE0_Y + (r_idx * STEP))
         x = int(ORE0_X + (c_idx * STEP))
@@ -42,8 +42,8 @@ def get_frame_dna(img_gray, templates):
             best_val = max(best_val, cv2.minMaxLoc(res)[1])
         return '0' if best_val >= VALLEY_THRESHOLD else '1'
 
-    r3 = "".join([get_bit(2, c) for c in range(6)])
-    r4 = "".join([get_bit(3, c) for c in range(6)])
+    r3 = "".join([get_bit(2, c) for c in range(6)]).zfill(6)
+    r4 = "".join([get_bit(3, c) for c in range(6)]).zfill(6)
     return f"{r4}-{r3}"
 
 def run_boundary_verification():
@@ -51,6 +51,7 @@ def run_boundary_verification():
         print(f"Error: {CANDIDATES_CSV} not found.")
         return
 
+    # Load candidates, ensuring we treat DNA as strings if possible
     df = pd.read_csv(CANDIDATES_CSV)
     buffer_dir = cfg.get_buffer_path(0)
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
@@ -58,7 +59,7 @@ def run_boundary_verification():
     
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 3: BOUNDARY VERIFICATION (v1.2) ---")
+    print(f"--- STEP 3: BOUNDARY VERIFICATION (v1.3) ---")
     
     final_boundaries = []
     integrity_logs = []
@@ -66,27 +67,32 @@ def run_boundary_verification():
     for i, row in df.iterrows():
         floor_id = int(row['floor_id'])
         anchor_idx = int(row['start_frame'])
-        target_dna = f"{row['r4_dna_stable']}-{row['r3_dna_stable']}"
+        
+        # CRITICAL FIX: Ensure target DNA is padded to 6 bits
+        target_r4 = str(row['r4_dna_stable']).zfill(6)
+        target_r3 = str(row['r3_dna_stable']).zfill(6)
+        target_dna = f"{target_r4}-{target_r3}"
         
         # Hard limit: Don't scan past the previous floor's anchor frame
         limit_idx = 0
         if i > 0:
             limit_idx = int(df.iloc[i-1]['start_frame']) + 1
             
-        print(f"Floor {floor_id:03d}: Scanning back from {anchor_idx}...", end="\r")
-        
         true_start = anchor_idx
         b_idx = anchor_idx - 1
         
         # Debounced Backward Scan
         while b_idx >= limit_idx:
+            # Progress reporting
+            if b_idx % 20 == 0:
+                print(f"Floor {floor_id:03d}: Scanning back {anchor_idx} -> {b_idx}...", end="\r")
+            
             img = cv2.imread(os.path.join(buffer_dir, all_files[b_idx]), 0)
             if img is None: break
             
             dna = get_frame_dna(img, bg_tpls)
             if dna != target_dna:
                 # Potential transition! Look back a bit further to see if it's stable noise.
-                # If we see 5 frames of DIFFERENT DNA, we stop.
                 is_real_shift = True
                 for look_idx in range(b_idx, max(limit_idx - 1, b_idx - DEBOUNCE_WINDOW), -1):
                     chk_img = cv2.imread(os.path.join(buffer_dir, all_files[look_idx]), 0)
@@ -120,13 +126,14 @@ def run_boundary_verification():
             
         final_boundaries.append(floor_data)
 
+    # Handle final floor end
     final_boundaries[-1]['end_frame'] = len(all_files) - 1
     final_boundaries[-1]['duration'] = final_boundaries[-1]['end_frame'] - final_boundaries[-1]['true_start_frame'] + 1
 
     pd.DataFrame(final_boundaries).to_csv(OUT_CSV, index=False)
     pd.DataFrame(integrity_logs).to_csv(REPORT_CSV, index=False)
     
-    print(f"\n[DONE] Saved boundaries and integrity report.")
+    print(f"\n[DONE] Verified {len(final_boundaries)} floors. Results saved to {OUT_CSV}")
 
 if __name__ == "__main__":
     run_boundary_verification()
