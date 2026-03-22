@@ -1,7 +1,7 @@
 # step3_boundary_verifier.py
 # Purpose: Master Plan Step 3 - Finalize floor boundaries by scanning backward 
 #          from Step 2 anchors to find the exact DNA shift frame.
-# Version: 1.1 (The Boundary Scalpel - KeyError Fix)
+# Version: 1.2 (The Debounced Scalpel: Tunneling through Noise)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -10,16 +10,17 @@ import project_config as cfg
 # INPUT/OUTPUT
 CANDIDATES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_start_candidates.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "final_floor_boundaries.csv")
+REPORT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "boundary_integrity_report.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "boundary_verification")
 
-# DNA SENSOR CONSTANTS (Matching dna_sensor_audit.py)
+# DNA SENSOR CONSTANTS
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 VALLEY_THRESHOLD = 0.75
+DEBOUNCE_WINDOW = 5 # Number of frames a DNA change must persist to be considered a transition
 
 def load_bg_templates():
     templates = []
-    # Background and UI elements that represent "Empty" slots
     for i in range(10):
         p = os.path.join(cfg.TEMPLATE_DIR, f"background_plain_{i}.png")
         if os.path.exists(p): templates.append(cv2.imread(p, 0))
@@ -33,10 +34,8 @@ def get_frame_dna(img_gray, templates):
     def get_bit(r_idx, c_idx):
         y = int(ORE0_Y + (r_idx * STEP))
         x = int(ORE0_X + (c_idx * STEP))
-        tw, th = 30, 30
         roi = img_gray[y-15:y+15, x-15:x+15]
         if roi.shape != (30, 30): return '1'
-        
         best_val = -1
         for t in templates:
             res = cv2.matchTemplate(roi, t, cv2.TM_CCOEFF_NORMED)
@@ -49,7 +48,7 @@ def get_frame_dna(img_gray, templates):
 
 def run_boundary_verification():
     if not os.path.exists(CANDIDATES_CSV):
-        print(f"Error: {CANDIDATES_CSV} not found. Run Step 2 chunker first.")
+        print(f"Error: {CANDIDATES_CSV} not found.")
         return
 
     df = pd.read_csv(CANDIDATES_CSV)
@@ -59,36 +58,49 @@ def run_boundary_verification():
     
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 3: BOUNDARY VERIFICATION (110 Floors) ---")
+    print(f"--- STEP 3: BOUNDARY VERIFICATION (v1.2) ---")
     
     final_boundaries = []
+    integrity_logs = []
     
     for i, row in df.iterrows():
         floor_id = int(row['floor_id'])
         anchor_idx = int(row['start_frame'])
         target_dna = f"{row['r4_dna_stable']}-{row['r3_dna_stable']}"
         
-        # Determine how far back we can scan
+        # Hard limit: Don't scan past the previous floor's anchor frame
         limit_idx = 0
         if i > 0:
-            # Fix: Use 'true_start_frame' instead of 'start_frame'
-            limit_idx = final_boundaries[-1]['true_start_frame'] + 1
+            limit_idx = int(df.iloc[i-1]['start_frame']) + 1
             
-        print(f"Floor {floor_id:03d}: Scanning back from {anchor_idx} (Limit: {limit_idx})...", end="\r")
+        print(f"Floor {floor_id:03d}: Scanning back from {anchor_idx}...", end="\r")
         
         true_start = anchor_idx
-        # Scan backward
-        for b_idx in range(anchor_idx - 1, limit_idx - 1, -1):
+        b_idx = anchor_idx - 1
+        
+        # Debounced Backward Scan
+        while b_idx >= limit_idx:
             img = cv2.imread(os.path.join(buffer_dir, all_files[b_idx]), 0)
             if img is None: break
             
-            current_dna = get_frame_dna(img, bg_tpls)
-            if current_dna == target_dna:
-                true_start = b_idx # Still on the same floor
-            else:
-                break # Found the DNA shift!
+            dna = get_frame_dna(img, bg_tpls)
+            if dna != target_dna:
+                # Potential transition! Look back a bit further to see if it's stable noise.
+                # If we see 5 frames of DIFFERENT DNA, we stop.
+                is_real_shift = True
+                for look_idx in range(b_idx, max(limit_idx - 1, b_idx - DEBOUNCE_WINDOW), -1):
+                    chk_img = cv2.imread(os.path.join(buffer_dir, all_files[look_idx]), 0)
+                    if chk_img is None: break
+                    if get_frame_dna(chk_img, bg_tpls) == target_dna:
+                        is_real_shift = False # Found the target DNA again; previous diff was noise
+                        break
                 
-        # Record boundary
+                if is_real_shift:
+                    break # Confirmed DNA transition
+            
+            true_start = b_idx
+            b_idx -= 1
+                
         floor_data = {
             'floor_id': floor_id,
             'true_start_frame': true_start,
@@ -96,33 +108,25 @@ def run_boundary_verification():
             'dna_sig': target_dna
         }
         
-        # Link to previous floor's end
+        integrity_logs.append({
+            'floor_id': floor_id,
+            'shift_dist': anchor_idx - true_start,
+            'dna_sig': target_dna
+        })
+        
         if i > 0:
             final_boundaries[-1]['end_frame'] = true_start - 1
             final_boundaries[-1]['duration'] = final_boundaries[-1]['end_frame'] - final_boundaries[-1]['true_start_frame'] + 1
             
         final_boundaries.append(floor_data)
 
-    # Handle the very last floor (end of buffer)
     final_boundaries[-1]['end_frame'] = len(all_files) - 1
     final_boundaries[-1]['duration'] = final_boundaries[-1]['end_frame'] - final_boundaries[-1]['true_start_frame'] + 1
 
-    # Save and Report
-    out_df = pd.DataFrame(final_boundaries)
-    out_df.to_csv(OUT_CSV, index=False)
+    pd.DataFrame(final_boundaries).to_csv(OUT_CSV, index=False)
+    pd.DataFrame(integrity_logs).to_csv(REPORT_CSV, index=False)
     
-    print(f"\n[DONE] Verified {len(out_df)} floor boundaries.")
-    print(f"Saved results to: {OUT_CSV}")
-
-    # Visual proof of a few boundaries
-    for i in [0, 30, 72, 109]:
-        if i >= len(final_boundaries): continue
-        f = final_boundaries[i]
-        img = cv2.imread(os.path.join(buffer_dir, all_files[f['true_start_frame']]))
-        if img is not None:
-            cv2.rectangle(img, (10, img.shape[0]-60), (500, img.shape[0]-10), (0,0,0), -1)
-            cv2.putText(img, f"FLOOR {f['floor_id']} TRUE START | Frame: {f['true_start_frame']}", (20, img.shape[0]-35), 0, 0.6, (0,255,0), 2)
-            cv2.imwrite(os.path.join(VERIFY_DIR, f"boundary_floor_{f['floor_id']:03d}_start.jpg"), img)
+    print(f"\n[DONE] Saved boundaries and integrity report.")
 
 if __name__ == "__main__":
     run_boundary_verification()
