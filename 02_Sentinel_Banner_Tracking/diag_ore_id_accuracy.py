@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 9.9 (The Forensic Guard: Strict Filtering & Luminance Gating)
+# Version: 10.0 (The Morphological Guard: Silhouette & Shape Verification)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -25,11 +25,10 @@ ROTATION_VARIANTS = [-3, 3]
 
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
-STATE_COMPLEXITY_THRESHOLD = 350 # Complexity floor for active ores
-LUMINANCE_SHADOW_FLOOR = 85      # Ores above this are considered Active regardless of complexity
+STATE_COMPLEXITY_THRESHOLD = 350 
+LUMINANCE_SHADOW_FLOOR = 85      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
-XHAIR_PX_FLOOR = 200            
-XHAIR_SAT_FLOOR = 140           
+SHAPE_MATCH_THRESHOLD = 0.15     # Hu Moment distance floor (lower is better)
 TIER_CONF_BUFFER = 0.07 
 
 # Pre-cached masks
@@ -49,7 +48,6 @@ def get_cached_mask(exclusion_top, exclusion_bot=0.0):
         CACHED_MASKS[key] = mask
     return CACHED_MASKS[key]
 
-# BULLY PENALTIES: Increased Epic and Div to protect Dirt/Common slots
 BULLY_PENALTIES = {
     'epic1': 0.06, 'epic2': 0.06, 'epic3': 0.08,
     'leg1': 0.10, 'leg2': 0.10, 'leg3': 0.12,
@@ -78,6 +76,15 @@ def get_complexity(img):
     if img is None or img.size == 0: return 0
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
+def get_silhouette(img_gray):
+    """Extracts a clean physical outline for shape matching."""
+    blurred = cv2.GaussianBlur(img_gray, (3, 3), 0)
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Ensure ore is white on black background
+    if thresh[SIDE_PX//2, SIDE_PX//2] == 0:
+        thresh = cv2.bitwise_not(thresh)
+    return thresh
+
 def detect_vibrant_crosshair(roi_bgr):
     if roi_bgr is None or roi_bgr.size == 0: return "none", 0, 0
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
@@ -102,11 +109,9 @@ def load_all_templates():
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
     
-    print(f"Loading Golden Standard (Plain Ores Only)...")
+    print(f"Loading Morphological Standards (Plain Only)...")
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
-        
-        # FIX: Explicit keyword firewall to prevent non-ore matches
         if "_plain_" not in f.lower(): continue
         if any(x in f.lower() for x in ["background", "player", "negative", "pickaxe", "fairy"]): continue
         
@@ -115,18 +120,21 @@ def load_all_templates():
         
         tier = f.split("_")[0]
         state = 'active' if '_act_' in f else 'shadow'
-        
         if tier not in templates[state]: templates[state][tier] = []
+        
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
         
+        # Pre-calculate shape properties for the morphological guard
+        sil = get_silhouette(apply_gamma_lift(img_scaled, 0.6))
+        
         templates[state][tier].append({
-            'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier,
+            'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier, 'sil': sil,
             'comp': get_complexity(apply_gamma_lift(img_scaled, 0.6))
         })
         for angle in ROTATION_VARIANTS:
             img_rot = rotate_image(img_scaled, angle)
             templates[state][tier].append({
-                'id': f, 'img': img_rot, 'angle': angle, 'tier': tier,
+                'id': f, 'img': img_rot, 'angle': angle, 'tier': tier, 'sil': get_silhouette(apply_gamma_lift(img_rot, 0.6)),
                 'comp': get_complexity(apply_gamma_lift(img_rot, 0.6))
             })
     return templates
@@ -165,13 +173,12 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         ratio = top_e / max(1, bot_e)
         mean_lum = np.mean(roi_gray)
         
-        # 1. State Determination: Shadow ores are dark AND smooth. 
-        # Active ores (even obscured) are typically bright.
+        # State & Silhouette extraction
         roi_lifted = apply_gamma_lift(roi_gray, 0.5)
         roi_comp = get_complexity(roi_lifted)
+        roi_sil = get_silhouette(roi_lifted)
         target_state = 'active' if (roi_comp > STATE_COMPLEXITY_THRESHOLD or mean_lum > LUMINANCE_SHADOW_FLOOR) else 'shadow'
         
-        # 2. Dynamic Masking
         mask_top = 0.60 if (ratio > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
         mask_bot = 0.12 if (bot_e > 2000) else 0.0 
         active_mask = get_cached_mask(mask_top, mask_bot)
@@ -184,11 +191,15 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             for tpl in variants:
                 if not is_hit_frame and tpl['angle'] != 0: continue
                 
+                # 1. Physical Outline Match (The Morphological Guard)
+                shape_dist = cv2.matchShapes(roi_sil, tpl['sil'], cv2.CONTOURS_MATCH_I1, 0)
+                shape_bonus = 0.05 if shape_dist < SHAPE_MATCH_THRESHOLD else 0.0
+                
+                # 2. Traditional Correlation
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
                 search_area = img_gray[y1:y1+SIDE_PX+2, x1:x1+SIDE_PX+4]
                 if search_area.shape[0] < SIDE_PX or search_area.shape[1] < SIDE_PX: continue
                 
-                # Higher gamma for shadow matching to reveal hidden texture
                 gamma_lvl = 0.4 if target_state == 'shadow' else 0.5
                 search_lifted = apply_gamma_lift(search_area, gamma_lvl)
                 
@@ -196,7 +207,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
                 affinity = 0.04 if abs(tpl['comp'] - roi_comp) < 20.0 else 0
-                all_candidates.append({'tier': tier, 'score': score - penalty + affinity})
+                all_candidates.append({'tier': tier, 'score': score - penalty + affinity + shape_bonus, 'shape_match': (shape_dist < SHAPE_MATCH_THRESHOLD)})
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
@@ -207,13 +218,16 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp
         }
 
-    # Consensus Voting
+    # Voting & Resolution
     floor_votes = []
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
         top = data['candidates'][0]
+        # Verified shape matches count as stronger votes
+        vote_weight = 1.5 if top.get('shape_match') else 1.0
         if top['score'] > 0.42 or data['z_score'] > Z_TRUST_THRESHOLD:
-            floor_votes.append(ORE_RESTRICTIONS.get(top['tier'], (1, 999)))
+            for _ in range(int(vote_weight)):
+                floor_votes.append(ORE_RESTRICTIONS.get(top['tier'], (1, 999)))
     
     consensus_range = Counter(floor_votes).most_common(1)[0][0] if floor_votes else (1, 999)
     family_champions = {}
@@ -226,13 +240,11 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
                     family_champions[fam] = {'tier': cand['tier'], 'score': cand['score']}
 
-    # Final Resolution
     frame_results = []
     has_detections = False
     for col in range(6):
         data = slot_matches[col]
         is_valid, detected, final = False, 'low_conf_id', {'tier': 'none', 'score': 0.0}
-        
         if data['status'] == 'empty_dna':
             detected = 'empty_dna'
         else:
@@ -245,11 +257,10 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 
                 gate = 0.42 if 'dirt' in final['tier'] else 0.55
                 is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.20)
-                if is_valid:
-                    if data['xhair'] != 'none':
-                        detected, is_valid = "xhair_obscured", False
-                    else:
-                        detected = final['tier']
+                if is_valid and data['xhair'] != 'none':
+                    detected, is_valid = "xhair_obscured", False
+                elif is_valid:
+                    detected = final['tier']
 
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == 'empty_dna': color = (100, 100, 100)
@@ -259,14 +270,14 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
         draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-(5 if col%2==0 else 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
         stat_str = f"{final['score']:.2f} Z:{data.get('z_score',0):.1f}"
-        if data.get('xhair') != 'none': stat_str += f" S:{data['xhair_sat']}"
+        if final.get('shape_match'): stat_str += " [G]" # [G] for Geometric match
         draw_shadow_text(img_color, stat_str, (rx1+3, ry1+(10 if col%2==0 else 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if is_valid: has_detections = True
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"standard_v99_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"morph_v100_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -278,7 +289,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v9.9: THE FORENSIC GUARD ---")
+    print(f"--- ORE ID AUDIT v10.0: THE MORPHOLOGICAL GUARD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -293,7 +304,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v9.9_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v10.0_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
