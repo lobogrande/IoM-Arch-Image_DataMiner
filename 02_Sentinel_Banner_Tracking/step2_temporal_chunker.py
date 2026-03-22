@@ -1,10 +1,9 @@
 # step2_temporal_chunker.py
 # Purpose: Execute Master Plan Step 2 - Group frames into distinct floors using 
-#          Kinematic rules and Stage-ROI Visual Verification.
-# Version: 6.3 (The Visual Arbiter: ROI Validation & UI Relocation)
+#          Kinematic rules, Localized DNA Mode, and Minimum Duration Gating.
+# Version: 6.4 (The Temporal Guard: Reverting Visual Arbiter)
 
 import sys, os, cv2, pandas as pd
-import numpy as np
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
@@ -12,27 +11,9 @@ DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_start_candidates.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_verification")
 
-# Approximate Stage ROI (Area where "Stage X-Y" is displayed)
-# We use this to confirm if the floor number actually changed.
-STAGE_ROI_BOX = (15, 10, 180, 60)  # x, y, w, h
-
-def get_stage_roi(img):
-    """Extracts the top-left stage header as a grayscale comparison block."""
-    if img is None: return None
-    x, y, w, h = STAGE_ROI_BOX
-    roi = img[y:y+h, x:x+w]
-    if roi.size == 0: return None
-    return cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
-def are_rois_different(roi1, roi2):
-    """Compares two ROIs. Returns True if the pixels have changed (New Floor)."""
-    if roi1 is None or roi2 is None: return True
-    if roi1.shape != roi2.shape: return True
-    # Use template matching correlation to check for identical text
-    res = cv2.matchTemplate(roi1, roi2, cv2.TM_CCOEFF_NORMED)
-    _, score, _, _ = cv2.minMaxLoc(res)
-    # 0.98 is an extremely high bar; any change in a single character will drop the score.
-    return score < 0.98 
+# Minimum physical frames required to clear a floor. 
+# Any floor transition triggered before this duration is considered noise and merged.
+MIN_FLOOR_DURATION = 15
 
 def run_temporal_chunking():
     if not os.path.exists(DNA_CSV):
@@ -46,11 +27,11 @@ def run_temporal_chunking():
     buffer_dir = cfg.get_buffer_path(0)
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 2: KINEMATIC & VISUAL FLOOR GROUPING ---")
-    print(f"Processing {len(df)} frames using Game Physics and Visual ROI Verification...")
+    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v6.4) ---")
+    print(f"Processing {len(df)} frames using Game Physics and Duration Gating...")
 
-    # 1. MICRO-BLOCKING
-    # A block is defined as a contiguous sequence on the same slot with no large index gaps.
+    # 1. SLOT-STRICT MICRO-BLOCKING
+    # A block breaks ONLY if the slot changes or if there is a gap > 5 frames.
     df['gap'] = df['frame_idx'].diff().fillna(0)
     df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | (df['gap'] > 5)).cumsum()
     
@@ -58,75 +39,95 @@ def run_temporal_chunking():
     for block_id, group in df.groupby('block_id'):
         blocks.append({
             'start_frame': int(group['frame_idx'].min()),
-            'filename': group['filename'].iloc[0],
+            'end_frame': int(group['frame_idx'].max()),
             'slot': int(group['slot_id'].iloc[0]),
+            'filename': group['filename'].iloc[0],
+            # Mode() acts as a localized noise filter within the specific slot attack
             'r4_mode': str(group['r4_dna'].mode()[0]),
             'r3_mode': str(group['r3_dna'].mode()[0]),
+            'size': len(group)
         })
     
     print(f"Phase 1: Consolidated frames into {len(blocks)} slot-attack blocks.")
 
-    # 2. FLOOR GROUPING (Visual & Physical)
-    final_floors = []
-    last_floor_roi = None
+    # 2. FLOOR GROUPING (Kinematics & Duration Guard)
+    floors = []
+    curr_floor = [blocks[0]]
     
-    for i, b in enumerate(blocks):
-        img = cv2.imread(os.path.join(buffer_dir, b['filename']))
-        curr_roi = get_stage_roi(img)
+    for b in blocks[1:]:
+        prev_b = curr_floor[-1]
+        
+        # Calculate how long the CURRENT floor has been alive
+        current_floor_start = curr_floor[0]['start_frame']
+        current_floor_duration = prev_b['end_frame'] - current_floor_start
         
         is_new_floor = False
         reason = ""
-
-        if i == 0:
+        
+        # LAW 1: Slot Reversal (Guaranteed Reset, overrides duration guard)
+        if b['slot'] < prev_b['slot']:
             is_new_floor = True
-            reason = "Initial Start"
-        else:
-            prev_b = blocks[i-1]
-            # Rule A: Slot Reversal (Guaranteed floor reset)
-            if b['slot'] < prev_b['slot']:
-                is_new_floor = True
-                reason = f"Slot Reversal ({prev_b['slot']} -> {b['slot']})"
+            reason = f"Slot Reversal ({prev_b['slot']} -> {b['slot']})"
             
-            # Rule B: Stage ROI Verification
-            # If the header pixels changed, it is a new floor regardless of DNA/Slot.
-            # If they are identical, it is the same floor regardless of DNA noise.
-            if not is_new_floor:
-                if are_rois_different(curr_roi, last_floor_roi):
-                    is_new_floor = True
-                    reason = "Stage ROI Change (Confirmed Floor Shift)"
+        # LAW 2: Row 4 Immutability Broken
+        elif b['r4_mode'] != prev_b['r4_mode']:
+            if current_floor_duration > MIN_FLOOR_DURATION:
+                is_new_floor = True
+                reason = f"R4 DNA Shift ({prev_b['r4_mode']} -> {b['r4_mode']})"
+            else:
+                pass # Rejected: Floor hasn't existed long enough
+                
+        # LAW 3: Row 3 Immutability Broken
+        elif b['r3_mode'] != prev_b['r3_mode']:
+            if current_floor_duration > MIN_FLOOR_DURATION:
+                is_new_floor = True
+                reason = f"R3 DNA Shift ({prev_b['r3_mode']} -> {b['r3_mode']})"
+            else:
+                pass # Rejected: Floor hasn't existed long enough
 
         if is_new_floor:
-            final_floors.append({
-                'floor_id': len(final_floors) + 1,
-                'start_frame': b['start_frame'],
-                'filename': b['filename'],
-                'slot_id': b['slot'],
-                'r4_dna': b['r4_mode'],
-                'r3_dna': b['r3_mode'],
-                'transition_reason': reason
-            })
-            last_floor_roi = curr_roi
-
-    print(f"Phase 2: Identified {len(final_floors)} distinct floors via Visual Arbiter.")
+            b['transition_reason'] = reason
+            floors.append(curr_floor)
+            curr_floor = [b]
+        else:
+            curr_floor.append(b)
+            
+    floors.append(curr_floor)
+    print(f"Phase 2: Identified {len(floors)} distinct floors.")
 
     # 3. EXPORT & VISUAL PROOFS
     print(f"Exporting Step 2 candidates to: {VERIFY_DIR}")
-    for f in final_floors:
-        img_path = os.path.join(buffer_dir, f['filename'])
+    final_candidates = []
+    
+    for idx, floor_blocks in enumerate(floors):
+        start_block = floor_blocks[0]
+        
+        candidate = {
+            'floor_id': idx + 1,
+            'start_frame': start_block['start_frame'],
+            'filename': start_block['filename'],
+            'slot_id': start_block['slot'],
+            'r4_dna_stable': start_block['r4_mode'],
+            'r3_dna_stable': start_block['r3_mode'],
+            'transition_reason': start_block.get('transition_reason', 'Initial Start')
+        }
+        final_candidates.append(candidate)
+        
+        # OSD AT BOTTOM (Prevents occluding the Stage ROI header)
+        img_path = os.path.join(buffer_dir, candidate['filename'])
         vis = cv2.imread(img_path)
         if vis is not None:
             h, w = vis.shape[:2]
-            # OSD AT BOTTOM (Prevents occluding the Stage ROI header)
             cv2.rectangle(vis, (10, h - 95), (710, h - 10), (0, 0, 0), -1)
-            cv2.putText(vis, f"FLOOR {f['floor_id']:03d} | Start Frame: {f['start_frame']}", (20, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(vis, f"DNA: {f['r4_dna']}-{f['r3_dna']} | Slot: {f['slot_id']}", (20, h - 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-            cv2.putText(vis, f"Reason: {f['transition_reason']}", (20, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+            cv2.putText(vis, f"FLOOR {candidate['floor_id']:03d} | Start Frame: {candidate['start_frame']}", (20, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(vis, f"DNA: {candidate['r4_dna_stable']}-{candidate['r3_dna_stable']} | Slot: {candidate['slot_id']}", (20, h - 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            cv2.putText(vis, f"Reason: {candidate['transition_reason']}", (20, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
             
-            out_name = f"floor_start_{f['floor_id']:03d}_frame_{f['start_frame']}.jpg"
+            out_name = f"floor_start_{candidate['floor_id']:03d}_frame_{candidate['start_frame']}.jpg"
             cv2.imwrite(os.path.join(VERIFY_DIR, out_name), vis)
 
-    pd.DataFrame(final_floors).to_csv(OUT_CSV, index=False)
-    print(f"\n[DONE] Saved {len(final_floors)} validated start frames to: {OUT_CSV}")
+    pd.DataFrame(final_candidates).to_csv(OUT_CSV, index=False)
+    print(f"\n[DONE] Saved {len(final_candidates)} validated start frames to: {OUT_CSV}")
 
 if __name__ == "__main__":
     run_temporal_chunking()
