@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 12.4 (The Forensic Geometric: Silhouette Primacy & Active Stability)
+# Version: 12.6 (The Independent Forensic: Dual-Sensor Voting & Slot Independence)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -24,40 +24,16 @@ SIDE_PX = int(DIM_ID * TARGET_SCALE)
 ROTATION_VARIANTS = [-3, 3] 
 
 # LOGIC THRESHOLDS
-Z_TRUST_THRESHOLD = 2.1 
-Z_LOCK_THRESHOLD = 2.6 
-Z_SOVEREIGN_LOCK = 3.0          
+Z_TRUST_THRESHOLD = 2.2 
 STATE_COMPLEXITY_THRESHOLD = 320 
 LUMINANCE_SHADOW_FLOOR = 88      
-MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
 TIER_CONF_BUFFER = 0.08 
 
-# CONSENSUS CONSTANTS
-ADOPTION_SCORE_FLOOR = 0.12    
-CONSENSUS_VOTE_FLOOR = 0.22    
-CONSENSUS_OVERWRITE_PROTECTION = 0.16 
-
-# STATE VOTE WEIGHTS
-ACTIVE_VOTE_WEIGHT = 10.0      
-SHADOW_VOTE_WEIGHT = 1.0       
-
-# Pre-cached masks
-CACHED_MASKS = {}
-
-def get_cached_mask(exclusion_top, exclusion_bot=0.0):
-    key = (int(exclusion_top * 100), int(exclusion_bot * 100))
-    if key not in CACHED_MASKS:
-        mask = np.zeros((SIDE_PX, SIDE_PX), dtype=np.uint8)
-        radius = int(18 * (SIDE_PX / 48))
-        cv2.circle(mask, (SIDE_PX//2, SIDE_PX//2), radius, 255, -1)
-        t_lim = int(SIDE_PX * exclusion_top)
-        mask[0:t_lim, :] = 0
-        if exclusion_bot > 0:
-            b_lim = int(SIDE_PX * (1.0 - exclusion_bot))
-            mask[b_lim:SIDE_PX, :] = 0
-        CACHED_MASKS[key] = mask
-    return CACHED_MASKS[key]
+# DUAL-SENSOR CONSTANTS (v12.6 Shadows)
+MIN_SILHOUETTE_GATE = 0.55     # Hard floor for binary outline match
+MIN_TEXTURE_GATE = 0.22        # Hard floor for internal facet match
+SENSOR_AGREEMENT_DEPTH = 3     # Tier must be in Top 3 of both sensors
 
 BULLY_PENALTIES = {
     'epic1': 0.08, 'epic2': 0.08, 'epic3': 0.10,
@@ -75,12 +51,9 @@ def apply_texture_enhancement(img, state='active'):
     return clahe.apply(normalized)
 
 def get_silhouette_mask(img_gray):
-    """Produces a binary OTSU mask for geometric matching."""
     blurred = cv2.GaussianBlur(img_gray, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # Ensure ore is white
-    if thresh[SIDE_PX//2, SIDE_PX//2] == 0:
-        thresh = cv2.bitwise_not(thresh)
+    if thresh[SIDE_PX//2, SIDE_PX//2] == 0: thresh = cv2.bitwise_not(thresh)
     return thresh
 
 def rotate_image(image, angle):
@@ -107,8 +80,7 @@ def detect_vibrant_crosshair(roi_bgr):
         px_count = cv2.countNonZero(mask)
         if px_count > 180: 
             mean_sat = cv2.mean(s, mask=mask)[0]
-            if mean_sat > 110:
-                return name.rstrip('2'), px_count, round(mean_sat, 1)
+            if mean_sat > 110: return name.rstrip('2'), px_count, round(mean_sat, 1)
     return "none", 0, 0
 
 def load_all_templates():
@@ -116,7 +88,7 @@ def load_all_templates():
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
     
-    print(f"Loading Geometric Standards (Plain Ores + Silhouette)...")
+    print(f"Loading Independent Sensors (Texture + Geometry)...")
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
         if "_plain_" not in f.lower(): continue
@@ -131,7 +103,6 @@ def load_all_templates():
         
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
         img_proc = apply_texture_enhancement(img_scaled, state)
-        # Pre-calculate Silhouette for shadow matching
         img_sil = get_silhouette_mask(img_proc)
         
         templates[state][tier].append({
@@ -157,40 +128,29 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y_base = int(ORE0_Y + (3 * STEP)) + 2
     
-    occupied_count = 0
-    slot_matches = {}
+    frame_results = []
+    has_detections = False
+
     for col in range(6):
-        default_data = {
-            'status': 'empty_dna', 'candidates': [], 'z_score': 0, 'is_valid': False, 'detected': 'empty_dna',
-            'xhair': 'none', 'xhair_sat': 0, 'xhair_px': 0, 'ratio': 0, 'roi_comp': 0, 'final_score': 0.0, 'state': 'none'
-        }
         if r4_dna[col] == '0':
-            slot_matches[col] = default_data
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'score': 0.0, 'xhair': 'none'})
             continue
             
         cx = int(ORE0_X + (col * STEP))
         tx1, ty1 = int(cx - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
         if ty1 < 0 or ty1+SIDE_PX > img_color.shape[0] or tx1 < 0 or tx1+SIDE_PX > img_color.shape[1]:
-            slot_matches[col] = default_data
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'low_conf_id', 'score': 0.0, 'xhair': 'none'})
             continue
 
         roi_bgr = img_color[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         roi_gray = img_gray[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         
-        xhair, xh_px, xh_sat = detect_vibrant_crosshair(roi_bgr)
+        xhair, _, _ = detect_vibrant_crosshair(roi_bgr)
         if xhair != 'none':
-            slot_matches[col] = default_data
-            slot_matches[col].update({
-                'status': 'xhair_blocked', 'detected': 'xhair_obscured', 
-                'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px
-            })
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'xhair_obscured', 'score': 0.0, 'xhair': xhair})
             continue
 
-        occupied_count += 1
-        top_half, bot_half = roi_gray[0:SIDE_PX//2, :], roi_gray[SIDE_PX//2:SIDE_PX, :]
-        top_e, bot_e = get_complexity(top_half), get_complexity(bot_half)
         mean_lum = np.mean(roi_gray)
-        
         roi_norm = cv2.normalize(roi_gray, None, 0, 255, cv2.NORM_MINMAX)
         roi_comp = get_complexity(roi_norm)
         target_state = 'active' if (roi_comp > STATE_COMPLEXITY_THRESHOLD or mean_lum > LUMINANCE_SHADOW_FLOOR) else 'shadow'
@@ -198,148 +158,100 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_proc = apply_texture_enhancement(roi_gray, target_state)
         roi_sil = get_silhouette_mask(roi_proc)
         
-        mask_top = 0.60 if (top_e/max(1, bot_e) > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
-        active_mask = get_cached_mask(mask_top, 0.12 if bot_e > 2000 else 0.0)
+        # Determine masks
+        top_half, bot_half = roi_gray[0:SIDE_PX//2, :], roi_gray[SIDE_PX//2:SIDE_PX, :]
+        bot_e = get_complexity(bot_half)
+        active_mask = get_cached_mask(0.40, 0.12 if bot_e > 2000 else 0.0)
         
-        all_candidates = []
-        is_hit_frame = (top_e > 1500 or bot_e > 1500)
+        # Dual-Sensor Matching Pass
+        texture_cands = []
+        sil_cands = []
         
         for tier, variants in templates[target_state].items():
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             for tpl in variants:
-                if not is_hit_frame and tpl['angle'] != 0: continue
+                # Sensor 1: Texture (Grayscale Correlation)
+                res_tex = cv2.matchTemplate(roi_proc, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
+                _, s_tex, _, _ = cv2.minMaxLoc(res_tex)
+                texture_cands.append({'tier': tier, 'score': s_tex - penalty, 'raw': s_tex})
                 
-                # 1. CORE MATCHING (v12.4 Pivot)
-                if target_state == 'shadow':
-                    # Use Silhouette Matching for shadow (based on v1.0 Forensic winner)
-                    res = cv2.matchTemplate(roi_sil, tpl['sil'], cv2.TM_CCOEFF_NORMED)
-                else:
-                    # Use Texture Correlation for active
-                    res = cv2.matchTemplate(roi_proc, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
-                
-                _, score, _, _ = cv2.minMaxLoc(res)
-                
-                # 2. Structural Tie-Breaking (f73/f910 Stability)
-                affinity = 0.0
-                if target_state == 'active':
-                    # rare1 is noisier than com1/dirt. If complexity is high, rare1 wins.
-                    if tier == 'rare1' and roi_comp > 400: affinity += 0.06
-                    elif tier == 'com1' and roi_comp < 350: affinity += 0.04
-                
-                all_candidates.append({'tier': tier, 'score': score - penalty + affinity, 'comp': tpl['comp']})
-        
-        if not all_candidates:
-            slot_matches[col] = default_data
-            slot_matches[col]['status'] = 'occupied'
-            continue
+                # Sensor 2: Geometry (Silhouette Correlation)
+                res_sil = cv2.matchTemplate(roi_sil, tpl['sil'], cv2.TM_CCOEFF_NORMED)
+                _, s_sil, _, _ = cv2.minMaxLoc(res_sil)
+                sil_cands.append({'tier': tier, 'score': s_sil})
 
-        all_candidates.sort(key=lambda x: x['score'], reverse=True)
-        scores = [c['score'] for c in all_candidates]
-        z_score = (scores[0] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 1e-6) else 0
+        # Process Sensor Rankings
+        t_df = pd.DataFrame(texture_cands).sort_values('score', ascending=False)
+        s_df = pd.DataFrame(sil_cands).sort_values('score', ascending=False)
+        
+        top_texture = t_df.iloc[0]
+        top_sil = s_df.iloc[0]
+        
+        # v12.6: INDEPENDENT VOTING LOGIC
+        is_valid = False
+        detected = 'low_conf_id'
+        final_score = top_texture['score']
+        
+        if target_state == 'active':
+            # Active Ores: Stable Correlation is primary
+            gate = 0.40 if any(f in top_texture['tier'] for f in ['dirt', 'com']) else 0.48
+            # Calculate Z-score for active stability
+            z = (top_texture['score'] - t_df['score'].mean()) / t_df['score'].std()
+            is_valid = (top_texture['score'] > gate) or (z > 2.5 and top_texture['score'] > 0.20)
+            detected = top_texture['tier'] if is_valid else 'low_conf_id'
+        else:
+            # Shadow Ores: Requires "Witness Agreement"
+            # Must be in top lists of BOTH sensors
+            t_top_tiers = t_df.head(SENSOR_AGREEMENT_DEPTH)['tier'].tolist()
+            s_top_tiers = s_df.head(SENSOR_AGREEMENT_DEPTH)['tier'].tolist()
             
-        slot_matches[col] = {
-            'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score, 'is_valid': False,
-            'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'roi_comp': roi_comp, 
-            'final_score': scores[0], 'state': target_state, 'sil': roi_sil
-        }
-
-    # 2. DICTATOR ANCHOR PASS (v12.4)
-    row_signal_weights = defaultdict(float)
-    has_active_anchor = False
-    for col, data in slot_matches.items():
-        if data['status'] == 'occupied' and data['candidates']:
-            top = data['candidates'][0]
-            if top['score'] > CONSENSUS_VOTE_FLOOR:
-                weight = ACTIVE_VOTE_WEIGHT if data['state'] == 'active' else SHADOW_VOTE_WEIGHT
-                row_signal_weights[top['tier']] += weight
-                if data['state'] == 'active' and top['score'] > 0.45: has_active_anchor = True
-
-    if has_active_anchor:
-        row_signal_weights = defaultdict(float)
-        for col, data in slot_matches.items():
-            if data['status'] == 'occupied' and data['state'] == 'active' and data['candidates']:
-                top = data['candidates'][0]
-                if top['score'] > CONSENSUS_VOTE_FLOOR:
-                    row_signal_weights[top['tier']] += ACTIVE_VOTE_WEIGHT
-
-    consensus_signal = None
-    if row_signal_weights:
-        sorted_sigs = sorted(row_signal_weights.items(), key=lambda x: x[1], reverse=True)
-        if sorted_sigs[0][1] >= 8.0: consensus_signal = sorted_sigs[0][0]
-
-    # 3. Final Resolution
-    frame_results = []
-    has_detections = False
-    for col in range(6):
-        data = slot_matches[col]
-        if data['status'] == 'empty_dna':
-            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'score': 0.0, 'xhair': 'none'})
-            continue
-        elif data['status'] == 'xhair_blocked':
-            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'xhair_obscured', 'score': 0.0, 'xhair': data['xhair']})
-            continue
-            
-        final = data['candidates'][0]
-        gate = 0.40 if any(f in final['tier'] for f in ['dirt', 'com']) else 0.48
-        if data['z_score'] > 2.5: gate -= 0.05 
-        
-        # v12.4: Higher trust in silhouette matching scores
-        if data['state'] == 'shadow': gate = 0.55 
-        
-        is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
-        detected = final['tier'] if is_valid else 'low_conf_id'
-        
-        is_sovereign = (data['z_score'] > Z_SOVEREIGN_LOCK)
-        
-        # DICTATOR OVERRIDE PASS (f73 Shadow Identity Recovery)
-        if consensus_signal and not is_sovereign:
-            # For shadow ores, we re-run matching specifically for the consensus signal using Silhouette
-            sig_tpls = templates[data['state']].get(consensus_signal, [])
-            if sig_tpls:
-                best_sig_score = -1
-                for tpl in sig_tpls:
-                    # Forensic Audit: Binary matching is extremely discriminatory
-                    match_res = cv2.matchTemplate(data['sil'], tpl['sil'], cv2.TM_CCOEFF_NORMED)
-                    _, score, _, _ = cv2.minMaxLoc(match_res)
-                    if score > best_sig_score: best_sig_score = score
+            common_tiers = [t for t in t_top_tiers if t in s_top_tiers]
+            if common_tiers:
+                best_tier = common_tiers[0]
+                # High-Confidence shadow check: Outline match must be strong
+                best_sil_score = s_df[s_df['tier'] == best_tier]['score'].max()
+                best_tex_score = t_df[t_df['tier'] == best_tier]['score'].max()
                 
-                # If silhouette match is strong, force adoption [G]
-                if best_sig_score > 0.60:
-                    detected = f"{consensus_signal}[G]"
+                if best_sil_score > MIN_SILHOUETTE_GATE and best_tex_score > MIN_TEXTURE_GATE:
+                    detected = f"{best_tier}[S]" # [S] for Sensor Agreement
                     is_valid = True
-                    final = {'tier': consensus_signal, 'score': best_sig_score}
-
-        color = (0, 255, 0) if is_valid else (0, 0, 255)
-        if detected == "xhair_obscured": color = (0, 255, 255)
+                    final_score = (best_tex_score + best_sil_score) / 2
         
+        # Final Constraint: Complexity Signature Gate
+        if is_valid:
+            is_simple = any(f in detected for f in ['dirt', 'com'])
+            if is_simple and roi_comp > 450: # ROI too noisy for a simple ore
+                is_valid, detected = False, 'low_conf_id'
+            elif not is_simple and roi_comp < 150: # ROI too flat for a complex ore
+                is_valid, detected = False, 'low_conf_id'
+
+        # Render and Export
+        color = (0, 255, 0) if is_valid else (0, 0, 255)
         rx1, ry1 = int(ORE0_X + (col * STEP) - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
-        draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-(5 if col%2==0 else 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        stat_str = f"{final['score']:.2f} Z:{data.get('z_score',0):.1f}"
-        if data['state'] == 'shadow': stat_str += " [G]" # Geometric tag
-        draw_shadow_text(img_color, stat_str, (rx1+3, ry1+(10 if col%2==0 else 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
+        draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        stat_str = f"{final_score:.2f} C:{int(roi_comp)}"
+        draw_shadow_text(img_color, stat_str, (rx1+3, ry1+10), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if is_valid: has_detections = True
-        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
+        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final_score, 4), 'xhair': xhair})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"geometric_v124_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"independent_v126_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
     if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV): return
     if not os.path.exists(DEBUG_IMG_DIR): os.makedirs(DEBUG_IMG_DIR)
-    
     dna_df = pd.read_csv(DNA_CSV, dtype={'r4_dna': str})
     dna_map = dna_df.set_index('frame_idx')['r4_dna'].to_dict()
     df_sample = pd.read_csv(STEP1_CSV)
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v12.4: THE FORENSIC GEOMETRIC ---")
+    print(f"--- ORE ID AUDIT v12.6: THE INDEPENDENT FORENSIC ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
-    
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:500]}
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
@@ -351,10 +263,10 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v12.4_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v12.6_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
-    
+
 if __name__ == "__main__":
     run_precision_audit()
