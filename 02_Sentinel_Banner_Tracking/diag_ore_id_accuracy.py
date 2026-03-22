@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 11.4 (The Texture Guard: CLAHE & Proactive Consensus)
+# Version: 11.5 (The Purity Guard: Strict Xhair Bypass & Consensus Filtering)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -29,11 +29,12 @@ STATE_COMPLEXITY_THRESHOLD = 320
 LUMINANCE_SHADOW_FLOOR = 88      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
-TIER_CONF_BUFFER = 0.12 
+TIER_CONF_BUFFER = 0.09 # Refined to prevent Dirt1 shadow-bullying
 
 # CONSENSUS CONSTANTS
-HARD_CONSENSUS_MIN = 4         # Slots required to force a row-wide ID
-ADOPTION_SCORE_FLOOR = 0.18    
+HARD_CONSENSUS_MIN = 4         
+ADOPTION_SCORE_FLOOR = 0.20    
+CONSENSUS_VOTE_FLOOR = 0.25    # Minimum score for a candidate to 'vote' for row signal
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -148,7 +149,6 @@ def load_all_templates():
     return templates
 
 def draw_shadow_text(img, text, pos, font, scale, color, thick):
-    """Utility function for high-contrast OSD rendering."""
     cv2.putText(img, text, (pos[0]+1, pos[1]+1), font, scale, (0,0,0), thick+1)
     cv2.putText(img, text, pos, font, scale, color, thick)
 
@@ -180,7 +180,16 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         roi_bgr = img_color[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         roi_gray = img_gray[ty1:ty1+SIDE_PX, tx1:tx1+SIDE_PX]
         
+        # 1. IMMEDIATE CROSSHAIR BYPASS (Safety First)
         xhair, xh_px, xh_sat = detect_vibrant_crosshair(roi_bgr)
+        if xhair != 'none':
+            slot_matches[col] = default_data
+            slot_matches[col].update({
+                'status': 'xhair_blocked', 'detected': 'xhair_obscured', 
+                'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px
+            })
+            continue
+
         top_half, bot_half = roi_gray[0:SIDE_PX//2, :], roi_gray[SIDE_PX//2:SIDE_PX, :]
         top_e, bot_e = get_complexity(top_half), get_complexity(bot_half)
         ratio = top_e / max(1, bot_e)
@@ -236,11 +245,14 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 'final_score': scores[0]
         }
 
-    # 2. Proactive Consensus Pass
+    # 2. PROACTIVE CONSENSUS PASS (v11.5)
+    # Collect signals based on Top-2 Rankings, but with a VOTE_FLOOR
     row_signals = Counter()
     for col, data in slot_matches.items():
         if data['status'] == 'occupied' and data['candidates']:
-            row_signals.update([c['tier'] for c in data['candidates'][:2]])
+            # Only allow slots with a minimum match score to vote
+            valid_votes = [c['tier'] for c in data['candidates'][:2] if c['score'] > CONSENSUS_VOTE_FLOOR]
+            row_signals.update(valid_votes)
     
     consensus_signal = None
     if row_signals:
@@ -256,8 +268,12 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         if data['status'] == 'empty_dna':
             frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'score': 0.0, 'xhair': 'none'})
             continue
+        elif data['status'] == 'xhair_blocked':
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'xhair_obscured', 'score': 0.0, 'xhair': data['xhair']})
+            continue
             
         final = data['candidates'][0]
+        # Protect Dirt1 from Rare1 Noise (Simplicity Bias)
         for ch in data['candidates'][1:3]:
             if 'dirt1' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
                 final = ch
@@ -266,15 +282,13 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
         detected = final['tier'] if is_valid else 'low_conf_id'
         
+        # PROACTIVE CONSENSUS ADOPTION
         if not is_valid and consensus_signal:
             sig_opt = next((c for c in data['candidates'][:5] if c['tier'] == consensus_signal), None)
             if sig_opt and sig_opt['score'] > ADOPTION_SCORE_FLOOR:
                 detected = f"{consensus_signal}[C]"
                 is_valid = True
                 final = sig_opt
-
-        if is_valid and data['xhair'] != 'none':
-            detected, is_valid = "xhair_obscured", False
 
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         if detected == "xhair_obscured": color = (0, 255, 255)
@@ -289,7 +303,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v114_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v115_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -302,12 +316,11 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v11.4: THE TEXTURE GUARD ---")
+    print(f"--- ORE ID AUDIT v11.5: THE PURITY GUARD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Running on first 500 frames for verification
         futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:500]}
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
             try:
@@ -319,7 +332,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v11.4_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v11.5_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
