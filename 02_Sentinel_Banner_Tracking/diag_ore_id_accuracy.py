@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 11.3 (The Spatial Guard: Top-K Rank Consensus)
+# Version: 11.4 (The Texture Guard: CLAHE & Proactive Consensus)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -25,17 +25,15 @@ ROTATION_VARIANTS = [-3, 3]
 
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
-STATE_COMPLEXITY_THRESHOLD = 350 
-LUMINANCE_SHADOW_FLOOR = 90      
+STATE_COMPLEXITY_THRESHOLD = 320 
+LUMINANCE_SHADOW_FLOOR = 88      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
 SHAPE_MATCH_THRESHOLD = 0.05     
-TIER_CONF_BUFFER = 0.08 
+TIER_CONF_BUFFER = 0.12 # Increased to protect Dirt1 from noise-bullying
 
-# TOP-K CONSENSUS CONSTANTS
-K_DEPTH = 5                    # Number of top candidates to consider per slot
-CONSENSUS_SLOT_MIN = 3         # Minimum number of slots that must agree
-ADOPTION_SCORE_FLOOR = 0.15    # Deep recovery floor
-COMPLEXITY_PURITY_TOLERANCE = 0.30 
+# CONSENSUS CONSTANTS
+HARD_CONSENSUS_MIN = 4         # Slots required to force a row-wide ID
+ADOPTION_SCORE_FLOOR = 0.18    
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -56,10 +54,10 @@ def get_cached_mask(exclusion_top, exclusion_bot=0.0):
 
 BULLY_PENALTIES = {
     'com1': 0.04,
-    'epic1': 0.07, 'epic2': 0.07, 'epic3': 0.09,
-    'leg1': 0.10, 'leg2': 0.10, 'leg3': 0.12,
+    'epic1': 0.08, 'epic2': 0.08, 'epic3': 0.10,
+    'leg1': 0.12, 'leg2': 0.12, 'leg3': 0.14,
     'myth1': 0.05, 'myth2': 0.08, 'myth3': 0.10,
-    'div1': 0.15, 'div2': 0.15, 'div3': 0.20, 
+    'div1': 0.20, 'div2': 0.20, 'div3': 0.25, 
     'com3': 0.05
 }
 
@@ -69,22 +67,31 @@ ORE_RESTRICTIONS = {
     'dirt3': (24, 999), 'com3': (30, 999), 'rare3': (36, 999), 'epic3': (42, 999), 'leg3': (45, 999), 'myth3': (50, 999), 'div3': (100, 999)
 }
 
+def apply_texture_enhancement(img, state='active'):
+    """Uses CLAHE and Normalization to bring out local crystalline texture."""
+    if img is None or img.size == 0: return img
+    
+    # 1. Histogram Normalization to stretch the dynamic range
+    normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
+    
+    # 2. CLAHE (Local Contrast)
+    # ClipLimit 2.0-3.0 is sweet spot for ores
+    clip = 2.5 if state == 'shadow' else 1.8
+    clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8,8))
+    enhanced = clahe.apply(normalized)
+    
+    return enhanced
+
 def rotate_image(image, angle):
     center = (image.shape[1] // 2, image.shape[0] // 2)
     rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
     return cv2.warpAffine(image, rot_mat, (image.shape[1], image.shape[0]), flags=cv2.INTER_LINEAR)
-
-def apply_gamma_lift(img, gamma=0.5):
-    invGamma = 1.0 / gamma
-    table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
-    return cv2.LUT(img, table)
 
 def get_complexity(img):
     if img is None or img.size == 0: return 0
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def get_silhouette_data(img_gray):
-    """Extracts a silhouette and flags if it's clipped to the ROI boundary."""
     blurred = cv2.GaussianBlur(img_gray, (3, 3), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     if thresh[SIDE_PX//2, SIDE_PX//2] == 0:
@@ -117,11 +124,11 @@ def load_all_templates():
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
     
-    print(f"Loading Golden Standard (Plain Ores Only)...")
+    print(f"Loading Texture Standards (Plain Ores + CLAHE)...")
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
         if "_plain_" not in f.lower(): continue
-        if any(x in f.lower() for x in ["background", "player", "negative", "pickaxe", "fairy"]): continue
+        if any(x in f.lower() for x in ["background", "player", "negative", "pickaxe"]): continue
         
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
@@ -131,24 +138,22 @@ def load_all_templates():
         if tier not in templates[state]: templates[state][tier] = []
         
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
-        sil, clipped = get_silhouette_data(apply_gamma_lift(img_scaled, 0.6))
+        # Templates must be processed with the same texture enhancement
+        img_proc = apply_texture_enhancement(img_scaled, state)
+        sil, clipped = get_silhouette_data(img_proc)
         
         templates[state][tier].append({
-            'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier, 'sil': sil, 'clipped': clipped,
-            'comp': get_complexity(apply_gamma_lift(img_scaled, 0.6))
+            'id': f, 'img': img_proc, 'angle': 0, 'tier': tier, 'sil': sil, 'clipped': clipped,
+            'comp': get_complexity(img_proc)
         })
         for angle in ROTATION_VARIANTS:
-            img_rot = rotate_image(img_scaled, angle)
-            sil_rot, clip_rot = get_silhouette_data(apply_gamma_lift(img_rot, 0.6))
+            img_rot = rotate_image(img_proc, angle)
+            sil_rot, clip_rot = get_silhouette_data(img_rot)
             templates[state][tier].append({
                 'id': f, 'img': img_rot, 'angle': angle, 'tier': tier, 'sil': sil_rot, 'clipped': clip_rot,
-                'comp': get_complexity(apply_gamma_lift(img_rot, 0.6))
+                'comp': get_complexity(img_rot)
             })
     return templates
-
-def draw_shadow_text(img, text, pos, font, scale, color, thick):
-    cv2.putText(img, text, (pos[0]+1, pos[1]+1), font, scale, (0,0,0), thick+1)
-    cv2.putText(img, text, pos, font, scale, color, thick)
 
 def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     f_idx = frame_data['frame_idx']
@@ -159,7 +164,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y_base = int(ORE0_Y + (3 * STEP)) + 2
     
-    # 1. First Pass: Exhaustive Slot Matching
     slot_matches = {}
     for col in range(6):
         default_data = {
@@ -185,10 +189,13 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         ratio = top_e / max(1, bot_e)
         mean_lum = np.mean(roi_gray)
         
-        roi_lifted = apply_gamma_lift(roi_gray, 0.5)
-        roi_comp = get_complexity(roi_lifted)
-        roi_sil, roi_clipped = get_silhouette_data(roi_lifted)
+        # 1. State Selection & Texture Enhancement
+        roi_norm_diag = cv2.normalize(roi_gray, None, 0, 255, cv2.NORM_MINMAX)
+        roi_comp = get_complexity(roi_norm_diag)
         target_state = 'active' if (roi_comp > STATE_COMPLEXITY_THRESHOLD or mean_lum > LUMINANCE_SHADOW_FLOOR) else 'shadow'
+        
+        roi_proc = apply_texture_enhancement(roi_gray, target_state)
+        roi_sil, roi_clipped = get_silhouette_data(roi_proc)
         
         mask_top = 0.60 if (ratio > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
         mask_bot = 0.12 if (bot_e > 2000) else 0.0 
@@ -205,17 +212,18 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 if not roi_clipped and not tpl['clipped']:
                     shape_dist = cv2.matchShapes(roi_sil, tpl['sil'], cv2.CONTOURS_MATCH_I1, 0)
                     if shape_dist < SHAPE_MATCH_THRESHOLD:
-                        shape_bonus, shape_match_flag = 0.05, True
+                        shape_bonus = 0.05
+                        shape_match_flag = True
                 
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
                 search_area = img_gray[y1:y1+SIDE_PX+2, x1:x1+SIDE_PX+4]
                 if search_area.shape[0] < SIDE_PX or search_area.shape[1] < SIDE_PX: continue
-                gamma_lvl = 0.35 if target_state == 'shadow' else 0.5
-                search_lifted = apply_gamma_lift(search_area, gamma_lvl)
-                res = cv2.matchTemplate(search_lifted, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
+                
+                search_proc = apply_texture_enhancement(search_area, target_state)
+                res = cv2.matchTemplate(search_proc, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
-                affinity = 0.04 if abs(tpl['comp'] - roi_comp) < 20.0 else 0
+                affinity = 0.04 if abs(tpl['comp'] - roi_comp) < 25.0 else 0
                 all_candidates.append({'tier': tier, 'score': score - penalty + affinity + shape_bonus, 'shape_match': shape_match_flag})
         
         if not all_candidates:
@@ -232,111 +240,64 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 'final_score': scores[0]
         }
 
-    # 2. Top-K Rank Consensus Engine (v11.3)
-    # Collect Top-K tiers for every slot in the row
-    row_top_k_counts = Counter()
-    slot_top_tiers = {}
-    anchor_complexities = defaultdict(list)
+    # 2. Proactive Consensus Pass (v11.4)
+    # Collect signals based on Top-2 Rankings
+    row_signals = Counter()
+    for col, data in slot_matches.items():
+        if data['status'] == 'occupied' and data['candidates']:
+            row_signals.update([c['tier'] for c in data['candidates'][:2]])
     
-    for col in range(6):
-        data = slot_matches[col]
-        if data['status'] == 'empty_dna': continue
-        
-        # Get unique tiers in the top K for this slot
-        top_tiers = []
-        seen = set()
-        for cand in data['candidates'][:K_DEPTH]:
-            if cand['tier'] not in seen:
-                top_tiers.append(cand['tier'])
-                seen.add(cand['tier'])
-        
-        slot_top_tiers[col] = top_tiers
-        row_top_k_counts.update(top_tiers)
-        
-        # Record complexity for potential adoption anchoring
-        if data['final_score'] > 0.40:
-             anchor_complexities[data['candidates'][0]['tier']].append(data['roi_comp'])
+    consensus_signal = None
+    if row_signals:
+        top_sig, freq = row_signals.most_common(1)[0]
+        if freq >= HARD_CONSENSUS_MIN:
+            consensus_signal = top_sig
 
-    # Find the tier that appears in the most Top-K lists
-    sorted_signals = row_top_k_counts.most_common(2)
-    row_signal = None
-    if sorted_signals:
-        primary_tier, freq = sorted_signals[0]
-        if freq >= CONSENSUS_SLOT_MIN:
-            # Purity check: if secondary signal is nearly as common, stay cautious
-            if len(sorted_signals) > 1:
-                sec_tier, sec_freq = sorted_signals[1]
-                if sec_freq < freq:
-                    row_signal = primary_tier
-            else:
-                row_signal = primary_tier
-
-    # 3. Final Resolution with Top-K Adoption
+    # 3. Final Resolution with Purity & Consensus Adoption
     frame_results = []
     has_detections = False
     for col in range(6):
         data = slot_matches[col]
-        is_valid, detected = False, 'low_conf_id'
-        
         if data['status'] == 'empty_dna':
-            detected = 'empty_dna'
-        else:
-            # Check individual validity first
-            final = data['candidates'][0]
-            # Preference logic for Dirt/Common in ambiguous zones
-            for ch in data['candidates'][1:3]:
-                if 'dirt' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
-                    final = ch
+            frame_results.append({'frame': f_idx, 'slot': col, 'detected': 'empty_dna', 'score': 0.0, 'xhair': 'none'})
+            continue
             
-            gate = 0.42 if 'dirt' in final['tier'] else 0.54
-            is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
-            detected = final['tier'] if is_valid else 'low_conf_id'
-            
-            # Top-K Adoption Recovery
-            if not is_valid and row_signal:
-                # If row_signal is in THIS slot's top K and complexity matches
-                if row_signal in slot_top_tiers[col]:
-                    # Find candidate for row_signal
-                    sig_cand = next((c for c in data['candidates'] if c['tier'] == row_signal), None)
-                    if sig_cand and sig_cand['score'] > ADOPTION_SCORE_FLOOR:
-                        # Optional: Complexity purity gate
-                        if row_signal in anchor_complexities:
-                            avg_comp = np.mean(anchor_complexities[row_signal])
-                            comp_diff = abs(data['roi_comp'] - avg_comp) / max(1, avg_comp)
-                            if comp_diff < COMPLEXITY_PURITY_TOLERANCE:
-                                detected = f"{row_signal}[K]"
-                                is_valid = True
-                                final = sig_cand
-                        else:
-                            # If no strong anchor exists, adopt purely on Top-K rank if count is high (consensus)
-                            if row_top_k_counts[row_signal] >= 4:
-                                detected = f"{row_signal}[K]"
-                                is_valid = True
-                                final = sig_cand
+        final = data['candidates'][0]
+        # RECOVERY: Simplicity Bias (Protect Dirt1 from Rare1 Noise)
+        for ch in data['candidates'][1:3]:
+            if 'dirt1' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER):
+                final = ch
+        
+        gate = 0.40 if 'dirt' in final['tier'] else 0.52
+        is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.18)
+        detected = final['tier'] if is_valid else 'low_conf_id'
+        
+        # PROACTIVE CONSENSUS ADOPTION
+        if not is_valid and consensus_signal:
+            # Check if consensus exists in this slot's Top 5
+            sig_opt = next((c for c in data['candidates'][:5] if c['tier'] == consensus_signal), None)
+            if sig_opt and sig_opt['score'] > ADOPTION_SCORE_FLOOR:
+                detected = f"{consensus_signal}[C]" # [C] for Consensus
+                is_valid = True
+                final = sig_opt
 
-            if is_valid and data['xhair'] != 'none':
-                detected, is_valid = "xhair_obscured", False
-            
-            data['is_valid'] = is_valid
-            data['detected'] = detected
-            data['final_score'] = final['score']
+        if is_valid and data['xhair'] != 'none':
+            detected, is_valid = "xhair_obscured", False
 
         color = (0, 255, 0) if is_valid else (0, 0, 255)
-        if detected == 'empty_dna': color = (100, 100, 100)
-        elif detected == "xhair_obscured": color = (0, 255, 255)
+        if detected == "xhair_obscured": color = (0, 255, 255)
         
         rx1, ry1 = int(ORE0_X + (col * STEP) - SIDE_PX//2), int(row4_y_base - SIDE_PX//2)
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
         draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-(5 if col%2==0 else 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        stat_str = f"{data['final_score']:.2f} Z:{data.get('z_score',0):.1f}"
-        if any(c.get('shape_match') for c in data['candidates'][:1]): stat_str += " [G]" 
+        stat_str = f"{final['score']:.2f} Z:{data.get('z_score',0):.1f}"
         draw_shadow_text(img_color, stat_str, (rx1+3, ry1+(10 if col%2==0 else 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if is_valid: has_detections = True
-        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(data['final_score'], 4), 'xhair': data.get('xhair','none')})
+        frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"spatial_v113_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"texture_v114_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -349,11 +310,10 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v11.3: TOP-K RANK CONSENSUS ---")
+    print(f"--- ORE ID AUDIT v11.4: THE TEXTURE GUARD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
-    # Run only on first 500 frames for subset testing as requested
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker_func, r): r for r in df_sample.to_dict('records')[:500]}
         for i, f in enumerate(concurrent.futures.as_completed(futures)):
@@ -365,7 +325,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v11.3_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v11.4_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
