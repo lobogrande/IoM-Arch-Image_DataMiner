@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 9.8 (The Golden Standard: Plain-Only Filtering & State-Aware Matching)
+# Version: 9.9 (The Forensic Guard: Strict Filtering & Luminance Gating)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -25,11 +25,12 @@ ROTATION_VARIANTS = [-3, 3]
 
 # LOGIC THRESHOLDS
 Z_TRUST_THRESHOLD = 2.1 
-STATE_COMPLEXITY_THRESHOLD = 400 # Threshold to decide if an ROI is Shadow or Active
-MOD_ENERGY_RATIO_TRIGGER = 1.8   # More lenient since templates are now clean
+STATE_COMPLEXITY_THRESHOLD = 350 # Complexity floor for active ores
+LUMINANCE_SHADOW_FLOOR = 85      # Ores above this are considered Active regardless of complexity
+MOD_ENERGY_RATIO_TRIGGER = 1.8   
 XHAIR_PX_FLOOR = 200            
 XHAIR_SAT_FLOOR = 140           
-TIER_CONF_BUFFER = 0.08 
+TIER_CONF_BUFFER = 0.07 
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -48,12 +49,13 @@ def get_cached_mask(exclusion_top, exclusion_bot=0.0):
         CACHED_MASKS[key] = mask
     return CACHED_MASKS[key]
 
-# Simplified Penalties for the "Plain" world
+# BULLY PENALTIES: Increased Epic and Div to protect Dirt/Common slots
 BULLY_PENALTIES = {
-    'epic1': 0.02, 'epic2': 0.02, 'epic3': 0.03,
-    'leg1': 0.05, 'leg2': 0.05, 'leg3': 0.08,
-    'myth1': 0.04, 'myth2': 0.04, 'myth3': 0.05,
-    'div1': 0.10, 'div2': 0.10, 'div3': 0.10
+    'epic1': 0.06, 'epic2': 0.06, 'epic3': 0.08,
+    'leg1': 0.10, 'leg2': 0.10, 'leg3': 0.12,
+    'myth1': 0.05, 'myth2': 0.08, 'myth3': 0.10,
+    'div1': 0.15, 'div2': 0.15, 'div3': 0.20, 
+    'com3': 0.05
 }
 
 ORE_RESTRICTIONS = {
@@ -100,11 +102,13 @@ def load_all_templates():
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
     
-    print(f"Loading Golden Standard templates (Plain only)...")
+    print(f"Loading Golden Standard (Plain Ores Only)...")
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
-        # STRATEGY: Only load clean "plain" templates
+        
+        # FIX: Explicit keyword firewall to prevent non-ore matches
         if "_plain_" not in f.lower(): continue
+        if any(x in f.lower() for x in ["background", "player", "negative", "pickaxe", "fairy"]): continue
         
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
         if img_raw is None: continue
@@ -115,12 +119,10 @@ def load_all_templates():
         if tier not in templates[state]: templates[state][tier] = []
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
         
-        # Primary
         templates[state][tier].append({
             'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier,
             'comp': get_complexity(apply_gamma_lift(img_scaled, 0.6))
         })
-        # Variants
         for angle in ROTATION_VARIANTS:
             img_rot = rotate_image(img_scaled, angle)
             templates[state][tier].append({
@@ -161,18 +163,19 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         top_half, bot_half = roi_gray[0:SIDE_PX//2, :], roi_gray[SIDE_PX//2:SIDE_PX, :]
         top_e, bot_e = get_complexity(top_half), get_complexity(bot_half)
         ratio = top_e / max(1, bot_e)
+        mean_lum = np.mean(roi_gray)
         
-        # 1. State Determination
+        # 1. State Determination: Shadow ores are dark AND smooth. 
+        # Active ores (even obscured) are typically bright.
         roi_lifted = apply_gamma_lift(roi_gray, 0.5)
         roi_comp = get_complexity(roi_lifted)
-        target_state = 'active' if roi_comp > STATE_COMPLEXITY_THRESHOLD else 'shadow'
+        target_state = 'active' if (roi_comp > STATE_COMPLEXITY_THRESHOLD or mean_lum > LUMINANCE_SHADOW_FLOOR) else 'shadow'
         
         # 2. Dynamic Masking
         mask_top = 0.60 if (ratio > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
         mask_bot = 0.12 if (bot_e > 2000) else 0.0 
         active_mask = get_cached_mask(mask_top, mask_bot)
         
-        # 3. Match against clean templates of the determined state
         all_candidates = []
         is_hit_frame = (top_e > 1500 or bot_e > 1500)
         
@@ -184,18 +187,20 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
                 search_area = img_gray[y1:y1+SIDE_PX+2, x1:x1+SIDE_PX+4]
                 if search_area.shape[0] < SIDE_PX or search_area.shape[1] < SIDE_PX: continue
-                search_lifted = apply_gamma_lift(search_area, 0.5)
+                
+                # Higher gamma for shadow matching to reveal hidden texture
+                gamma_lvl = 0.4 if target_state == 'shadow' else 0.5
+                search_lifted = apply_gamma_lift(search_area, gamma_lvl)
                 
                 res = cv2.matchTemplate(search_lifted, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
-                # Rewarding core identity
                 affinity = 0.04 if abs(tpl['comp'] - roi_comp) < 20.0 else 0
                 all_candidates.append({'tier': tier, 'score': score - penalty + affinity})
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
-        z_score = (scores[0] - np.mean(scores)) / np.std(scores) if len(scores) > 1 else 0
+        z_score = (scores[0] - np.mean(scores)) / np.std(scores) if (len(scores) > 1 and np.std(scores) > 0) else 0
         
         slot_matches[col] = {
             'status': 'occupied', 'candidates': all_candidates, 'z_score': z_score,
@@ -207,7 +212,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
         top = data['candidates'][0]
-        if top['score'] > 0.40 or data['z_score'] > Z_TRUST_THRESHOLD:
+        if top['score'] > 0.42 or data['z_score'] > Z_TRUST_THRESHOLD:
             floor_votes.append(ORE_RESTRICTIONS.get(top['tier'], (1, 999)))
     
     consensus_range = Counter(floor_votes).most_common(1)[0][0] if floor_votes else (1, 999)
@@ -226,7 +231,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     has_detections = False
     for col in range(6):
         data = slot_matches[col]
-        is_valid, detected, final = False, 'none', {'tier': 'none', 'score': 0.0}
+        is_valid, detected, final = False, 'low_conf_id', {'tier': 'none', 'score': 0.0}
         
         if data['status'] == 'empty_dna':
             detected = 'empty_dna'
@@ -238,7 +243,6 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 for ch in valid_opts[1:]:
                     if 'dirt' in ch['tier'] and ch['score'] > (final['score'] - TIER_CONF_BUFFER): final = ch
                 
-                # Looser gates because "Plain" templates are harder to hit but more accurate
                 gate = 0.42 if 'dirt' in final['tier'] else 0.55
                 is_valid = (final['score'] > gate) or (data['z_score'] > Z_TRUST_THRESHOLD and final['score'] > 0.20)
                 if is_valid:
@@ -262,7 +266,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(final['score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"standard_v98_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"standard_v99_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -274,7 +278,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v9.8: THE GOLDEN STANDARD ---")
+    print(f"--- ORE ID AUDIT v9.9: THE FORENSIC GUARD ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -289,7 +293,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v9.8_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v9.9_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
