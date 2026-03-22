@@ -1,11 +1,11 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 11.0 (The Spatial Guard: Consensus Propagation & Row-Wide Adoption)
+# Version: 11.1 (The Spatial Guard: Weighted Consensus & Structural Purity)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
 from functools import partial
-from collections import Counter
+from collections import Counter, defaultdict
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
@@ -31,9 +31,10 @@ MOD_ENERGY_RATIO_TRIGGER = 1.8
 SHAPE_MATCH_THRESHOLD = 0.05     
 TIER_CONF_BUFFER = 0.07 
 
-# SPATIAL ADOPTION CONSTANTS
-ANCHOR_TRUST_FLOOR = 0.48      # Score required to become a row anchor
-ADOPTION_SCORE_FLOOR = 0.25    # Lowered gate for neighbors of anchors
+# SPATIAL ADOPTION CONSTANTS (v11.1 Refined)
+ANCHOR_TRUST_FLOOR = 0.52      # Higher floor for signal sources
+ADOPTION_SCORE_FLOOR = 0.25    # Minimum candidate score for adoption
+COMPLEXITY_PURITY_TOLERANCE = 0.25 # Neighbor complexity must be within 25% of anchor
 
 # Pre-cached masks
 CACHED_MASKS = {}
@@ -160,7 +161,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     r4_dna = dna_map.get(f_idx, "000000")
     row4_y_base = int(ORE0_Y + (3 * STEP)) + 2
     
-    # 1. First Pass: Individual Matching
+    # 1. First Pass: Individual Slot Matching
     slot_matches = {}
     for col in range(6):
         default_data = {
@@ -233,7 +234,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             'xhair': xhair, 'xhair_sat': xh_sat, 'xhair_px': xh_px, 'ratio': ratio, 'roi_comp': roi_comp, 'final_score': scores[0]
         }
 
-    # 2. Consensus Determination
+    # 2. Global Consensus Engine
     floor_votes = []
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
@@ -254,8 +255,11 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 if fam not in family_champions or cand['score'] > family_champions[fam]['score']:
                     family_champions[fam] = {'tier': cand['tier'], 'score': cand['score']}
 
-    # 3. Preliminary Identification (Identify Anchors)
-    anchors = []
+    # 3. Anchor Identification (v11.1 Weighted Analysis)
+    # We collect 'weighted' votes for the row signal
+    row_votes = defaultdict(float)
+    anchor_complexities = defaultdict(list)
+    
     for col in range(6):
         data = slot_matches[col]
         if data['status'] == 'empty_dna': continue
@@ -273,24 +277,44 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             data['detected'] = final['tier'] if is_valid else 'low_conf_id'
             data['final_score'] = final['score']
             
+            # If it's a strong hit, it can act as a signal source
             if is_valid and final['score'] > ANCHOR_TRUST_FLOOR:
-                anchors.append(final['tier'])
+                # Weighted vote: score * certainty
+                weight = final['score'] * data['z_score']
+                row_votes[final['tier']] += weight
+                anchor_complexities[final['tier']].append(data['roi_comp'])
 
-    # 4. Spatial Consensus Propagation (The Adoption Pass)
-    row_signal = Counter(anchors).most_common(1)[0][0] if len(anchors) >= 2 else None
+    # 4. Spatial Propagation (The Purity Pass)
+    sorted_votes = sorted(row_votes.items(), key=lambda x: x[1], reverse=True)
+    row_signal = None
     
-    for col in range(6):
-        data = slot_matches[col]
-        if data['status'] == 'occupied' and data['detected'] == 'low_conf_id' and row_signal:
-            # Check if this slot's best matching valid candidate is the Row Signal
-            for cand in data['candidates']:
-                if cand['tier'] == row_signal and cand['score'] > ADOPTION_SCORE_FLOOR:
-                    data['detected'] = f"{row_signal}[A]" # [A] for Adopted
-                    data['is_valid'] = True
-                    data['final_score'] = cand['score']
-                    break
+    if sorted_votes:
+        primary_tier, primary_weight = sorted_votes[0]
+        # Purity Check: If a secondary signal is too strong (>50% of primary), it's a mixed row
+        if len(sorted_votes) > 1:
+            secondary_tier, secondary_weight = sorted_votes[1]
+            if secondary_weight < (primary_weight * 0.5):
+                row_signal = primary_tier
+        else:
+            row_signal = primary_tier
+            
+    if row_signal:
+        avg_anchor_comp = np.mean(anchor_complexities[row_signal])
+        for col in range(6):
+            data = slot_matches[col]
+            if data['status'] == 'occupied' and data['detected'] == 'low_conf_id':
+                # Structural Purity Gate: Compare neighbor complexity to anchor complexity
+                comp_diff = abs(data['roi_comp'] - avg_anchor_comp) / max(1, avg_anchor_comp)
+                if comp_diff < COMPLEXITY_PURITY_TOLERANCE:
+                    # Look for the row signal in its candidate list
+                    for cand in data['candidates']:
+                        if cand['tier'] == row_signal and cand['score'] > ADOPTION_SCORE_FLOOR:
+                            data['detected'] = f"{row_signal}[A]"
+                            data['is_valid'] = True
+                            data['final_score'] = cand['score']
+                            break
 
-    # 5. Final Rendering & Data Export
+    # 5. Output and Rendering
     frame_results = []
     has_detections = False
     for col in range(6):
@@ -315,7 +339,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         frame_results.append({'frame': f_idx, 'slot': col, 'detected': detected, 'score': round(data['final_score'], 4), 'xhair': data.get('xhair','none')})
 
     if has_detections:
-        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"spatial_v110_f{f_idx}.jpg"), img_color)
+        cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"spatial_v111_f{f_idx}.jpg"), img_color)
     return frame_results
 
 def run_precision_audit():
@@ -330,7 +354,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v11.0: THE SPATIAL CONSENSUS ---")
+    print(f"--- ORE ID AUDIT v11.1: THE SPATIAL CONSENSUS ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     
@@ -345,7 +369,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v11.0_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "ore_id_v11.1_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")
