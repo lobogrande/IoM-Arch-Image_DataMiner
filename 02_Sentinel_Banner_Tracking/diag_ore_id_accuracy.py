@@ -1,6 +1,6 @@
 # diag_ore_id_accuracy.py
 # Purpose: Forensic Ore Identification with Structural and Physical Constraints.
-# Version: 12.6 (The Independent Forensic: Dual-Sensor Voting & Slot Independence)
+# Version: 12.6.1 (The Independent Forensic: Bugfix & Sensor Stability)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -42,6 +42,24 @@ BULLY_PENALTIES = {
     'div1': 0.20, 'div2': 0.20, 'div3': 0.25, 
     'com3': 0.05
 }
+
+# Pre-cached masks
+CACHED_MASKS = {}
+
+def get_cached_mask(exclusion_top, exclusion_bot=0.0):
+    """Generates a circular mask with optional top/bottom exclusions to block pickaxe/UI."""
+    key = (int(exclusion_top * 100), int(exclusion_bot * 100))
+    if key not in CACHED_MASKS:
+        mask = np.zeros((SIDE_PX, SIDE_PX), dtype=np.uint8)
+        radius = int(18 * (SIDE_PX / 48))
+        cv2.circle(mask, (SIDE_PX//2, SIDE_PX//2), radius, 255, -1)
+        t_lim = int(SIDE_PX * exclusion_top)
+        mask[0:t_lim, :] = 0
+        if exclusion_bot > 0:
+            b_lim = int(SIDE_PX * (1.0 - exclusion_bot))
+            mask[b_lim:SIDE_PX, :] = 0
+        CACHED_MASKS[key] = mask
+    return CACHED_MASKS[key]
 
 def apply_texture_enhancement(img, state='active'):
     if img is None or img.size == 0: return img
@@ -249,7 +267,7 @@ def run_precision_audit():
     templates = load_all_templates()
     buffer_dir = cfg.get_buffer_path(0)
     
-    print(f"--- ORE ID AUDIT v12.6: THE INDEPENDENT FORENSIC ---")
+    print(f"--- ORE ID AUDIT v12.6.1: THE INDEPENDENT FORENSIC ---")
     all_results = []
     worker_func = partial(process_single_frame, dna_map=dna_map, templates=templates, buffer_dir=buffer_dir)
     with concurrent.futures.ProcessPoolExecutor() as executor:
