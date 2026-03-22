@@ -28,7 +28,7 @@ Z_TRUST_THRESHOLD = 2.1
 STATE_COMPLEXITY_THRESHOLD = 350 
 LUMINANCE_SHADOW_FLOOR = 85      
 MOD_ENERGY_RATIO_TRIGGER = 1.8   
-SHAPE_MATCH_THRESHOLD = 0.15     # Hu Moment distance floor (lower is better)
+SHAPE_MATCH_THRESHOLD = 0.05     # Tighter threshold based on v1.2 Forensic Audit
 TIER_CONF_BUFFER = 0.07 
 
 # Pre-cached masks
@@ -76,14 +76,19 @@ def get_complexity(img):
     if img is None or img.size == 0: return 0
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
-def get_silhouette(img_gray):
-    """Extracts a clean physical outline for shape matching."""
+def get_silhouette_data(img_gray):
+    """Extracts a silhouette and flags if it's clipped to the ROI boundary."""
     blurred = cv2.GaussianBlur(img_gray, (3, 3), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     # Ensure ore is white on black background
     if thresh[SIDE_PX//2, SIDE_PX//2] == 0:
         thresh = cv2.bitwise_not(thresh)
-    return thresh
+    
+    # Calculate occupancy to detect 'Square Clipping'
+    area = cv2.countNonZero(thresh)
+    is_clipped = area > (SIDE_PX * SIDE_PX * 0.90)
+    
+    return thresh, is_clipped
 
 def detect_vibrant_crosshair(roi_bgr):
     if roi_bgr is None or roi_bgr.size == 0: return "none", 0, 0
@@ -109,10 +114,11 @@ def load_all_templates():
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
     
-    print(f"Loading Morphological Standards (Plain Only)...")
+    print(f"Loading Morphological Standards (Plain Ores Only)...")
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')): continue
         if "_plain_" not in f.lower(): continue
+        # Strict keyword firewall
         if any(x in f.lower() for x in ["background", "player", "negative", "pickaxe", "fairy"]): continue
         
         img_raw = cv2.imread(os.path.join(t_path, f), 0)
@@ -124,17 +130,18 @@ def load_all_templates():
         
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
         
-        # Pre-calculate shape properties for the morphological guard
-        sil = get_silhouette(apply_gamma_lift(img_scaled, 0.6))
+        # Pre-calculate shape properties
+        sil, clipped = get_silhouette_data(apply_gamma_lift(img_scaled, 0.6))
         
         templates[state][tier].append({
-            'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier, 'sil': sil,
+            'id': f, 'img': img_scaled, 'angle': 0, 'tier': tier, 'sil': sil, 'clipped': clipped,
             'comp': get_complexity(apply_gamma_lift(img_scaled, 0.6))
         })
         for angle in ROTATION_VARIANTS:
             img_rot = rotate_image(img_scaled, angle)
+            sil_rot, clip_rot = get_silhouette_data(apply_gamma_lift(img_rot, 0.6))
             templates[state][tier].append({
-                'id': f, 'img': img_rot, 'angle': angle, 'tier': tier, 'sil': get_silhouette(apply_gamma_lift(img_rot, 0.6)),
+                'id': f, 'img': img_rot, 'angle': angle, 'tier': tier, 'sil': sil_rot, 'clipped': clip_rot,
                 'comp': get_complexity(apply_gamma_lift(img_rot, 0.6))
             })
     return templates
@@ -173,10 +180,10 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         ratio = top_e / max(1, bot_e)
         mean_lum = np.mean(roi_gray)
         
-        # State & Silhouette extraction
+        # 1. State & Silhouette extraction
         roi_lifted = apply_gamma_lift(roi_gray, 0.5)
         roi_comp = get_complexity(roi_lifted)
-        roi_sil = get_silhouette(roi_lifted)
+        roi_sil, roi_clipped = get_silhouette_data(roi_lifted)
         target_state = 'active' if (roi_comp > STATE_COMPLEXITY_THRESHOLD or mean_lum > LUMINANCE_SHADOW_FLOOR) else 'shadow'
         
         mask_top = 0.60 if (ratio > MOD_ENERGY_RATIO_TRIGGER or top_e > 2500) else 0.40
@@ -191,11 +198,16 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
             for tpl in variants:
                 if not is_hit_frame and tpl['angle'] != 0: continue
                 
-                # 1. Physical Outline Match (The Morphological Guard)
-                shape_dist = cv2.matchShapes(roi_sil, tpl['sil'], cv2.CONTOURS_MATCH_I1, 0)
-                shape_bonus = 0.05 if shape_dist < SHAPE_MATCH_THRESHOLD else 0.0
+                # 2. Morphological Guard with Clipping Protection
+                shape_bonus = 0.0
+                shape_match_flag = False
+                if not roi_clipped and not tpl['clipped']:
+                    shape_dist = cv2.matchShapes(roi_sil, tpl['sil'], cv2.CONTOURS_MATCH_I1, 0)
+                    if shape_dist < SHAPE_MATCH_THRESHOLD:
+                        shape_bonus = 0.05
+                        shape_match_flag = True
                 
-                # 2. Traditional Correlation
+                # 3. Traditional Correlation
                 x1, y1 = int(cx - (SIDE_PX//2) - 2), int(row4_y_base - (SIDE_PX//2) - 1)
                 search_area = img_gray[y1:y1+SIDE_PX+2, x1:x1+SIDE_PX+4]
                 if search_area.shape[0] < SIDE_PX or search_area.shape[1] < SIDE_PX: continue
@@ -207,7 +219,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 _, score, _, _ = cv2.minMaxLoc(res)
                 
                 affinity = 0.04 if abs(tpl['comp'] - roi_comp) < 20.0 else 0
-                all_candidates.append({'tier': tier, 'score': score - penalty + affinity + shape_bonus, 'shape_match': (shape_dist < SHAPE_MATCH_THRESHOLD)})
+                all_candidates.append({'tier': tier, 'score': score - penalty + affinity + shape_bonus, 'shape_match': shape_match_flag})
         
         all_candidates.sort(key=lambda x: x['score'], reverse=True)
         scores = [c['score'] for c in all_candidates]
@@ -223,7 +235,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
     for col, data in slot_matches.items():
         if data['status'] == 'empty_dna' or not data['candidates']: continue
         top = data['candidates'][0]
-        # Verified shape matches count as stronger votes
+        # Verified geometric matches carry extra weight in consensus
         vote_weight = 1.5 if top.get('shape_match') else 1.0
         if top['score'] > 0.42 or data['z_score'] > Z_TRUST_THRESHOLD:
             for _ in range(int(vote_weight)):
@@ -270,7 +282,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
         cv2.rectangle(img_color, (rx1, ry1), (rx1+SIDE_PX, ry1+SIDE_PX), color, 1)
         draw_shadow_text(img_color, detected, (rx1+3, ry1+SIDE_PX-(5 if col%2==0 else 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
         stat_str = f"{final['score']:.2f} Z:{data.get('z_score',0):.1f}"
-        if final.get('shape_match'): stat_str += " [G]" # [G] for Geometric match
+        if final.get('shape_match'): stat_str += " [G]" # Geometric verified
         draw_shadow_text(img_color, stat_str, (rx1+3, ry1+(10 if col%2==0 else 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.28, color, 1)
         
         if is_valid: has_detections = True
