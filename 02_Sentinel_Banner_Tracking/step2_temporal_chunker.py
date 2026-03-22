@@ -1,7 +1,7 @@
 # step2_temporal_chunker.py
 # Purpose: Execute Master Plan Step 2 - Group frames into distinct floors using 
-#          Kinematic rules and Temporal Stability Gates.
-# Version: 6.8 (The Temporal Hammer: Frame Locking & DNA Debouncing)
+#          Kinematic rules and Strict Row 4 Immutability.
+# Version: 7.0 (The Row 4 Anchor: Silencing Row 3 Noise)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -19,93 +19,67 @@ def run_temporal_chunking():
     # Load DNA data. Force DNA columns to strings to prevent int casting issues.
     df = pd.read_csv(DNA_CSV, dtype={'r3_dna': str, 'r4_dna': str, 'dna_sig': str})
     df = df.sort_values('frame_idx').reset_index(drop=True)
+    df['gap'] = df['frame_idx'].diff().fillna(0)
     
     buffer_dir = cfg.get_buffer_path(0)
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v6.8) ---")
-    print(f"Processing {len(df)} frames using Temporal Physics...")
+    print(f"--- STEP 2: KINEMATIC FLOOR GROUPING (v7.0) ---")
+    print(f"Processing {len(df)} frames using Row 4 Anchoring...")
 
-    # 1. TEMPORAL STABILITY PASS
-    # We identify "Dirty" transitions where the DNA is flickering
-    df['dna_full'] = df['r4_dna'] + "-" + df['r3_dna']
-    df['frame_diff'] = df['frame_idx'].diff().fillna(0)
-    
-    # 2. MICRO-BLOCKING (v6.8 Stability Update)
-    # A block breaks ONLY if:
-    # A) The slot changes
-    # B) The frame gap is > 1 (Physical teleport possibility) AND the DNA has shifted
-    # C) The DNA has been stable for a few frames (Debouncing)
+    # 1. MICRO-BLOCKING (Slot & Raw R4)
+    # A block breaks ONLY if the slot changes OR the raw Row 4 DNA changes.
+    # We completely ignore Row 3 here to prevent banners from fracturing attacks.
+    df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | 
+                      (df['r4_dna'] != df['r4_dna'].shift(1))).cumsum()
     
     blocks = []
-    curr_group = []
-    
-    for i in range(len(df)):
-        row = df.iloc[i]
-        if i == 0:
-            curr_group.append(row)
-            continue
-            
-        prev = df.iloc[i-1]
-        
-        # Physical impossibility check: consecutive frames cannot be different floors
-        is_consecutive = (row['frame_idx'] - prev['frame_idx'] == 1)
-        slot_changed = (row['slot_id'] != prev['slot_id'])
-        dna_changed = (row['dna_full'] != prev['dna_full'])
-        
-        split_needed = False
-        if slot_changed:
-            split_needed = True
-        elif dna_changed and not is_consecutive:
-            # DNA changed and there's a gap (potential floor transition)
-            # Check for stability: does this DNA last for at least 3 frames?
-            if i + 3 < len(df):
-                future_dna = df.iloc[i:i+3]['dna_full'].unique()
-                if len(future_dna) == 1: # It is stable
-                    split_needed = True
-        
-        if split_needed:
-            blocks.append(pd.DataFrame(curr_group))
-            curr_group = [row]
-        else:
-            curr_group.append(row)
-            
-    if curr_group:
-        blocks.append(pd.DataFrame(curr_group))
-
-    # 3. BLOCK CONSOLIDATION
-    consolidated_blocks = []
-    for group in blocks:
-        consolidated_blocks.append({
+    for block_id, group in df.groupby('block_id'):
+        blocks.append({
             'start_frame': int(group['frame_idx'].min()),
             'end_frame': int(group['frame_idx'].max()),
             'slot': int(group['slot_id'].iloc[0]),
             'filename': group['filename'].iloc[0],
+            # Mode() acts as a localized noise filter for the few frames R4 might glitch
             'r4_mode': str(group['r4_dna'].mode()[0]),
             'r3_mode': str(group['r3_dna'].mode()[0]),
-            'dna_full': str(group['r4_dna'].mode()[0]) + "-" + str(group['r3_dna'].mode()[0])
+            'gap_to_prev': int(group['gap'].iloc[0]), # The time it took to start this block
+            'size': len(group)
         })
     
-    print(f"Phase 1: Consolidated frames into {len(consolidated_blocks)} stable blocks.")
+    print(f"Phase 1: Consolidated frames into {len(blocks)} unified slot-attack blocks.")
 
-    # 4. FLOOR GROUPING (The Physical Laws)
+    # 2. FLOOR GROUPING (Kinematics & R4 Immutability)
     floors = []
-    curr_floor = [consolidated_blocks[0]]
+    curr_floor = [blocks[0]]
     
-    for b in consolidated_blocks[1:]:
+    for b in blocks[1:]:
         prev_b = curr_floor[-1]
+        
         is_new_floor = False
         reason = ""
         
-        # LAW 1: Slot Reversal (Primary Reset Signal)
+        # LAW 1: Slot Reversal (Guaranteed Reset)
         if b['slot'] < prev_b['slot']:
             is_new_floor = True
             reason = f"Slot Reversal ({prev_b['slot']} -> {b['slot']})"
             
-        # LAW 2: Stable DNA Shift
-        elif b['dna_full'] != prev_b['dna_full']:
+        # LAW 2: Row 4 Immutability Broken
+        # Since Row 4 is at the bottom of the screen, it is immune to scrolling text.
+        # If it changes, the floor layout has physically changed.
+        elif b['r4_mode'] != prev_b['r4_mode']:
             is_new_floor = True
-            reason = f"DNA Shift ({prev_b['dna_full']} -> {b['dna_full']})"
+            reason = f"R4 DNA Shift ({prev_b['r4_mode']} -> {b['r4_mode']})"
+                
+        # LAW 3: The AoE Board Wipe Fallback
+        # If the player uses a massive attack, the board clears, and the next floor starts
+        # on the exact same slot with the exact same Row 4 DNA. 
+        # This takes significant animation time (> 60 frames). 
+        # ONLY in this scenario do we trust Row 3 to confirm the layout changed.
+        elif b['slot'] == prev_b['slot'] and b['gap_to_prev'] > 60:
+            if b['r3_mode'] != prev_b['r3_mode']:
+                is_new_floor = True
+                reason = f"AoE Board Wipe Detected (R3 DNA Shift after {b['gap_to_prev']}f gap)"
 
         if is_new_floor:
             b['transition_reason'] = reason
@@ -115,9 +89,9 @@ def run_temporal_chunking():
             curr_floor.append(b)
             
     floors.append(curr_floor)
-    print(f"Phase 2: Identified {len(floors)} distinct floors using Stability Gates.")
+    print(f"Phase 2: Identified {len(floors)} distinct floors.")
 
-    # 5. EXPORT & VISUAL PROOFS
+    # 3. EXPORT & VISUAL PROOFS
     print(f"Exporting Step 2 candidates to: {VERIFY_DIR}")
     final_candidates = []
     
@@ -135,18 +109,21 @@ def run_temporal_chunking():
         }
         final_candidates.append(candidate)
         
+        # OSD AT BOTTOM (Prevents occluding the Stage ROI header)
         img_path = os.path.join(buffer_dir, candidate['filename'])
         vis = cv2.imread(img_path)
         if vis is not None:
             h, w = vis.shape[:2]
-            cv2.rectangle(vis, (10, h - 95), (750, h - 10), (0, 0, 0), -1)
-            cv2.putText(vis, f"FLOOR {candidate['floor_id']:03d} | Frame: {candidate['start_frame']}", (20, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(vis, f"DNA: {candidate['r4_dna_stable']}-{candidate['r3_dna_stable']} | Reason: {candidate['transition_reason']}", (20, h - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            cv2.rectangle(vis, (10, h - 95), (710, h - 10), (0, 0, 0), -1)
+            cv2.putText(vis, f"FLOOR {candidate['floor_id']:03d} | Start Frame: {candidate['start_frame']}", (20, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(vis, f"DNA: {candidate['r4_dna_stable']}-{candidate['r3_dna_stable']} | Slot: {candidate['slot_id']}", (20, h - 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            cv2.putText(vis, f"Reason: {candidate['transition_reason']}", (20, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+            
             out_name = f"floor_start_{candidate['floor_id']:03d}_frame_{candidate['start_frame']}.jpg"
             cv2.imwrite(os.path.join(VERIFY_DIR, out_name), vis)
 
     pd.DataFrame(final_candidates).to_csv(OUT_CSV, index=False)
-    print(f"\n[DONE] Saved {len(final_candidates)} start frames to: {OUT_CSV}")
+    print(f"\n[DONE] Saved {len(final_candidates)} validated start frames to: {OUT_CSV}")
 
 if __name__ == "__main__":
     run_temporal_chunking()
