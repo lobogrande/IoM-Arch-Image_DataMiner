@@ -1,6 +1,7 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - Production Run with Peak-Signal Consensus.
-# Version: 6.2 (Lowered Detection Gate & Peak Signal Tracking)
+# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID merging v5.8 stability 
+#          with forensic-driven mathematical corrections.
+# Version: 6.3 (Surgical Hybrid - Bias Restored)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -21,15 +22,15 @@ HOMING_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
-# --- 2. PRODUCTION CONTROLS ---
-START_FLOOR_BOUND = 1    
-END_FLOOR_BOUND = 110    
+# --- 2. SURGICAL CONTROLS ---
+LIMIT_FLOORS = 20        # Return to 20 for rapid iterative testing
 MAX_SAMPLES = 40         
-# Lowered to 0.30 to catch valid signals (like com2 at 0.33) in high-noise zones
+# Lowered to 0.30 based on diag_ore_forensics_pt4_2.py (com2 at 0.33)
 MIN_VOTE_CONFIDENCE = 0.30 
 STATE_COMPLEXITY_THRESHOLD = 500
 ROTATION_VARIANTS = [-3, 0, 3]
 
+# BULLY SHIELD: Restored from v5.8
 BULLY_PENALTIES = {
     'rare1': 0.06, 'epic1': 0.07, 'leg1': 0.09,
     'rare2': 0.05, 'epic2': 0.06, 'leg2': 0.08,
@@ -86,17 +87,15 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     mask = get_spatial_mask(r_idx)
     
     sample_indices = f_range[:MAX_SAMPLES]
-    
-    # We track both cumulative votes AND the peak score for each tier
     votes = defaultdict(float)
-    peak_scores = defaultdict(float)
-    
     frames_obstructed = 0
     clean_frames_processed = 0
     obstructed_sample_roi = None
 
     for f_idx in sample_indices:
+        # Step 1 Homing Guardrail
         player_is_blocking = (get_overlap_slot(homing_map.get(f_idx)) == slot_id)
+        
         img = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]), 0)
         if img is None: continue
         roi = img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
@@ -113,30 +112,38 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         best_f_tier, best_f_score = None, 0
         for tier in allowed_tiers:
             if tier not in res[target_state]: continue
+            
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             
+            # --- CONTEXTUAL BIAS: Restored from v5.8 ---
+            bias = 0.0
+            if f_id <= 11:
+                if 'dirt1' in tier: bias += 0.05
+                elif 'com1' in tier: bias -= 0.01
+            if f_id >= 18:
+                if 'com2' in tier: bias += 0.04
+                if 'dirt3' in tier: bias += 0.04 # Discovery from F24 forensics
+
             for tpl in res[target_state][tier]:
                 score = cv2.minMaxLoc(cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED, mask=mask))[1]
-                actual_score = score - penalty
-                if actual_score > best_f_score:
-                    best_f_score, best_f_tier = actual_score, tier
+                total_score = score - penalty + bias
+                if total_score > best_f_score:
+                    best_f_score, best_f_tier = total_score, tier
         
         if best_f_tier and best_f_score > MIN_VOTE_CONFIDENCE:
             votes[best_f_tier] += best_f_score
-            if best_f_score > peak_scores[best_f_tier]:
-                peak_scores[best_f_tier] = best_f_score
             clean_frames_processed += 1
 
-    occlusion_ratio = frames_obstructed / len(sample_indices)
-    if occlusion_ratio >= 0.90 and obstructed_sample_roi is not None:
+    # FORENSIC TRIGGER: Restored to 90% strictness
+    if frames_obstructed / len(sample_indices) >= 0.90 and obstructed_sample_roi is not None:
         val, is_empty = check_side_slice_forensics(obstructed_sample_roi)
         if is_empty: return "likely_empty", round(val, 4), frames_obstructed, "[L]"
-        else: return "obstructed", 0, frames_obstructed, "[O]"
+        else: return "unknown_obstructed", 0, frames_obstructed, "[U]"
 
     if clean_frames_processed > 0:
-        # Winning logic: Highest Peak Score wins (most robust against scrolling noise)
-        winner = max(peak_scores, key=peak_scores.get)
-        return winner, round(peak_scores[winner], 4), clean_frames_processed, "[M]"
+        winner = max(votes, key=votes.get)
+        # NORMALIZED SCORE: Average of only the clean frames
+        return winner, round(votes[winner]/clean_frames_processed, 4), clean_frames_processed, "[M]"
 
     return "low_conf", 0, 0, ""
 
@@ -148,6 +155,7 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
             r, c = divmod(s_idx, 6)
+            # Use fixed boss special layout
             results[f"R{r+1}_S{c}"] = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
             results[f"R{r+1}_S{c}_tag"] = "[B]"
         return results
@@ -167,12 +175,11 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v6.2 (Peak-Signal Tracking) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v6.3 (Forensic Recovery) ---")
     df_dna, df_homing = pd.read_csv(DNA_INVENTORY_CSV), pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
     df_floors = pd.read_csv(BOUNDARIES_CSV)
-    
-    df_floors = df_floors[(df_floors['floor_id'] >= START_FLOOR_BOUND) & (df_floors['floor_id'] <= END_FLOOR_BOUND)]
+    if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
     
     buffer_dir, res = cfg.get_buffer_path(0), load_all_templates()
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
@@ -189,12 +196,12 @@ def run_tier_identification():
             count += 1
             result = future.result()
             inventory.append(result)
-            print(f"  Processed ({count}/{total}) Floor {result['floor_id']:03d}", end="\r")
+            tags = Counter([v for k, v in result.items() if k.endswith('_tag')])
+            print(f"  ({count}/{total}) Floor {result['floor_id']:03d} | Consensus: {tags['[M]']} | Cyan: {tags['[L]']}")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
     
-    print("\nGenerating Production Audits...")
     for _, row in final_df.iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -204,18 +211,20 @@ def run_tier_identification():
                 tier, tag = str(row[key]), str(row.get(f"{key}_tag", ""))
                 if tier == "empty": continue
                 
+                # Production Colors: Cyan for forensics, Green for confirmed
                 if tag == "[L]": color = (255, 255, 0)      
-                elif tag == "[O]": color = (0, 255, 255)    
+                elif tag == "[U]": color = (0, 255, 255)    
                 elif tier == "low_conf": color = (0, 0, 255) 
                 else: color = (0, 255, 0)                   
                 
+                # Cleanup: Remove [M] and [B] from visual output
                 clean_label = tier if tag in ["[M]", "[B]"] else f"{tier}{tag}"
                 
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"\n[COMPLETE] Master Inventory updated at {OUT_CSV}")
+    print(f"\n[DONE] Master Inventory saved to {OUT_CSV}")
 
 if __name__ == "__main__":
     run_tier_identification()
