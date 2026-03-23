@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - Identify ore tiers using Batch Sampling,
-#          Strict Forensic Gating, and Progress Reporting.
-# Version: 4.9 (Surgical Sampling & Progress Reporting)
+# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID using Temporal Variance
+#          and Background Competition.
+# Version: 5.0 (Variance-Gated Consensus)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -24,22 +24,23 @@ OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
 # --- 2. SURGICAL CONTROLS ---
-LIMIT_FLOORS = 20        # Test set size
-MAX_SAMPLES_PER_FLOOR = 30 # Cap frames scanned to improve speed/accuracy
-STATE_COMPLEXITY_THRESHOLD = 500 
-ROTATION_VARIANTS = [-3, 0, 3] 
-MIN_CONFIDENCE = 0.38    # Minimum vote strength
-
-def rotate_image(image, angle):
-    if angle == 0: return image
-    center = (image.shape[1] // 2, image.shape[0] // 2)
-    rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-    return cv2.warpAffine(image, rot_mat, (image.shape[1], image.shape[0]), flags=cv2.INTER_LINEAR)
+LIMIT_FLOORS = 20        
+MAX_SAMPLES = 40 
+MIN_SCORE_GATE = 0.42
+STATE_COMPLEXITY_THRESHOLD = 500
 
 def load_all_templates():
-    templates = {'active': {}, 'shadow': {}}
+    templates = {'active': {}, 'shadow': {}, 'bg': []}
     t_path = cfg.TEMPLATE_DIR
     print(f"Loading Resources from {t_path}...")
+    
+    # Load BG as a tier competitor
+    for i in range(10):
+        p = os.path.join(t_path, f"background_plain_{i}.png")
+        if os.path.exists(p):
+            img = cv2.imread(p, 0)
+            templates['bg'].append(cv2.resize(img, (SIDE_PX, SIDE_PX)))
+
     for f in os.listdir(t_path):
         if not f.endswith(('.png', '.jpg')) or "_plain_" not in f.lower(): continue
         if any(x in f.lower() for x in ["background", "negative", "player"]): continue
@@ -49,18 +50,15 @@ def load_all_templates():
         state = 'active' if '_act_' in f else 'shadow'
         if tier not in templates[state]: templates[state][tier] = []
         img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
-        for angle in ROTATION_VARIANTS:
-            templates[state][tier].append(rotate_image(img_scaled, angle))
+        templates[state][tier].append(img_scaled)
     return templates
 
 def check_side_slice_forensics(roi_gray):
-    """Surgical check of absolute edge slivers (2px wide) to ignore player fringe."""
-    # Extreme Left [1:3] and Extreme Right [54:56]
-    left_slice = roi_gray[20:40, 1:3]
-    right_slice = roi_gray[20:40, 54:56]
-    best_std = min(np.std(left_slice), np.std(right_slice))
-    # Very strict threshold for background ground: lava ground is uniform
-    return best_std, best_std < 11.5
+    # Surgical 2px edge check
+    left_std = np.std(roi_gray[20:40, 1:3])
+    right_std = np.std(roi_gray[20:40, 54:56])
+    best_std = min(left_std, right_std)
+    return best_std, best_std < 11.0 # Strict ground signature
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res, homing_map):
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
@@ -68,53 +66,73 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     slot_id = r_idx * 6 + col_idx
     is_text_zone = (r_idx == 0 and col_idx in [2, 3])
     
-    # --- BATCH SAMPLING ---
-    # We sample early frames to get the cleanest look
-    step_size = max(1, len(f_range) // MAX_SAMPLES_PER_FLOOR)
-    sample_indices = f_range[::step_size][:MAX_SAMPLES_PER_FLOOR]
+    # Sampling
+    step_size = max(1, len(f_range) // MAX_SAMPLES)
+    sample_indices = f_range[::step_size][:MAX_SAMPLES]
+    
+    rois = []
+    for f_idx in sample_indices:
+        img = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]), 0)
+        if img is not None:
+            roi = img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+            if roi.shape == (SIDE_PX, SIDE_PX):
+                rois.append({'roi': roi, 'f_idx': f_idx})
+
+    if not rois: return "low_conf", 0, 0, ""
+
+    # 1. Temporal Variance Check (Is the player moving in this slot?)
+    stack = np.stack([r['roi'] for r in rois])
+    std_map = np.std(stack, axis=0)
+    temporal_variance = np.mean(std_map)
+
+    # 2. Obstruction Check via Homing + Variance
+    # If variance is very low, the player is static.
+    is_static_obstruction = temporal_variance < 3.0
     
     votes = defaultdict(float)
-    frames_obstructed = 0
-    obstructed_sample_roi = None
+    frames_counted = 0
 
-    for f_idx in sample_indices:
-        player_is_here = (homing_map.get(f_idx) == slot_id)
+    for item in rois:
+        roi = item['roi']
+        f_idx = item['f_idx']
         
-        img = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]), 0)
-        if img is None: continue
-        roi = img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
-        if roi.shape != (SIDE_PX, SIDE_PX): continue
-
-        if player_is_here:
-            frames_obstructed += 1
-            if obstructed_sample_roi is None: obstructed_sample_roi = roi.copy()
-            continue
+        # Skip identification if Step 1 confirms player is standing here
+        if homing_map.get(f_idx) == slot_id: continue
 
         calc_roi = roi[int(SIDE_PX*0.4):, :] if is_text_zone else roi
         comp = cv2.Laplacian(calc_roi, cv2.CV_64F).var()
+        
         target_state = 'active' if comp > STATE_COMPLEXITY_THRESHOLD else 'shadow'
         
-        best_f_tier, best_f_score = None, 0
+        candidates = []
+        # Competitor: Background
+        bg_score = max([cv2.minMaxLoc(cv2.matchTemplate(roi, t, cv2.TM_CCOEFF_NORMED))[1] for t in res['bg']])
+        candidates.append({'tier': 'background', 'score': bg_score})
+        
+        # Competitor: Ores
         for tier in allowed_tiers:
             if tier not in res[target_state]: continue
-            for tpl in res[target_state][tier]:
-                score = cv2.minMaxLoc(cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED))[1]
-                if score > best_f_score:
-                    best_f_score = score
-                    best_f_tier = tier
-        
-        if best_f_tier and best_f_score > MIN_CONFIDENCE:
-            votes[best_f_tier] += best_f_score
+            score = max([cv2.minMaxLoc(cv2.matchTemplate(roi, t, cv2.TM_CCOEFF_NORMED))[1] for t in res[target_state][tier]])
+            candidates.append({'tier': tier, 'score': score})
+            
+        winner = sorted(candidates, key=lambda x: x['score'], reverse=True)[0]
+        if winner['score'] > MIN_SCORE_GATE:
+            votes[winner['tier']] += winner['score']
+            frames_counted += 1
 
-    # CASE: 100% Obstruction in the batch
-    if frames_obstructed == len(sample_indices) and obstructed_sample_roi is not None:
-        val, is_empty = check_side_slice_forensics(obstructed_sample_roi)
-        if is_empty: return "likely_empty", round(val, 4), frames_obstructed, "[L]"
-        else: return "unknown_obstructed", 0, frames_obstructed, "[U]"
+    # Decision Logic
+    if frames_counted == 0:
+        # We are totally obstructed. Run forensics on the median frame.
+        median_roi = np.median(stack, axis=0).astype(np.uint8)
+        val, is_empty = check_side_slice_forensics(median_roi)
+        if is_empty: return "likely_empty", round(val, 4), len(rois), "[L]"
+        else: return "unknown_obstructed", 0, len(rois), "[U]"
 
     if votes:
-        winner = max(votes, key=votes.get)
-        return winner, round(votes[winner]/len(sample_indices), 4), int(votes[winner]), "[M]"
+        winning_tier = max(votes, key=votes.get)
+        if winning_tier == 'background':
+            return "empty_consensus", 0, frames_counted, "[L]"
+        return winning_tier, round(votes[winning_tier]/frames_counted, 4), frames_counted, "[M]"
 
     return "low_conf", 0, 0, ""
 
@@ -146,15 +164,13 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v4.9 (Batch Consensus) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.0 (Variance-Gated) ---")
     df_floors = pd.read_csv(BOUNDARIES_CSV)
     df_dna = pd.read_csv(DNA_INVENTORY_CSV)
     df_homing = pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
     
-    if LIMIT_FLOORS:
-        df_floors = df_floors.head(LIMIT_FLOORS)
-        
+    if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
     buffer_dir, res = cfg.get_buffer_path(0), load_all_templates()
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
@@ -163,8 +179,6 @@ def run_tier_identification():
     inventory = []
     
     total = len(df_floors)
-    print(f"Executing parallel scan on {total} floors...")
-
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
         count = 0
@@ -173,7 +187,7 @@ def run_tier_identification():
             result = future.result()
             inventory.append(result)
             tags = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  ({count}/{total}) Floor {result['floor_id']:03d} | Consensus: {tags['[M]']} | Cyan: {tags['[L]']} | Yellow: {tags['[U]']}")
+            print(f"  ({count}/{total}) Floor {result['floor_id']:03d} | Cyan: {tags['[L]']} | Yellow: {tags['[U]']}")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
@@ -185,17 +199,11 @@ def run_tier_identification():
             for col in range(6):
                 key = f"R{r_idx+1}_S{col}"
                 tier, tag = str(row[key]), str(row.get(f"{key}_tag", ""))
-                if tier == "empty": continue
-                
-                # Color Rules
-                if tag == "[L]": color = (255, 255, 0)      # Cyan
-                elif tag == "[U]": color = (0, 255, 255)    # Yellow 
-                elif tier == "low_conf": color = (0, 0, 255) # Red
-                else: color = (0, 255, 0)                   # Green
-                
+                if tier == "empty" or tier == "background": continue
+                color = (255, 255, 0) if tag == "[L]" else (0, 255, 255) if tag == "[U]" else (0, 0, 255) if tier == "low_conf" else (0, 255, 0)
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
-                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.4, color, 1)
+                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
+                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
     print(f"[DONE] Final Inventory: {OUT_CSV}")
 
