@@ -1,6 +1,6 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - Production Run with Range Bounds and Visual Cleanup.
-# Version: 5.9 (Range-Bound Surgical consensus)
+# Purpose: Master Plan Step 4.2 - Production Run with Peak-Signal Consensus.
+# Version: 6.2 (Lowered Detection Gate & Peak Signal Tracking)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -22,10 +22,11 @@ OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
 # --- 2. PRODUCTION CONTROLS ---
-START_FLOOR_BOUND = 1    # SET LOWER BOUND HERE
-END_FLOOR_BOUND = 110    # SET UPPER BOUND HERE
+START_FLOOR_BOUND = 1    
+END_FLOOR_BOUND = 110    
 MAX_SAMPLES = 40         
-MIN_VOTE_CONFIDENCE = 0.42 
+# Lowered to 0.30 to catch valid signals (like com2 at 0.33) in high-noise zones
+MIN_VOTE_CONFIDENCE = 0.30 
 STATE_COMPLEXITY_THRESHOLD = 500
 ROTATION_VARIANTS = [-3, 0, 3]
 
@@ -85,8 +86,13 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     mask = get_spatial_mask(r_idx)
     
     sample_indices = f_range[:MAX_SAMPLES]
+    
+    # We track both cumulative votes AND the peak score for each tier
     votes = defaultdict(float)
+    peak_scores = defaultdict(float)
+    
     frames_obstructed = 0
+    clean_frames_processed = 0
     obstructed_sample_roi = None
 
     for f_idx in sample_indices:
@@ -103,37 +109,34 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
 
         comp = cv2.Laplacian(roi, cv2.CV_64F).var()
         target_state = 'active' if comp > STATE_COMPLEXITY_THRESHOLD else 'shadow'
-        roi_brightness = cv2.mean(roi, mask=mask)[0]
         
         best_f_tier, best_f_score = None, 0
         for tier in allowed_tiers:
             if tier not in res[target_state]: continue
             penalty = BULLY_PENALTIES.get(tier, 0.0)
-            bias = 0.0
-            if f_id <= 11:
-                if 'dirt1' in tier:
-                    bias += 0.03
-                    if roi_brightness > 85: bias += 0.02
-                elif 'com1' in tier: bias -= 0.01
-            if f_id >= 18 and 'com2' in tier: bias += 0.03
-
+            
             for tpl in res[target_state][tier]:
                 score = cv2.minMaxLoc(cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED, mask=mask))[1]
-                total_score = score - penalty + bias
-                if total_score > best_f_score:
-                    best_f_score, best_f_tier = total_score, tier
+                actual_score = score - penalty
+                if actual_score > best_f_score:
+                    best_f_score, best_f_tier = actual_score, tier
         
         if best_f_tier and best_f_score > MIN_VOTE_CONFIDENCE:
             votes[best_f_tier] += best_f_score
+            if best_f_score > peak_scores[best_f_tier]:
+                peak_scores[best_f_tier] = best_f_score
+            clean_frames_processed += 1
 
-    if frames_obstructed == len(sample_indices) and obstructed_sample_roi is not None:
+    occlusion_ratio = frames_obstructed / len(sample_indices)
+    if occlusion_ratio >= 0.90 and obstructed_sample_roi is not None:
         val, is_empty = check_side_slice_forensics(obstructed_sample_roi)
         if is_empty: return "likely_empty", round(val, 4), frames_obstructed, "[L]"
-        else: return "unknown_obstructed", 0, frames_obstructed, "[U]"
+        else: return "obstructed", 0, frames_obstructed, "[O]"
 
-    if votes:
-        winner = max(votes, key=votes.get)
-        return winner, round(votes[winner]/len(sample_indices), 4), int(votes[winner]), "[M]"
+    if clean_frames_processed > 0:
+        # Winning logic: Highest Peak Score wins (most robust against scrolling noise)
+        winner = max(peak_scores, key=peak_scores.get)
+        return winner, round(peak_scores[winner], 4), clean_frames_processed, "[M]"
 
     return "low_conf", 0, 0, ""
 
@@ -145,8 +148,7 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
             r, c = divmod(s_idx, 6)
-            identity = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
-            results[f"R{r+1}_S{c}"] = identity
+            results[f"R{r+1}_S{c}"] = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
             results[f"R{r+1}_S{c}_tag"] = "[B]"
         return results
 
@@ -165,12 +167,11 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION (v5.9) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v6.2 (Peak-Signal Tracking) ---")
     df_dna, df_homing = pd.read_csv(DNA_INVENTORY_CSV), pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
     df_floors = pd.read_csv(BOUNDARIES_CSV)
     
-    # APPLY RANGE BOUNDS
     df_floors = df_floors[(df_floors['floor_id'] >= START_FLOOR_BOUND) & (df_floors['floor_id'] <= END_FLOOR_BOUND)]
     
     buffer_dir, res = cfg.get_buffer_path(0), load_all_templates()
@@ -181,8 +182,6 @@ def run_tier_identification():
     inventory = []
     
     total = len(df_floors)
-    print(f"Scanning range: Floor {START_FLOOR_BOUND} to {END_FLOOR_BOUND}...")
-
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
         count = 0
@@ -195,7 +194,7 @@ def run_tier_identification():
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
     
-    print("\nGenerating Range-Bound Visual Audits...")
+    print("\nGenerating Production Audits...")
     for _, row in final_df.iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -205,20 +204,15 @@ def run_tier_identification():
                 tier, tag = str(row[key]), str(row.get(f"{key}_tag", ""))
                 if tier == "empty": continue
                 
-                # Colors
-                if tag == "[L]": color = (255, 255, 0)      # Cyan
-                elif tag == "[U]": color = (0, 255, 255)    # Yellow
-                elif tier == "low_conf": color = (0, 0, 255) # Red
-                else: color = (0, 255, 0)                   # Green
+                if tag == "[L]": color = (255, 255, 0)      
+                elif tag == "[O]": color = (0, 255, 255)    
+                elif tier == "low_conf": color = (0, 0, 255) 
+                else: color = (0, 255, 0)                   
                 
-                # Cleanup Label: No [M] for consensus, No [B] for Bosses
                 clean_label = tier if tag in ["[M]", "[B]"] else f"{tier}{tag}"
                 
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"\n[DONE] Range Inventory saved to {OUT_CSV}")
-
-if __name__ == "__main__":
-    run_tier_identification()
+    print(f"\n[COMPLETE] Master Inventory updated at {OUT_CS
