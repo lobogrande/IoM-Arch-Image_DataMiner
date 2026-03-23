@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using Temporal Consensus 
 #          and Side-Slice Forensics for permanent player obstructions.
-# Version: 1.5 (The Side-Slice Auditor)
+# Version: 1.6 (Progress Telemetry & KeyError Fix)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -58,7 +58,7 @@ def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
     slice_roi = roi_30[:, 0:8]
     best_s = 0
     for tpl in bg_tpls:
-        # standard crop for bg is center 30x30
+        # Standard crop for bg is center 30x30
         tpl_30 = tpl[9:39, 9:39]
         if is_banner: tpl_30 = tpl_30[12:, :]
         slice_tpl = tpl_30[:, 0:8]
@@ -120,42 +120,69 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
 
 def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     f_id = int(floor_data['floor_id'])
-    results = {'floor_id': f_id, 'start_frame': int(floor_data['start_frame'])}
+    # FIX: Corrected column name from 'start_frame' to 'true_start_frame'
+    start_f = int(floor_data['true_start_frame'])
+    results = {'floor_id': f_id, 'start_frame': start_f}
     
     if f_id in cfg.BOSS_DATA:
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
             r, c = divmod(s_idx, 6)
-            results[f"R{r+1}_S{c}"] = boss['special'][s_idx] if boss['tier'] == 'mixed' else boss['tier']
+            key = f"R{r+1}_S{c}"
+            identity = boss['special'][s_idx] if boss['tier'] == 'mixed' else boss['tier']
+            results[key] = identity
+            # Consistency: Populate diagnostic columns for bosses
+            results[f"{key}_score"] = 1.0
+            results[f"{key}_harv"] = 1
+            results[f"{key}_pmax"] = 0.0
         return results
 
     allowed = [t for t, (s, e) in cfg.ORE_RESTRICTIONS.items() if s <= f_id <= e]
     dna_row = dna_map[dna_map['floor_id'] == f_id].iloc[0]
-    f_range = range(int(floor_data['true_start_frame']), int(floor_data['end_frame']) + 1)
+    f_range = range(start_f, int(floor_data['end_frame']) + 1)
     
     for r_idx in range(4):
         for col in range(6):
             key = f"R{r_idx+1}_S{col}"
-            if str(dna_row[key]) == '0': results[key] = "empty"
+            if str(dna_row[key]) == '0':
+                results[key] = "empty"
+                results[f"{key}_score"] = 0.0
+                results[f"{key}_harv"] = 0
+                results[f"{key}_pmax"] = 0.0
             else:
                 tier, score, harv, pmax = identify_consensus(f_range, r_idx, col, buffer_dir, all_files, allowed, res)
                 results[key], results[f"{key}_score"], results[f"{key}_harv"], results[f"{key}_pmax"] = tier, score, harv, pmax
     return results
 
 def run_tier_identification():
+    if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):
+        print("Error: Required input CSVs missing.")
+        return
+
     df_floors, df_dna = pd.read_csv(BOUNDARIES_CSV), pd.read_csv(DNA_INVENTORY_CSV)
     if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
+    
     buffer_dir, res = cfg.get_buffer_path(0), load_resources()
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v1.5 (Side-Slice Audit) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v1.6 (Progress Enabled) ---")
+    print(f"Parallelizing {len(df_floors)} floors...")
+    
     worker = partial(process_floor_tier, dna_map=df_dna, buffer_dir=buffer_dir, all_files=all_files, res=res)
+    inventory = []
+    
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        inventory = list(executor.map(worker, [r for _, r in df_floors.iterrows()]))
+        # Use as_completed for real-time progress logging
+        futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            result = future.result()
+            inventory.append(result)
+            print(f"  Floor {result['floor_id']:03d} processed ({i+1}/{len(df_floors)})", end="\r")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id')
     final_df.to_csv(OUT_CSV, index=False)
+    print(f"\n[DONE] Final Ore Inventory saved to: {OUT_CSV}")
     
     print("Generating visual audit proofs...")
     for _, row in final_df.iterrows():
@@ -166,12 +193,13 @@ def run_tier_identification():
                 key = f"R{r_idx+1}_S{col}"
                 tier = str(row[key])
                 if tier == "empty": continue
+                # Color coding: Green (Success), Yellow (Likely Empty), Red (Fail)
                 color = (0, 255, 0) if tier not in ["low_conf", "likely_empty"] else (0, 255, 255) if tier == "likely_empty" else (0, 0, 255)
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
                 cv2.putText(img, tier, (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
                 cv2.putText(img, tier, (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"[DONE] Check {VERIFY_DIR}")
+    print(f"Audit images saved to {VERIFY_DIR}")
 
 if __name__ == "__main__":
     run_tier_identification()
