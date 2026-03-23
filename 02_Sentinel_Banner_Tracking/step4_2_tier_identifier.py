@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using Temporal Consensus,
-#          Extreme-Edge Side-Slice Forensics, and Z-Score Tier Validation.
-# Version: 2.2 (The Extreme Edge Forensic Engine)
+#          Variance-Based Side-Slice Forensics, and Bully Penalties.
+# Version: 2.3 (The Forensic Stabilizer)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -27,12 +27,18 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs"
 LIMIT_FLOORS = 20  # Set to None for production
 
 # THRESHOLDS
-MIN_MATCH_CONFIDENCE = 0.42  # Restored for low-tier sensitivity
-Z_TRUST_THRESHOLD = 1.8     # Candidate must be this many SDs above the mean
+MIN_MATCH_CONFIDENCE = 0.45  
+PROMOTION_THRESHOLD = 0.38   
 PLAYER_REJECTION_GATE = 0.75 
-SIDE_SLICE_GATE = 0.60       # Calibrated for extreme left edge (10px)
+SIDE_SLICE_GATE = 0.65       
 HARVEST_COUNT = 15          
-COMPLEXITY_GATE = 320        # Restored to capture Dirt/Common ores
+COMPLEXITY_GATE = 350        
+
+# TIER PENALTIES: Prevent generic textures from "Bullying" specific features
+BULLY_PENALTIES = {
+    'dirt1': 0.05, 'dirt2': 0.06, 'dirt3': 0.04,
+    'com1':  0.03, 'com2':  0.03, 'com3':  0.02
+}
 
 def load_resources():
     """Loads ore tiers, player sprites, and background templates."""
@@ -60,30 +66,39 @@ def load_resources():
             
     return res
 
+def apply_gamma_lift(img, gamma=0.6):
+    """Normalizes lighting to reveal latent structural features in dark ores."""
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+    return cv2.LUT(img, table)
+
 def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
     """
-    Forensic check: Peeks at the EXTREME LEFT 10px of the 48x48 boundary.
-    This area is the most likely to be clear of a player torso.
+    Forensic check: Peeks at the left 10px strip for background presence.
+    Uses both Correlation and Variance (Background is smooth, Ores are textured).
     """
-    # Extract the 48x48 slot from our 57x57 ROI
-    # Center of 57x57 is (28, 28). 48x48 bounds are [4:52, 4:52]
     slot_48 = roi_gray[4:52, 4:52]
     if is_banner: slot_48 = slot_48[12:, :]
     
-    # Peek at the extreme left 10 pixels
     slice_roi = slot_48[:, 0:10]
+    
+    # Variance check: Background is relatively uniform
+    std_dev = np.std(slice_roi)
+    if std_dev < 12.0: # Mathematically "Smooth"
+        return std_dev, True
+
+    # Template correlation fallback
     best_s = 0
     for tpl in bg_tpls:
-        # sliding window match on the strip for robustness
         tpl_slice = tpl[:, 0:10]
         if is_banner: tpl_slice = tpl_slice[12:, :]
-        
         res = cv2.matchTemplate(tpl_slice, slice_roi, cv2.TM_CCOEFF_NORMED)
         best_s = max(best_s, cv2.minMaxLoc(res)[1])
+        
     return best_s, best_s > SIDE_SLICE_GATE
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """Temporal consensus search with Z-Score uniqueness validation."""
+    """Temporal consensus search with Bully Penalties and Gamma Lifting."""
     frame_candidates = []
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
@@ -100,7 +115,6 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         if roi_gray.shape != (SIDE_PX, SIDE_PX): continue
         last_roi_gray = roi_gray
         
-        # Player Check (30x30 core)
         roi_30 = roi_gray[13:43, 13:43]
         max_p = max([cv2.minMaxLoc(cv2.matchTemplate(pt, roi_30, cv2.TM_CCOEFF_NORMED))[1] for pt in res['player']] + [0])
         peak_p_score = max(peak_p_score, max_p)
@@ -110,60 +124,50 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             if comp >= COMPLEXITY_GATE:
                 frame_candidates.append({'gray': roi_gray, 'quality': comp})
 
-    # 2. IDENTIFICATION WITH Z-SCORE VALIDATION
+    # 2. IDENTIFICATION
     tier_tallies, valid_matches = [], []
     best_overall_score = 0
-    tag = ""
     
     top_frames = sorted(frame_candidates, key=lambda x: x['quality'], reverse=True)[:HARVEST_COUNT]
     
     for f in top_frames:
-        roi_30 = f['gray'][13:43, 13:43]
+        # Normalization: Apply Gamma lift to see into the dark
+        roi_lifted = apply_gamma_lift(f['gray'])
+        roi_30 = roi_lifted[13:43, 13:43]
         if is_banner: roi_30 = roi_30[12:, :]
         
-        frame_scores = []
+        frame_results = []
         for tier in allowed_tiers:
             if tier not in res['ores']: continue
             s = max([cv2.minMaxLoc(cv2.matchTemplate(tpl, roi_30, cv2.TM_CCOEFF_NORMED))[1] for tpl in res['ores'][tier]])
-            frame_scores.append({'tier': tier, 'score': s})
+            # Apply Bully Penalty
+            s -= BULLY_PENALTIES.get(tier, 0.0)
+            frame_results.append({'tier': tier, 'score': s})
 
-        if not frame_scores: continue
+        if not frame_results: continue
         
-        # Calculate Uniqueness (Z-Score) for this frame
-        scores_arr = np.array([x['score'] for x in frame_scores])
-        mean_s, std_s = np.mean(scores_arr), np.std(scores_arr)
-        
-        sorted_fs = sorted(frame_scores, key=lambda x: x['score'], reverse=True)
-        winner = sorted_fs[0]
-        z_score = (winner['score'] - mean_s) / max(0.01, std_s)
-        
-        # Store for consensus
-        tier_tallies.append({'tier': winner['tier'], 'score': winner['score'], 'z': z_score})
+        # Find best for this frame
+        winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
+        tier_tallies.append(winner['tier'])
         
         if winner['score'] > best_overall_score: best_overall_score = winner['score']
-        
-        # Gate: Direct Match (High Confidence OR High Uniqueness)
-        if winner['score'] >= MIN_MATCH_CONFIDENCE or z_score >= Z_TRUST_THRESHOLD:
+        if winner['score'] >= MIN_MATCH_CONFIDENCE:
             valid_matches.append(winner['tier'])
 
     # 3. RESOLUTION HIERARCHY
     if valid_matches:
         vote_winner, vote_count = Counter(valid_matches).most_common(1)[0]
-        # Check if the winner was promoted via Z-Score
-        if best_overall_score < MIN_MATCH_CONFIDENCE: tag = "[Z]"
-        return vote_winner, round(best_overall_score, 4), vote_count, peak_p_score, tag
+        return vote_winner, round(best_overall_score, 4), vote_count, peak_p_score, ""
 
     if tier_tallies:
-        # Fallback Consensus
-        vote_winner, vote_count = Counter([t['tier'] for t in tier_tallies]).most_common(1)[0]
-        max_win_score = max([t['score'] for t in tier_tallies if t['tier'] == vote_winner])
-        if max_win_score >= (MIN_MATCH_CONFIDENCE - 0.05):
-            return vote_winner, round(max_win_score, 4), vote_count, peak_p_score, "[P]"
+        vote_winner, vote_count = Counter(tier_tallies).most_common(1)[0]
+        if best_overall_score >= PROMOTION_THRESHOLD:
+            return vote_winner, round(best_overall_score, 4), vote_count, peak_p_score, "[P]"
 
-    # 4. FORENSIC FALLBACK (Extreme-Edge Peek)
+    # 4. FORENSIC FALLBACK (Likely Empty)
     if peak_p_score > PLAYER_REJECTION_GATE and last_roi_gray is not None:
-        slice_s, is_empty = check_side_slice_empty(last_roi_gray, res['bg'], is_banner)
-        if is_empty: return "likely_empty", round(slice_s, 4), 0, peak_p_score, "[L]"
+        val, is_empty = check_side_slice_empty(last_roi_gray, res['bg'], is_banner)
+        if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
 
     return "low_conf", round(best_overall_score, 4), 0, peak_p_score, ""
 
@@ -197,7 +201,7 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.2 (Extreme Edge) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.3 ---")
     
     if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):
         print(f"Error: Required CSV files missing.")
@@ -221,7 +225,7 @@ def run_tier_identification():
             inventory.append(result)
             f_id = result['floor_id']
             tag_counts = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  Floor {f_id:03d} processed. [Z-Score: {tag_counts['[Z]']}, LikelyEmpty: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
+            print(f"  Floor {f_id:03d} processed. [Promoted: {tag_counts['[P]']}, LikelyEmpty: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id')
     final_df.to_csv(OUT_CSV, index=False)
@@ -237,7 +241,7 @@ def run_tier_identification():
                 if tier == "empty": continue
                 color = (0, 255, 0) if tier not in ["low_conf", "likely_empty"] else (0, 255, 255) if tier == "likely_empty" else (0, 0, 255)
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-                # Label with forensic markers
+                # Text labels with forensic markers
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
