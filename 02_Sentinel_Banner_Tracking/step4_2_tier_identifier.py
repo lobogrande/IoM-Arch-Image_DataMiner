@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using the Forensic Trinity:
-#          Triple-Sensor Fusion (Texture, Geometry, Grain) and Structural Affinity.
-# Version: 3.2 (The Final Truth Forensic Engine)
+#          Triple-Sensor Fusion, Z-Score Outlier Ranking, and 12.0 StdDev Gating.
+# Version: 3.3 (The Data-Driven Consensus Engine)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -26,18 +26,16 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs"
 # DIAGNOSTIC CONTROL
 LIMIT_FLOORS = 20  # Set to None for production
 
-# --- 2. TRINITY SENSOR CONSTANTS ---
-# Weights: Balanced 3-way fusion for maximum discrimination
-W_TEX, W_GEO, W_GRA = 0.34, 0.33, 0.33
-MIN_FUSED_CONFIDENCE = 0.44  
-MIN_MOMENTUM_GATE = 6.5      # Raised to prevent noise aggregation
-MARGIN_TRUST_THRESHOLD = 0.15 # Winner must beat runner-up by this % in momentum
-AFFINITY_WEIGHT = 0.15       
-PLAYER_REJECTION_GATE = 0.75 
-SIDE_SLICE_WIDTH = 16        # Expanded to bypass player torso
-SIDE_SLICE_STD_MAX = 12.0    # Tight variance for background confirmation
+# --- 2. DATA-DRIVEN CONSTANTS (Derived from Forensic Profiler) ---
+SIDE_SLICE_WIDTH = 16
+SIDE_SLICE_STD_MAX = 12.0    # DATA-DRIVEN: Background noise floor
+Z_TRUST_THRESHOLD = 2.0      # DATA-DRIVEN: Winner must be 2SD above mean
+COMPLEXITY_DIRT_CEILING = 450.0
+COMPLEXITY_HIGH_FLOOR = 800.0
+
+# Trinity Weights: Grayscale (40%), Silhouette (30%), Grain (30%)
+W_TEX, W_GEO, W_GRA = 0.40, 0.30, 0.30
 HARVEST_COUNT = 15          
-COMPLEXITY_GATE = 300        
 
 def get_complexity(img):
     if img is None or img.size == 0: return 0
@@ -81,32 +79,22 @@ def load_resources():
         res['ores'][tier]['mean_comp'] = np.mean([t['comp'] for t in res['ores'][tier]['tpls']])
     return res
 
-def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
-    """Extreme-Edge Forensic check for background presence."""
+def check_side_slice_empty(roi_gray):
+    """Forensic Gatekeeper: Uses the 12.0 StdDev boundary from profiler."""
     slot_48 = roi_gray[4:52, 4:52]
-    if is_banner: slot_48 = slot_48[12:, :]
     slice_roi = slot_48[:, 0:SIDE_SLICE_WIDTH]
-    
-    # Primary: Variance Check
     std_val = np.std(slice_roi)
-    if std_val < SIDE_SLICE_STD_MAX: return std_val, True
-    
-    # Secondary: Template Correlation
-    best_s = 0
-    for tpl in bg_tpls:
-        tpl_slice = tpl[4:52, 0:SIDE_SLICE_WIDTH]
-        if is_banner: tpl_slice = tpl_slice[12:, :]
-        res = cv2.matchTemplate(tpl_slice, slice_roi, cv2.TM_CCOEFF_NORMED)
-        best_s = max(best_s, cv2.minMaxLoc(res)[1])
-    return best_s, best_s > 0.65
+    return std_val, std_val < SIDE_SLICE_STD_MAX
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """Consensus engine prioritizing margin-validated momentum."""
+    """Consensus engine using Relative Z-Score outlier detection."""
     frame_candidates = []
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
     is_banner = (r_idx == 0 and col_idx in [2, 3])
+    
     peak_p_score, best_roi_gray = 0.0, None
+    peak_std = 0.0
 
     for f_idx in f_range:
         img_bgr = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]))
@@ -114,26 +102,29 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         roi_gray = cv2.cvtColor(img_bgr[y1:y1+SIDE_PX, x1:x1+SIDE_PX], cv2.COLOR_BGR2GRAY)
         if roi_gray.shape != (SIDE_PX, SIDE_PX): continue
         
+        # Player check
         roi_30 = roi_gray[13:43, 13:43]
         max_p = max([cv2.minMaxLoc(cv2.matchTemplate(pt, roi_30, cv2.TM_CCOEFF_NORMED))[1] for pt in res['player']] + [0])
         peak_p_score = max(peak_p_score, max_p)
         
         comp = get_complexity(roi_gray)
+        std_val, _ = check_side_slice_empty(roi_gray)
+        peak_std = max(peak_std, std_val)
+
         if best_roi_gray is None or comp > get_complexity(best_roi_gray):
             best_roi_gray = roi_gray
             
-        if max_p < PLAYER_REJECTION_GATE:
-            if comp >= COMPLEXITY_GATE:
-                frame_candidates.append({'gray': roi_gray, 'comp': comp})
+        if max_p < 0.75 and comp > 300: # Threshold for basic activity
+            frame_candidates.append({'gray': roi_gray, 'comp': comp})
 
-    # 1. Forensic Pre-Check: Bypass guessing if player is fatly overlapping
-    if peak_p_score > 0.68 and best_roi_gray is not None:
-        val, is_empty = check_side_slice_empty(best_roi_gray, res['bg'], is_banner)
+    # 1. Forensic Gatekeeper: Primary Bypass
+    if best_roi_gray is not None:
+        val, is_empty = check_side_slice_empty(best_roi_gray)
         if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
 
-    # 2. Trinity Identification
-    tier_momentum = defaultdict(float)
-    best_overall_score = 0
+    # 2. Structural Identification
+    tier_z_momentum = defaultdict(float)
+    max_z_seen = 0.0
     top_frames = sorted(frame_candidates, key=lambda x: x['comp'], reverse=True)[:HARVEST_COUNT]
     
     for f in top_frames:
@@ -147,8 +138,10 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         frame_results = []
         for tier in allowed_tiers:
             if tier not in res['ores']: continue
-            comp_delta = abs(np.log1p(roi_comp) - np.log1p(res['ores'][tier]['mean_comp']))
-            penalty = comp_delta * AFFINITY_WEIGHT
+            
+            # Band-pass complexity filter
+            if roi_comp > COMPLEXITY_HIGH_FLOOR and 'dirt' in tier: continue
+            if roi_comp < COMPLEXITY_DIRT_CEILING and any(k in tier for k in ['epic', 'leg', 'myth']): continue
             
             best_t_score = 0
             for tpl in res['ores'][tier]['tpls']:
@@ -162,39 +155,36 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                 fused = (s_tex * W_TEX) + (s_geo * W_GEO) + (s_gra * W_GRA)
                 if fused > best_t_score: best_t_score = fused
             
-            frame_results.append({'tier': tier, 'score': best_t_score - penalty})
+            frame_results.append({'tier': tier, 'score': best_t_score})
 
         if not frame_results: continue
+        
+        # Outlier Detection: Calculate Z-score for this frame
+        scores = np.array([x['score'] for x in frame_results])
+        mean_s, std_s = np.mean(scores), np.std(scores)
+        
         winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
-        tier_momentum[winner['tier']] += max(0, winner['score'])
-        if winner['score'] > best_overall_score: best_overall_score = winner['score']
-
-    # 3. Margin-Validated Consensus
-    if tier_momentum:
-        sorted_momentum = sorted(tier_momentum.items(), key=lambda x: x[1], reverse=True)
-        winner_tier, winner_val = sorted_momentum[0]
-        runner_up_val = sorted_momentum[1][1] if len(sorted_momentum) > 1 else 0
+        z_score = (winner['score'] - mean_s) / max(0.01, std_s)
         
-        # Validation: Success if High Fused Score OR Dominant Momentum Gap
-        margin = (winner_val - runner_up_val) / max(1.0, winner_val)
-        is_valid = best_overall_score >= MIN_FUSED_CONFIDENCE or (winner_val >= MIN_MOMENTUM_GATE and margin >= MARGIN_TRUST_THRESHOLD)
-        
-        if is_valid:
-            tag = "[M]" if best_overall_score < MIN_FUSED_CONFIDENCE else "[T]"
-            return winner_tier, round(best_overall_score, 4), int(winner_val), peak_p_score, tag
+        if z_score > 1.2:
+            tier_z_momentum[winner['tier']] += z_score
+            max_z_seen = max(max_z_seen, z_score)
 
-    # 4. Final Fallback: Side-slice best frame
-    if best_roi_gray is not None:
-        val, is_empty = check_side_slice_empty(best_roi_gray, res['bg'], is_banner)
-        if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
+    # 3. Decision Logic
+    if tier_z_momentum:
+        winner_tier = max(tier_z_momentum, key=tier_z_momentum.get)
+        # Winner must hit the momentum floor AND possess distinct uniqueness
+        if tier_z_momentum[winner_tier] > 5.0 or max_z_seen > Z_TRUST_THRESHOLD:
+            tag = "[Z]" if max_z_seen > Z_TRUST_THRESHOLD else "[M]"
+            return winner_tier, round(max_z_seen, 2), int(tier_z_momentum[winner_tier]), peak_p_score, tag
 
-    return "low_conf", round(best_overall_score, 4), 0, peak_p_score, ""
+    return "low_conf", round(max_z_seen, 2), 0, peak_p_score, ""
 
 def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     f_id = int(floor_data['floor_id'])
     results = {'floor_id': f_id, 'start_frame': int(floor_data['true_start_frame'])}
     
-    # EXCLUSIVE SOURCE OF TRUTH: project_config.py
+    # SOURCE OF TRUTH: project_config.py
     if hasattr(cfg, 'BOSS_DATA') and f_id in cfg.BOSS_DATA:
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
@@ -214,13 +204,16 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
             if str(dna_row[key]) == '0':
                 results[key], results[f"{key}_tag"] = "empty", ""
             else:
-                tier, score, harv, pmax, tag = identify_consensus(f_range, r_idx, col, buffer_dir, all_files, allowed, res)
-                results[key], results[f"{key}_score"], results[f"{key}_harv"], results[f"{key}_pmax"], results[f"{key}_tag"] = tier, score, harv, pmax, tag
+                tier, z_score, momentum, pmax, tag = identify_consensus(f_range, r_idx, col, buffer_dir, all_files, allowed, res)
+                results[key], results[f"{key}_z"], results[f"{key}_mom"], results[f"{key}_pmax"], results[f"{key}_tag"] = tier, z_score, momentum, pmax, tag
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v3.2 (Final Truth) ---")
-    if not os.path.exists(DNA_INVENTORY_CSV): return
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v3.3 (Data-Driven Engine) ---")
+    if not os.path.exists(DNA_INVENTORY_CSV):
+        print("Error: Run Step 4.1 DNA Profiler first.")
+        return
+        
     df_floors, df_dna = pd.read_csv(BOUNDARIES_CSV), pd.read_csv(DNA_INVENTORY_CSV)
     if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
     buffer_dir, res = cfg.get_buffer_path(0), load_resources()
@@ -236,10 +229,11 @@ def run_tier_identification():
             inventory.append(result)
             f_id = result['floor_id']
             tag_counts = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  Floor {f_id:03d} processed. [Boss: {tag_counts['[B]']}, Consensus: {tag_counts['[T]']}+{tag_counts['[M]']}, Likely: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
+            print(f"  Floor {f_id:03d} processed. [Outlier: {tag_counts['[Z]']}, Likely: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
 
     pd.DataFrame(inventory).sort_values('floor_id').to_csv(OUT_CSV, index=False)
     
+    # Audit Proofs
     for _, row in pd.DataFrame(inventory).sort_values('floor_id').iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -250,8 +244,12 @@ def run_tier_identification():
                 if tier == "empty": continue
                 color = (0, 255, 0) if tier not in ["low_conf", "likely_empty"] else (0, 255, 255) if tier == "likely_empty" else (0, 0, 255)
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
+                # Label with Tier + Forensic Tag
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
+                # Show Z-score and Momentum diagnostic
+                if f"{key}_z" in row:
+                    cv2.putText(img, f"Z:{row[f'{key}_z']} M:{int(row[f'{key}_mom'])}", (cx+HUD_DX-25, cy+HUD_DY+12), 0, 0.3, (255,255,255), 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
     print(f"[DONE] Final Inventory: {OUT_CSV}")
 
