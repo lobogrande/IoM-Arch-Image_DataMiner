@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using the Forensic Trinity:
-#          Triple-Sensor Fusion, Z-Score Outlier Ranking, and 12.0 StdDev Gating.
-# Version: 3.3 (The Data-Driven Consensus Engine)
+#          Triple-Sensor Fusion, Structural Band-Pass Filtering, and Side-Slice Fallbacks.
+# Version: 3.4 (The Structural Hybrid Engine)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -26,14 +26,15 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs"
 # DIAGNOSTIC CONTROL
 LIMIT_FLOORS = 20  # Set to None for production
 
-# --- 2. DATA-DRIVEN CONSTANTS (Derived from Forensic Profiler) ---
-SIDE_SLICE_WIDTH = 16
-SIDE_SLICE_STD_MAX = 12.0    # DATA-DRIVEN: Background noise floor
-Z_TRUST_THRESHOLD = 2.0      # DATA-DRIVEN: Winner must be 2SD above mean
+# --- 2. DATA-DRIVEN CONSTANTS (Optimized) ---
+SIDE_SLICE_WIDTH = 12        # Balanced for precision
+SIDE_SLICE_STD_MAX = 11.0    # Strict background floor
+Z_TRUST_THRESHOLD = 1.5      # Softened for noisy buffer
+MIN_MOMENTUM_GATE = 3.5      # Softened for decisive calls
 COMPLEXITY_DIRT_CEILING = 450.0
-COMPLEXITY_HIGH_FLOOR = 800.0
+COMPLEXITY_HIGH_FLOOR = 750.0
 
-# Trinity Weights: Grayscale (40%), Silhouette (30%), Grain (30%)
+# Trinity Weights: Balanced for high-speed noise rejection
 W_TEX, W_GEO, W_GRA = 0.40, 0.30, 0.30
 HARVEST_COUNT = 15          
 
@@ -80,69 +81,61 @@ def load_resources():
     return res
 
 def check_side_slice_empty(roi_gray):
-    """Forensic Gatekeeper: Uses the 12.0 StdDev boundary from profiler."""
+    """Forensic Fallback: Peeks at the side-slice for background presence."""
     slot_48 = roi_gray[4:52, 4:52]
     slice_roi = slot_48[:, 0:SIDE_SLICE_WIDTH]
     std_val = np.std(slice_roi)
     return std_val, std_val < SIDE_SLICE_STD_MAX
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """Consensus engine using Relative Z-Score outlier detection."""
+    """Consensus engine using Band-Pass complexity filtering."""
     frame_candidates = []
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
     is_banner = (r_idx == 0 and col_idx in [2, 3])
     
     peak_p_score, best_roi_gray = 0.0, None
-    peak_std = 0.0
 
+    # 1. Harvest & Pre-Processing
     for f_idx in f_range:
         img_bgr = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]))
         if img_bgr is None: continue
         roi_gray = cv2.cvtColor(img_bgr[y1:y1+SIDE_PX, x1:x1+SIDE_PX], cv2.COLOR_BGR2GRAY)
         if roi_gray.shape != (SIDE_PX, SIDE_PX): continue
         
-        # Player check
         roi_30 = roi_gray[13:43, 13:43]
         max_p = max([cv2.minMaxLoc(cv2.matchTemplate(pt, roi_30, cv2.TM_CCOEFF_NORMED))[1] for pt in res['player']] + [0])
         peak_p_score = max(peak_p_score, max_p)
         
         comp = get_complexity(roi_gray)
-        std_val, _ = check_side_slice_empty(roi_gray)
-        peak_std = max(peak_std, std_val)
-
         if best_roi_gray is None or comp > get_complexity(best_roi_gray):
             best_roi_gray = roi_gray
             
-        if max_p < 0.75 and comp > 300: # Threshold for basic activity
+        if max_p < 0.75 and comp > 250:
             frame_candidates.append({'gray': roi_gray, 'comp': comp})
 
-    # 1. Forensic Gatekeeper: Primary Bypass
-    if best_roi_gray is not None:
-        val, is_empty = check_side_slice_empty(best_roi_gray)
-        if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
-
-    # 2. Structural Identification
+    # 2. Consensus Identification
     tier_z_momentum = defaultdict(float)
     max_z_seen = 0.0
     top_frames = sorted(frame_candidates, key=lambda x: x['comp'], reverse=True)[:HARVEST_COUNT]
     
     for f in top_frames:
-        roi_gray = f['gray']
-        roi_comp = f['comp']
+        roi_gray, roi_comp = f['gray'], f['comp']
         roi_tex = apply_clahe(roi_gray)
         roi_geo, roi_gra = get_silhouette(roi_tex), get_gradient_map(roi_tex)
         c_tex, c_geo, c_gra = roi_tex[13:43, 13:43], roi_geo[13:43, 13:43], roi_gra[13:43, 13:43]
         if is_banner: c_tex, c_geo, c_gra = c_tex[12:, :], c_geo[12:, :], c_gra[12:, :]
         
+        # STRUCTURAL BAND-PASS: Eliminate impossible candidates physically
+        valid_pool = allowed_tiers
+        if roi_comp > COMPLEXITY_HIGH_FLOOR:
+            valid_pool = [t for t in allowed_tiers if not any(k in t for k in ['dirt', 'com'])]
+        elif roi_comp < COMPLEXITY_DIRT_CEILING:
+            valid_pool = [t for t in allowed_tiers if any(k in t for k in ['dirt', 'com'])]
+
         frame_results = []
-        for tier in allowed_tiers:
+        for tier in valid_pool:
             if tier not in res['ores']: continue
-            
-            # Band-pass complexity filter
-            if roi_comp > COMPLEXITY_HIGH_FLOOR and 'dirt' in tier: continue
-            if roi_comp < COMPLEXITY_DIRT_CEILING and any(k in tier for k in ['epic', 'leg', 'myth']): continue
-            
             best_t_score = 0
             for tpl in res['ores'][tier]['tpls']:
                 t_tex, t_geo, t_gra = tpl['tex'][13:43, 13:43], tpl['geo'][13:43, 13:43], tpl['gra'][13:43, 13:43]
@@ -154,29 +147,29 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                 
                 fused = (s_tex * W_TEX) + (s_geo * W_GEO) + (s_gra * W_GRA)
                 if fused > best_t_score: best_t_score = fused
-            
             frame_results.append({'tier': tier, 'score': best_t_score})
 
         if not frame_results: continue
-        
-        # Outlier Detection: Calculate Z-score for this frame
         scores = np.array([x['score'] for x in frame_results])
-        mean_s, std_s = np.mean(scores), np.std(scores)
-        
-        winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
-        z_score = (winner['score'] - mean_s) / max(0.01, std_s)
-        
-        if z_score > 1.2:
-            tier_z_momentum[winner['tier']] += z_score
-            max_z_seen = max(max_z_seen, z_score)
+        if len(scores) > 1:
+            mean_s, std_s = np.mean(scores), np.std(scores)
+            winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
+            z_score = (winner['score'] - mean_s) / max(0.01, std_s)
+            if z_score > 1.0:
+                tier_z_momentum[winner['tier']] += z_score
+                max_z_seen = max(max_z_seen, z_score)
 
-    # 3. Decision Logic
+    # 3. Resolution Hierarchy (Tier ID First)
     if tier_z_momentum:
         winner_tier = max(tier_z_momentum, key=tier_z_momentum.get)
-        # Winner must hit the momentum floor AND possess distinct uniqueness
-        if tier_z_momentum[winner_tier] > 5.0 or max_z_seen > Z_TRUST_THRESHOLD:
-            tag = "[Z]" if max_z_seen > Z_TRUST_THRESHOLD else "[M]"
+        if tier_z_momentum[winner_tier] >= MIN_MOMENTUM_GATE or max_z_seen >= Z_TRUST_THRESHOLD:
+            tag = "[Z]" if max_z_seen >= Z_TRUST_THRESHOLD else "[M]"
             return winner_tier, round(max_z_seen, 2), int(tier_z_momentum[winner_tier]), peak_p_score, tag
+
+    # 4. Forensic Fallback (Only if ID failed)
+    if best_roi_gray is not None:
+        val, is_empty = check_side_slice_empty(best_roi_gray)
+        if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
 
     return "low_conf", round(max_z_seen, 2), 0, peak_p_score, ""
 
@@ -184,14 +177,14 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     f_id = int(floor_data['floor_id'])
     results = {'floor_id': f_id, 'start_frame': int(floor_data['true_start_frame'])}
     
-    # SOURCE OF TRUTH: project_config.py
     if hasattr(cfg, 'BOSS_DATA') and f_id in cfg.BOSS_DATA:
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
             r, c = divmod(s_idx, 6)
             identity = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
-            results[f"R{r+1}_S{c}"] = identity
-            results[f"R{r+1}_S{c}_tag"] = "[B]"
+            key = f"R{r+1}_S{c}"
+            results[key], results[f"{key}_tag"] = identity, "[B]"
+            results[f"{key}_z"], results[f"{key}_mom"], results[f"{key}_pmax"] = 0.0, 0, 0.0
         return results
 
     allowed = [t for t, (s, e) in cfg.ORE_RESTRICTIONS.items() if s <= f_id <= e]
@@ -203,17 +196,15 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
             key = f"R{r_idx+1}_S{col}"
             if str(dna_row[key]) == '0':
                 results[key], results[f"{key}_tag"] = "empty", ""
+                results[f"{key}_z"], results[f"{key}_mom"], results[f"{key}_pmax"] = 0.0, 0, 0.0
             else:
                 tier, z_score, momentum, pmax, tag = identify_consensus(f_range, r_idx, col, buffer_dir, all_files, allowed, res)
                 results[key], results[f"{key}_z"], results[f"{key}_mom"], results[f"{key}_pmax"], results[f"{key}_tag"] = tier, z_score, momentum, pmax, tag
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v3.3 (Data-Driven Engine) ---")
-    if not os.path.exists(DNA_INVENTORY_CSV):
-        print("Error: Run Step 4.1 DNA Profiler first.")
-        return
-        
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v3.4 (Structural Hybrid) ---")
+    if not os.path.exists(DNA_INVENTORY_CSV): return
     df_floors, df_dna = pd.read_csv(BOUNDARIES_CSV), pd.read_csv(DNA_INVENTORY_CSV)
     if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
     buffer_dir, res = cfg.get_buffer_path(0), load_resources()
@@ -229,12 +220,12 @@ def run_tier_identification():
             inventory.append(result)
             f_id = result['floor_id']
             tag_counts = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  Floor {f_id:03d} processed. [Outlier: {tag_counts['[Z]']}, Likely: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
+            print(f"  Floor {f_id:03d} processed. [Success: {tag_counts['[Z]']}+{tag_counts['[M]']}, LikelyEmpty: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
 
-    pd.DataFrame(inventory).sort_values('floor_id').to_csv(OUT_CSV, index=False)
+    final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
+    final_df.to_csv(OUT_CSV, index=False)
     
-    # Audit Proofs
-    for _, row in pd.DataFrame(inventory).sort_values('floor_id').iterrows():
+    for _, row in final_df.iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
         for r_idx in range(4):
@@ -244,12 +235,13 @@ def run_tier_identification():
                 if tier == "empty": continue
                 color = (0, 255, 0) if tier not in ["low_conf", "likely_empty"] else (0, 255, 255) if tier == "likely_empty" else (0, 0, 255)
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-                # Label with Tier + Forensic Tag
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
-                # Show Z-score and Momentum diagnostic
-                if f"{key}_z" in row:
-                    cv2.putText(img, f"Z:{row[f'{key}_z']} M:{int(row[f'{key}_mom'])}", (cx+HUD_DX-25, cy+HUD_DY+12), 0, 0.3, (255,255,255), 1)
+                # Multi-modal diagnostic OSD
+                z_val = row.get(f"{key}_z", 0.0)
+                mom_val = row.get(f"{key}_mom", 0)
+                if not pd.isna(z_val) and not pd.isna(mom_val) and tier != "likely_empty":
+                    cv2.putText(img, f"Z:{z_val:.1f} M:{int(mom_val)}", (cx+HUD_DX-25, cy+HUD_DY+12), 0, 0.3, (255,255,255), 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
     print(f"[DONE] Final Inventory: {OUT_CSV}")
 
