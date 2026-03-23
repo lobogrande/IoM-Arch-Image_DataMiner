@@ -215,4 +215,7 @@ def run_tier_identification():
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"\n[COMPLETE] Master Inventory updated at {OUT_CS
+    print(f"\n[COMPLETE] Master Inventory updated at {OUT_CSV}")
+
+if __name__ == "__main__":
+    run_tier_identification()
