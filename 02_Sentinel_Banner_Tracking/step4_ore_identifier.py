@@ -1,7 +1,7 @@
 # step4_ore_identifier.py
 # Purpose: Master Plan Step 4.1 - Establish 100% accurate 24-slot DNA Occupancy
-#          using Spatial Masking to bypass "Dig Stage" UI interference.
-# Version: 1.8 (The Region-Restricted Scalpel)
+#          using Physical ROI Slicing to bypass "Dig Stage" UI interference.
+# Version: 1.9 (The Physical Slicing Scalpel)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -23,20 +23,9 @@ ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 
 # THRESHOLDS
-EMPTY_THRESHOLD = 0.82 
+# Using CCOEFF_NORMED: Empties > 0.90, Occupied < 0.60. 0.80 is the sweet spot.
+EMPTY_THRESHOLD = 0.80 
 MAX_DNA_WINDOW = 150 
-
-def get_dna_masks():
-    """
-    Generates two 30x30 masks:
-    1. Standard: Full occupancy (all 1s)
-    2. Banner: Ignores top 10px where "Dig Stage" text appears (specifically for R1_S2/S3)
-    """
-    std = np.ones((30, 30), dtype=np.uint8) * 255
-    banner = np.ones((30, 30), dtype=np.uint8) * 255
-    # Mask out the top 10 pixels (the text zone)
-    banner[0:10, :] = 0
-    return std, banner
 
 def load_bg_templates():
     """Loads background and negative UI templates (48x48)."""
@@ -49,21 +38,20 @@ def load_bg_templates():
         if os.path.exists(p_ui): templates.append(cv2.imread(p_ui, 0))
     return [t for t in templates if t is not None]
 
-def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls, masks):
+def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls):
     """
     Scans a window of frames to determine if a slot is EMPTY.
-    Uses masked sliding-window matching for UI-noise rejection.
+    Uses physical ROI slicing for UI-noise rejection.
     """
-    std_mask, banner_mask = masks
-    # Only use the banner-exclusion mask for Row 1, Slots 2 and 3
-    active_mask = banner_mask if (r_idx == 0 and col_idx in [2, 3]) else std_mask
-    
     y_center = int(ORE0_Y + (r_idx * STEP))
     x_center = int(ORE0_X + (col_idx * STEP))
     
-    # 30x30 tight ROI
+    # Standard 30x30 tight ROI
     tw, th = 30, 30
     tx, ty = x_center - (tw // 2), y_center - (th // 2)
+    
+    # PHYSICAL SLICE: If center Row 1, ignore the top 12 pixels (where Dig Stage banner is)
+    is_banner_slot = (r_idx == 0 and col_idx in [2, 3])
     
     peak_bg_score = -1.0
 
@@ -74,22 +62,28 @@ def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls, 
         roi = img_gray[ty : ty + th, tx : tx + tw]
         if roi.shape != (30, 30): continue
 
+        # Apply slicing to physically remove the banner text before matching
+        if is_banner_slot:
+            roi_proc = roi[12:, :] # Result is 18x30
+        else:
+            roi_proc = roi
+
         for tpl in bg_tpls:
-            # ROI (30x30) slides across Template (48x48)
-            # Using TM_CCORR_NORMED because it supports the spatial mask parameter
-            res = cv2.matchTemplate(tpl, roi, cv2.TM_CCORR_NORMED, mask=active_mask)
+            # We match our ROI (30x30 or 18x30) against the 48x48 background template.
+            # ROI slides across Template using superior CCOEFF algorithm.
+            res = cv2.matchTemplate(tpl, roi_proc, cv2.TM_CCOEFF_NORMED)
             score = cv2.minMaxLoc(res)[1]
             if score > peak_bg_score:
                 peak_bg_score = score
         
-        # Performance Break: If we found an undeniable background match
+        # Optimization: If we found a perfect background match, stop scanning
         if peak_bg_score >= 0.95:
             break
 
     bit = '0' if peak_bg_score >= EMPTY_THRESHOLD else '1'
     return bit, round(float(peak_bg_score), 4)
 
-def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls, masks):
+def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
     """Worker Function: Profiles 24-slot DNA for one floor."""
     f_id = int(floor_data['floor_id'])
     start_f, end_f = int(floor_data['true_start_frame']), int(floor_data['end_frame'])
@@ -110,12 +104,12 @@ def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls, masks):
             results[f"{key}_score"] = 1.0 
         return results
 
-    # 2. TEMPORAL DNA SCAN (NO DELAYS)
+    # 2. TEMPORAL DNA SCAN
     f_range = range(start_f, min(end_f + 1, start_f + MAX_DNA_WINDOW))
     
     for r_idx in range(4):
         for col in range(6):
-            bit, score = get_slot_occupancy(f_range, r_idx, col, buffer_dir, all_files, bg_tpls, masks)
+            bit, score = get_slot_occupancy(f_range, r_idx, col, buffer_dir, all_files, bg_tpls)
             results[f"R{r_idx+1}_S{col}"] = bit
             results[f"R{r_idx+1}_S{col}_score"] = score
 
@@ -135,14 +129,13 @@ def run_ore_identification():
     
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     bg_tpls = load_bg_templates()
-    masks = get_dna_masks()
     
-    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.8 ---")
-    print(f"Scanning 24 slots with Restricted-Region Spatial Masking...")
+    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.9 ---")
+    print(f"Scanning 24 slots with Physical ROI Slicing (CCOEFF Algorithm)...")
 
     inventory = []
     
-    worker = partial(process_floor_dna, buffer_dir=buffer_dir, all_files=all_files, bg_tpls=bg_tpls, masks=masks)
+    worker = partial(process_floor_dna, buffer_dir=buffer_dir, all_files=all_files, bg_tpls=bg_tpls)
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row for _, row in df_floors.iterrows()}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
