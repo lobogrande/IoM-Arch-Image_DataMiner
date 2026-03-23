@@ -1,7 +1,7 @@
 # step4_ore_identifier.py
 # Purpose: Master Plan Step 4.1 - Establish 100% accurate 24-slot DNA Occupancy
 #          using Temporal Sliding-Window Scanning and Diagnostic Auditing.
-# Version: 1.5 (The Sliding Window Diagnostic)
+# Version: 1.5.1 (Floor Limiting & Robust Matching)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -15,13 +15,15 @@ OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_inventory.csv")
 DIAG_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_score_analysis.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_proofs")
 
+# DIAGNOSTIC CONTROL
+LIMIT_FLOORS = 20   # Set to None to process all 110 floors; use small numbers for fast testing
+
 # GRID CONSTANTS (Ore Centers)
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 
 # THRESHOLDS
 # Logic: High match with background = Empty (0). 
-# After moving to sliding window, expected Empty scores are > 0.85.
 EMPTY_THRESHOLD = 0.75
 MAX_DNA_WINDOW = 150 # Max frames to scan per floor for occupancy
 
@@ -58,14 +60,13 @@ def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls):
         if roi.shape != (30, 30): continue
 
         for tpl in bg_tpls:
-            # We match our 30x30 ROI against the full 48x48 template.
-            # This allows the ROI to "slide" and find its best alignment.
+            # ROI (30x30) slides across Template (48x48)
             res = cv2.matchTemplate(tpl, roi, cv2.TM_CCOEFF_NORMED)
             score = cv2.minMaxLoc(res)[1]
             if score > peak_bg_score:
                 peak_bg_score = score
         
-        # Optimization: If we found an undeniable background match, stop scanning
+        # Optimization: If we found an undeniable background match, stop scanning this slot
         if peak_bg_score >= 0.92:
             break
 
@@ -90,8 +91,8 @@ def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
             if special_map:
                 results[key] = '0' if special_map.get(s_idx) == 'empty' else '1'
             else:
-                results[key] = '1' # Solid bosses are fully occupied
-            results[f"{key}_score"] = 1.0 # Constant for boss data
+                results[key] = '1' 
+            results[f"{key}_score"] = 1.0 
         return results
 
     # 2. TEMPORAL DNA SCAN
@@ -111,13 +112,19 @@ def run_ore_identification():
         return
 
     df_floors = pd.read_csv(BOUNDARIES_CSV)
+    
+    # Apply floor processing limit for faster diagnostic turnaround
+    if LIMIT_FLOORS is not None:
+        df_floors = df_floors.head(LIMIT_FLOORS)
+        print(f"DIAGNOSTIC MODE: Limiting scan to first {LIMIT_FLOORS} floors.")
+
     buffer_dir = cfg.get_buffer_path(0)
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
     
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     bg_tpls = load_bg_templates()
     
-    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.5 ---")
+    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.5.1 ---")
     print(f"Scanning 24 slots per floor using Robust Sliding-Window detection...")
 
     inventory = []
@@ -128,13 +135,12 @@ def run_ore_identification():
         futures = {executor.submit(worker, row): row for _, row in df_floors.iterrows()}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             inventory.append(future.result())
-            if i % 10 == 0:
-                print(f"  Processed {i}/{len(df_floors)} floors...", end="\r")
+            if i % 5 == 0:
+                print(f"  Processed {len(inventory)}/{len(df_floors)} floors...", end="\r")
 
     # 3. ANALYSIS & SAVING
     df_results = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     
-    # Separate the Inventory (Bits) from the Diagnostic (Scores)
     score_cols = [c for c in df_results.columns if '_score' in c]
     bit_cols = [c for c in df_results.columns if c not in score_cols and c not in ['floor_id', 'start_frame']]
     
@@ -144,22 +150,24 @@ def run_ore_identification():
     print(f"\n\n[DONE] DNA Inventory saved to: {OUT_CSV}")
     print(f"Diagnostic Scores saved to: {DIAG_CSV}")
 
-    # QUANTIFIABLE SUCCESS SUMMARY
+    # SUCCESS SUMMARY
     all_scores = df_results[score_cols].values.flatten()
     empty_scores = all_scores[all_scores >= EMPTY_THRESHOLD]
     occ_scores = all_scores[all_scores < EMPTY_THRESHOLD]
     
     print(f"\n--- DIAGNOSTIC SUMMARY ---")
     print(f"Total slots analyzed: {len(all_scores)}")
-    print(f"Mean 'Empty' Match Score: {np.mean(empty_scores):.4f} (Target > 0.85)")
-    print(f"Mean 'Occupied' Match Score: {np.mean(occ_scores):.4f} (Target < 0.50)")
-    print(f"Confidence Gap: {np.mean(empty_scores) - np.mean(occ_scores):.4f}")
+    if len(empty_scores) > 0:
+        print(f"Mean 'Empty' Match Score: {np.mean(empty_scores):.4f} (Target > 0.85)")
+    if len(occ_scores) > 0:
+        print(f"Mean 'Occupied' Match Score: {np.mean(occ_scores):.4f} (Target < 0.50)")
 
     # Visual Proof Generation
     print("\nGenerating DNA visual proofs (Annotated Scores)...")
     for _, row in df_results.iterrows():
         f_id = int(row['floor_id'])
-        if f_id % 10 != 0 and f_id not in [1, 11, 25, 50, 75, 99]: continue
+        # Show every 10th floor, or specific checkpoints
+        if f_id % 10 != 0 and f_id not in [1, 5, LIMIT_FLOORS]: continue
         
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -174,9 +182,7 @@ def run_ore_identification():
                 cx = int(ORE0_X + (col * STEP))
                 
                 color = (0, 255, 0) if bit == '0' else (0, 0, 255)
-                # HUD Offsets
                 hx, hy = cx + 20, cy + 30
-                # Draw the BIT and the SCORE for forensic inspection
                 cv2.putText(img, f"{bit}", (hx-5, hy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 3)
                 cv2.putText(img, f"{bit}", (hx-5, hy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
                 cv2.putText(img, f"{score:.2f}", (hx-20, hy+15), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255,255,255), 1)
