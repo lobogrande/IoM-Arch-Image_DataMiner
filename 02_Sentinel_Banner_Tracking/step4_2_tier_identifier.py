@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using the Forensic Trinity:
 #          Temporal Consensus integrated with v13.0 Diagnostic Logic.
-# Version: 4.0 (The Diagnostic Integration)
+# Version: 4.1 (Fixed NameError & Stabilized Resource Loading)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -23,9 +23,9 @@ DNA_INVENTORY_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_inventory
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
-LIMIT_FLOORS = 20
+LIMIT_FLOORS = 20 # Set to None for full run
 
-# --- 2. DATA-DRIVEN DIAGNOSTIC CONSTANTS (From diag_ore_id_accuracy.py v13.0) ---
+# --- 2. DATA-DRIVEN DIAGNOSTIC CONSTANTS ---
 Z_TRUST_THRESHOLD = 2.0         
 STATE_COMPLEXITY_THRESHOLD = 320 
 LUMINANCE_SHADOW_FLOOR = 88      
@@ -33,7 +33,7 @@ MIN_FUSED_GATE = 0.28
 SHADOW_TEX_W, SHADOW_SIL_W, SHADOW_GRA_W = 0.35, 0.35, 0.30
 ROTATION_VARIANTS = [-3, 3]
 
-PLAYER_PRESENCE_GATE = 0.70  # ABSOLUTE requirement to trigger side-slice forensics
+PLAYER_PRESENCE_GATE = 0.70 
 HARVEST_COUNT = 15
 
 BULLY_PENALTIES = {
@@ -87,7 +87,6 @@ def get_complexity(img):
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def contains_vibrant_crosshair(roi_bgr):
-    """Rejects frames obscured by vibrant UI rings."""
     if roi_bgr is None or roi_bgr.size == 0: return False
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
@@ -104,17 +103,16 @@ def contains_vibrant_crosshair(roi_bgr):
     return False
 
 def load_all_templates():
-    """Loads active/shadow templates and generates rotational variants."""
+    """Loads all templates including rotational variants for the Trinity sensors."""
     templates = {'active': {}, 'shadow': {}, 'player': []}
     t_path = cfg.TEMPLATE_DIR
-    print("Loading Rotational Variants & State-Aware Templates...")
+    print(f"Loading Resources from {t_path}...")
     
     for f in os.listdir(t_path):
         if "negative_player" in f:
             img = cv2.imread(os.path.join(t_path, f), 0)
             if img is not None: templates['player'].append(cv2.resize(img, (SIDE_PX, SIDE_PX)))
             continue
-            
         if not f.endswith(('.png', '.jpg')) or "_plain_" not in f.lower(): continue
         if any(x in f.lower() for x in ["background", "negative"]): continue
         
@@ -139,14 +137,12 @@ def load_all_templates():
     return templates
 
 def check_side_slice_empty(roi_gray, is_banner):
-    """Checks the extreme left for background smoothness."""
     slot_48 = roi_gray[4:52, 4:52]
     slice_roi = slot_48[12:, 0:12] if is_banner else slot_48[:, 0:12]
     std_val = np.std(slice_roi)
     return std_val, std_val < 13.0
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """State-aware consensus driven by diagnostic logic."""
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
     is_banner = (r_idx == 0 and col_idx in [2, 3])
@@ -154,16 +150,15 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     peak_p_score, best_roi_gray = 0.0, None
     frame_candidates = []
 
-    # 1. Harvest Pristine Frames
     for f_idx in f_range:
-        img_bgr = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]))
+        img_path = os.path.join(buffer_dir, all_files[f_idx])
+        img_bgr = cv2.imread(img_path)
         if img_bgr is None: continue
         roi_bgr = img_bgr[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
         if roi_bgr.shape[:2] != (SIDE_PX, SIDE_PX): continue
-        
         roi_gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
         
-        # Player Obstruction Tracking
+        # Player Obstruction Check
         roi_30 = roi_gray[13:43, 13:43]
         max_p = max([cv2.minMaxLoc(cv2.matchTemplate(pt[13:43, 13:43], roi_30, cv2.TM_CCOEFF_NORMED))[1] for pt in res['player']] + [0])
         peak_p_score = max(peak_p_score, max_p)
@@ -172,7 +167,6 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         if best_roi_gray is None or comp > get_complexity(best_roi_gray):
             best_roi_gray = roi_gray
             
-        # Reject if UI rings block the ore
         if contains_vibrant_crosshair(roi_bgr): continue
         
         if max_p < 0.65:
@@ -180,16 +174,13 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
 
     tier_z_momentum = defaultdict(float)
     max_z_seen, best_overall_score = 0.0, 0.0
-    
     top_frames = sorted(frame_candidates, key=lambda x: x['comp'], reverse=True)[:HARVEST_COUNT]
 
-    # 2. Identification (Data-Driven Logic Port)
     for f in top_frames:
         roi_gray = f['gray']
         roi_comp = f['comp']
         mean_lum = np.mean(roi_gray)
         
-        # State Separation
         target_state = 'active' if (roi_comp > STATE_COMPLEXITY_THRESHOLD or mean_lum > LUMINANCE_SHADOW_FLOOR) else 'shadow'
         roi_proc = apply_texture_enhancement(roi_gray, target_state)
         roi_sil = get_silhouette_mask(roi_proc)
@@ -205,11 +196,9 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             best_t_score = 0
             for tpl in res[target_state][tier]:
                 if target_state == 'active':
-                    # Pure Texture with Circular Exclusion Mask
-                    s = cv2.minMaxLoc(cv2.matchTemplate(roi_proc, tpl['img'], cv2.TM_CCOEFF_NORMED, mask=active_mask))[1]
+                    s = cv2.minMaxLoc(cv2.matchTemplate(roi_proc, tpl['img'], cv2.TM_CCORR_NORMED, mask=active_mask))[1]
                     if s > best_t_score: best_t_score = s
                 else:
-                    # Trinity Fusion for Shadows
                     s_tex = cv2.minMaxLoc(cv2.matchTemplate(roi_proc, tpl['img'], cv2.TM_CCOEFF_NORMED))[1]
                     s_sil = cv2.minMaxLoc(cv2.matchTemplate(roi_sil, tpl['sil'], cv2.TM_CCOEFF_NORMED))[1]
                     s_gra = cv2.minMaxLoc(cv2.matchTemplate(roi_gra, tpl['gra'], cv2.TM_CCOEFF_NORMED))[1]
@@ -225,23 +214,19 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
             z_score = (winner['score'] - mean_s) / max(0.01, std_s)
             
-            # Momentum is granted for distinct, high-quality matches
             if z_score > 1.0 or winner['score'] > MIN_FUSED_GATE:
                 tier_z_momentum[winner['tier']] += max(1.0, z_score)
                 max_z_seen = max(max_z_seen, z_score)
                 best_overall_score = max(best_overall_score, winner['score'])
 
-    # 3. Consensus Resolution
     if tier_z_momentum:
         winner_tier = max(tier_z_momentum, key=tier_z_momentum.get)
         gate = 0.40 if any(f in winner_tier for f in ['dirt', 'com']) else 0.46
-        
-        # Valid if it passes absolute bounds OR is a massive outlier
         if best_overall_score > gate or max_z_seen > Z_TRUST_THRESHOLD:
             tag = "[Z]" if max_z_seen > Z_TRUST_THRESHOLD else "[M]"
             return winner_tier, round(best_overall_score, 4), int(tier_z_momentum[winner_tier]), peak_p_score, tag
 
-    # 4. STRICT FORENSIC FALLBACK (Only executes if player is undeniably present)
+    # STRICT FORENSIC FALLBACK
     if peak_p_score >= PLAYER_PRESENCE_GATE and best_roi_gray is not None:
         val, is_empty = check_side_slice_empty(best_roi_gray, is_banner)
         if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
@@ -276,16 +261,28 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v4.0 (Diagnostic Integration) ---")
-    if not os.path.exists(DNA_INVENTORY_CSV): return
-    df_floors, df_dna = pd.read_csv(BOUNDARIES_CSV), pd.read_csv(DNA_INVENTORY_CSV)
-    if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
-    buffer_dir, res = cfg.get_buffer_path(0), load_resources()
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v4.1 ---")
+    if not os.path.exists(DNA_INVENTORY_CSV):
+        print(f"Error: {DNA_INVENTORY_CSV} not found.")
+        return
+        
+    df_floors = pd.read_csv(BOUNDARIES_CSV)
+    df_dna = pd.read_csv(DNA_INVENTORY_CSV)
+    
+    if LIMIT_FLOORS:
+        df_floors = df_floors.head(LIMIT_FLOORS)
+        
+    buffer_dir = cfg.get_buffer_path(0)
+    res = load_all_templates()
+    
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
-    if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
+    
+    if not os.path.exists(VERIFY_DIR):
+        os.makedirs(VERIFY_DIR)
     
     worker = partial(process_floor_tier, dna_map=df_dna, buffer_dir=buffer_dir, all_files=all_files, res=res)
     inventory = []
+    
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -298,6 +295,7 @@ def run_tier_identification():
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
     
+    # Generate Visual Proofs
     for _, row in final_df.iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -306,10 +304,16 @@ def run_tier_identification():
                 key = f"R{r_idx+1}_S{col}"
                 tier, tag = str(row[key]), str(row.get(f"{key}_tag", ""))
                 if tier == "empty": continue
-                color = (0, 255, 0) if tier not in ["low_conf", "likely_empty"] else (0, 255, 255) if tier == "likely_empty" else (0, 0, 255)
+                
+                # Color Coding
+                if tier == "likely_empty": color = (0, 255, 255) # Cyan
+                elif tier == "low_conf": color = (0, 0, 255)     # Red
+                else: color = (0, 255, 0)                        # Green
+                
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-                cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
-                cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
+                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
+                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.4, color, 1)
+                
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
     print(f"[DONE] Final Inventory: {OUT_CSV}")
 
