@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using the Forensic Trinity:
 #          Triple-Sensor Fusion (Texture, Geometry, Grain) and Structural Affinity.
-# Version: 2.9 (The Forensic Trinity Engine)
+# Version: 3.0 (The Forensic Safety-Net)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -27,10 +27,10 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs"
 LIMIT_FLOORS = 20  # Set to None for production
 
 # --- 2. TRINITY SENSOR CONSTANTS ---
-# Weights for Fusion: Texture (40%), Geometry (30%), Grain (30%)
-W_TEX, W_GEO, W_GRA = 0.40, 0.30, 0.30
-MIN_FUSED_CONFIDENCE = 0.35  # Trinity agreement is more restrictive
-AFFINITY_SIGMA = 0.40        # Stricter complexity envelope
+# Weights for Fusion: Texture (50%), Geometry (25%), Grain (25%)
+W_TEX, W_GEO, W_GRA = 0.50, 0.25, 0.25
+MIN_FUSED_CONFIDENCE = 0.38  
+AFFINITY_WEIGHT = 0.15       # Scoring bias based on complexity matching
 PLAYER_REJECTION_GATE = 0.75 
 SIDE_SLICE_WIDTH = 14        
 SIDE_SLICE_STD_MAX = 14.0    
@@ -103,7 +103,7 @@ def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
     if np.std(slice_roi) < SIDE_SLICE_STD_MAX: return np.std(slice_roi), True
     best_s = 0
     for tpl in bg_tpls:
-        tpl_slice = tpl[:, 0:SIDE_SLICE_WIDTH]
+        tpl_slice = tpl[4:52, 0:SIDE_SLICE_WIDTH]
         if is_banner: tpl_slice = tpl_slice[12:, :]
         res = cv2.matchTemplate(tpl_slice, slice_roi, cv2.TM_CCOEFF_NORMED)
         best_s = max(best_s, cv2.minMaxLoc(res)[1])
@@ -132,12 +132,6 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             if comp >= COMPLEXITY_GATE:
                 frame_candidates.append({'gray': roi_gray, 'comp': comp})
 
-    if not frame_candidates:
-        if peak_p_score > PLAYER_REJECTION_GATE and last_roi_gray is not None:
-            val, is_empty = check_side_slice_empty(last_roi_gray, res['bg'], is_banner)
-            if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
-        return "low_conf", 0.0, 0, peak_p_score, ""
-
     tier_momentum = defaultdict(float)
     best_overall_score = 0
     top_frames = sorted(frame_candidates, key=lambda x: x['comp'], reverse=True)[:HARVEST_COUNT]
@@ -145,12 +139,10 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     for f in top_frames:
         roi_gray = f['gray']
         roi_comp = f['comp']
-        # Apply Trinity preprocessing
         roi_tex = apply_clahe(roi_gray)
         roi_geo = get_silhouette(roi_tex)
         roi_gra = get_gradient_map(roi_tex)
         
-        # Central Crop for matching
         c_tex = roi_tex[13:43, 13:43]
         c_geo = roi_geo[13:43, 13:43]
         c_gra = roi_gra[13:43, 13:43]
@@ -160,10 +152,10 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         frame_results = []
         for tier in allowed_tiers:
             if tier not in res['ores']: continue
-            # Check complexity affinity first
-            ratio = roi_comp / max(1.0, res['ores'][tier]['mean_comp'])
-            affinity = np.exp(-0.5 * (np.log(ratio) / AFFINITY_SIGMA)**2)
-            if affinity < 0.1: continue # Early exit for physically impossible matches
+            
+            # Structural Affinity Penalty (Linear-Log)
+            comp_delta = abs(np.log1p(roi_comp) - np.log1p(res['ores'][tier]['mean_comp']))
+            penalty = comp_delta * AFFINITY_WEIGHT
             
             best_t_score = 0
             for tpl in res['ores'][tier]['tpls']:
@@ -178,22 +170,23 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                 fused = (s_tex * W_TEX) + (s_geo * W_GEO) + (s_gra * W_GRA)
                 if fused > best_t_score: best_t_score = fused
             
-            frame_results.append({'tier': tier, 'score': best_t_score * affinity})
+            frame_results.append({'tier': tier, 'score': best_t_score - penalty})
 
         if not frame_results: continue
         winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
-        # Statistical weighting
-        tier_momentum[winner['tier']] += winner['score']
+        tier_momentum[winner['tier']] += 1.0
         if winner['score'] > best_overall_score: best_overall_score = winner['score']
 
-    if not tier_momentum: return "low_conf", 0.0, 0, peak_p_score, ""
-    winner = max(tier_momentum, key=tier_momentum.get)
-    is_valid = best_overall_score >= MIN_FUSED_CONFIDENCE or tier_momentum[winner] > 4.5
-    
-    if is_valid:
-        return winner, round(best_overall_score, 4), int(tier_momentum[winner]), peak_p_score, "[T]" # [T] Trinity
+    # RESOLUTION HIERARCHY
+    if tier_momentum:
+        winner = max(tier_momentum, key=tier_momentum.get)
+        is_valid = best_overall_score >= MIN_FUSED_CONFIDENCE or tier_momentum[winner] >= 4.0
+        if is_valid:
+            tag = "[T]" if best_overall_score < MIN_FUSED_CONFIDENCE else ""
+            return winner, round(best_overall_score, 4), int(tier_momentum[winner]), peak_p_score, tag
 
-    if peak_p_score > PLAYER_REJECTION_GATE and last_roi_gray is not None:
+    # ULTIMATE FALLBACK: Check if we only saw a player, or if identification simply failed
+    if last_roi_gray is not None:
         val, is_empty = check_side_slice_empty(last_roi_gray, res['bg'], is_banner)
         if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
 
@@ -227,7 +220,7 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.9 (The Trinity Engine) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v3.0 (The Safety-Net) ---")
     if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):
         print(f"Error: Missing Input Files.")
         return
