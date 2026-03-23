@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using Temporal Consensus,
-#          Structural Affinity Weighting, and Config-Exclusive Boss Enforcement.
-# Version: 2.7 (The Unified Config Identifier)
+#          Structural Probability Fusion, and Config-Exclusive Boss Enforcement.
+# Version: 2.8 (The Structural Probability Engine)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -27,13 +27,13 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs"
 LIMIT_FLOORS = 20  # Set to None for production
 
 # MATHEMATICAL GATES
-MIN_MATCH_CONFIDENCE = 0.44  
-STRUCTURAL_WEIGHT = 0.20     # Penalty multiplier for complexity mismatch
+MIN_FUSED_CONFIDENCE = 0.38  # Lowered gate because Fusion is more restrictive
+AFFINITY_SIGMA = 0.45        # Width of the complexity envelope (Lower = Stricter)
 PLAYER_REJECTION_GATE = 0.75 
 SIDE_SLICE_WIDTH = 14        # Extreme left edge peek
 SIDE_SLICE_STD_MAX = 14.0    # Background smoothness floor
 HARVEST_COUNT = 15          
-COMPLEXITY_GATE = 320        
+COMPLEXITY_GATE = 300        # Inclusive to catch low-detail Dirt1
 
 def get_complexity(img):
     """Calculates Laplacian variance to measure structural energy."""
@@ -41,11 +41,11 @@ def get_complexity(img):
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
 def load_resources():
-    """Loads ore tiers, player sprites, and background templates."""
+    """Loads ore tiers and computes their 'Biological Signature' (Mean Complexity)."""
     res = {'ores': {}, 'player': [], 'bg': []}
     t_path = cfg.TEMPLATE_DIR
     
-    print("Profiling Template Library...")
+    print("Profiling Template Structural Library...")
     for f in os.listdir(t_path):
         img = cv2.imread(os.path.join(t_path, f), 0)
         if img is None: continue
@@ -53,13 +53,17 @@ def load_resources():
         
         if "_act_plain_" in f and not any(x in f for x in ["player", "background"]):
             tier = f.split("_")[0]
-            if tier not in res['ores']: res['ores'][tier] = []
-            res['ores'][tier].append({
-                'img': img_48,
-                'comp': get_complexity(img_48)
-            })
+            if tier not in res['ores']: res['ores'][tier] = {'tpls': [], 'mean_comp': 0.0}
+            res['ores'][tier]['tpls'].append(img_48)
+            
         if "negative_player" in f: res['player'].append(img_48)
         if "background_plain" in f: res['bg'].append(img_48)
+
+    # Compute expected complexity for every tier
+    for tier in res['ores']:
+        comps = [get_complexity(t) for t in res['ores'][tier]['tpls']]
+        res['ores'][tier]['mean_comp'] = np.mean(comps)
+        
     return res
 
 def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
@@ -80,7 +84,7 @@ def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
     return best_s, best_s > 0.70
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """Weighted consensus engine prioritizing structural affinity."""
+    """Weighted consensus engine driven by Structural Probability Fusion."""
     frame_candidates = []
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
@@ -120,28 +124,42 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         frame_results = []
         for tier in allowed_tiers:
             if tier not in res['ores']: continue
-            for tpl_data in res['ores'][tier]:
-                score = cv2.minMaxLoc(cv2.matchTemplate(tpl_data['img'], roi_30, cv2.TM_CCOEFF_NORMED))[1]
-                # Dynamic Affinity Penalty
-                comp_delta = abs(np.log1p(roi_comp) - np.log1p(tpl_data['comp']))
-                penalty = comp_delta * STRUCTURAL_WEIGHT
-                # Anti-Bully Guard
-                if roi_comp > 450 and 'dirt' in tier: penalty += 0.15
-                frame_results.append({'tier': tier, 'score': score - penalty, 'raw': score})
+            
+            # 1. Spatial Correlation Score
+            spatial_score = max([cv2.minMaxLoc(cv2.matchTemplate(tpl, roi_30, cv2.TM_CCOEFF_NORMED))[1] for tpl in res['ores'][tier]['tpls']])
+            
+            # 2. Structural Affinity Probability (Gaussian on Log-Complexity)
+            # This formula defines 'How likely is this tier to have this ROI complexity?'
+            # If roi_comp and mean_comp are far apart, affinity collapses.
+            ratio = roi_comp / max(1.0, res['ores'][tier]['mean_comp'])
+            affinity = np.exp(-0.5 * (np.log(ratio) / AFFINITY_SIGMA)**2)
+            
+            # 3. Fused Probability (Spatial * Structural)
+            fused_score = spatial_score * affinity
+            frame_results.append({'tier': tier, 'score': fused_score, 'raw': spatial_score})
 
         if not frame_results: continue
-        winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
-        weight = 1.0 / max(0.1, abs(np.log1p(roi_comp) - np.log1p(res['ores'][winner['tier']][0]['comp'])))
-        tier_momentum[winner['tier']] += weight
-        if winner['raw'] > best_overall_score: best_overall_score = winner['raw']
+        
+        # Outlier Validation: Winning tier must be statistically distinct in this frame
+        scores_arr = np.array([x['score'] for x in frame_results])
+        mean_s, std_s = np.mean(scores_arr), np.std(scores_arr)
+        
+        sorted_fs = sorted(frame_results, key=lambda x: x['score'], reverse=True)
+        winner = sorted_fs[0]
+        z_score = (winner['score'] - mean_s) / max(0.01, std_s)
+        
+        if z_score > 1.2: # Minimum uniqueness check
+            tier_momentum[winner['tier']] += z_score
+            if winner['score'] > best_overall_score: best_overall_score = winner['score']
 
     if not tier_momentum: return "low_conf", 0.0, 0, peak_p_score, ""
+    
     winner = max(tier_momentum, key=tier_momentum.get)
-    is_valid = best_overall_score >= MIN_MATCH_CONFIDENCE or tier_momentum[winner] > 5.0
-    tag = "[A]" if is_valid and best_overall_score < MIN_MATCH_CONFIDENCE else ""
+    # Check if we hit hard confidence threshold
+    is_valid = best_overall_score >= MIN_FUSED_CONFIDENCE
     
     if is_valid:
-        return winner, round(best_overall_score, 4), int(tier_momentum[winner]), peak_p_score, tag
+        return winner, round(best_overall_score, 4), int(tier_momentum[winner]), peak_p_score, "[A]"
 
     if peak_p_score > PLAYER_REJECTION_GATE and last_roi_gray is not None:
         val, is_empty = check_side_slice_empty(last_roi_gray, res['bg'], is_banner)
@@ -178,7 +196,7 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.7 (Unified Config) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.8 (Structural Probability) ---")
     if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):
         print(f"Error: Missing Input Files.")
         return
@@ -200,7 +218,7 @@ def run_tier_identification():
             inventory.append(result)
             f_id = result['floor_id']
             tag_counts = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  Floor {f_id:03d} processed. [Boss: {tag_counts['[B]']}, Affinity: {tag_counts['[A]']}, Likely: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
+            print(f"  Floor {f_id:03d} processed. [Affinity: {tag_counts['[A]']}, Likely: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id')
     final_df.to_csv(OUT_CSV, index=False)
@@ -219,7 +237,7 @@ def run_tier_identification():
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"[DONE] Final Inventory: {OUT_CSV}")
+    print(f"[DONE] Check {VERIFY_DIR} for proof images.")
 
 if __name__ == "__main__":
     run_tier_identification()
