@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using Temporal Consensus,
-#          Side-Slice Forensics for player overlap, and Config-based Boss Data.
-# Version: 2.0 (Config-Integrated Identifier)
+#          Side-Slice Forensics, and Complexity-Aware Affinity.
+# Version: 2.1 (The Discriminatory Forensic Engine)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -28,10 +28,12 @@ LIMIT_FLOORS = 20  # Set to None for production
 
 # THRESHOLDS
 MIN_MATCH_CONFIDENCE = 0.45  
-PROMOTION_THRESHOLD = 0.35   
+PROMOTION_THRESHOLD = 0.38   
 PLAYER_REJECTION_GATE = 0.75 
-SIDE_SLICE_GATE = 0.70       # Calibrated for 10px background peek
+SIDE_SLICE_GATE = 0.65       # Robustness for 12px strip
 HARVEST_COUNT = 15          
+COMPLEXITY_GATE = 450        # Raised to ensure "Glow" presence
+BULLY_MARGIN = 0.08          # Delta within which Dirt2 is disqualified if Complexity is high
 
 def load_resources():
     """Loads ore tiers, player sprites, and background templates."""
@@ -60,21 +62,23 @@ def load_resources():
     return res
 
 def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
-    """Forensic check: Peeks at the left 10px to see background behind player."""
+    """Forensic check: Peeks at the left 12px strip to see background behind player."""
     roi_30 = roi_gray[13:43, 13:43]
     if is_banner: roi_30 = roi_30[12:, :]
-    slice_roi = roi_30[:, 0:10]
+    
+    # Slice the left 12 pixels (approx 40% of ROI)
+    slice_roi = roi_30[:, 0:12]
     best_s = 0
     for tpl in bg_tpls:
+        # sliding window match on the strip for robustness
         tpl_30 = tpl[9:39, 9:39]
         if is_banner: tpl_30 = tpl_30[12:, :]
-        slice_tpl = tpl_30[:, 0:10]
-        res = cv2.matchTemplate(slice_tpl, slice_roi, cv2.TM_CCOEFF_NORMED)
+        res = cv2.matchTemplate(tpl_30, slice_roi, cv2.TM_CCOEFF_NORMED)
         best_s = max(best_s, cv2.minMaxLoc(res)[1])
     return best_s, best_s > SIDE_SLICE_GATE
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """Temporal consensus search prioritizing frames where player is absent."""
+    """Temporal consensus search with Anti-Bully logic and Complexity Affinity."""
     frame_candidates = []
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
@@ -83,6 +87,7 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     peak_p_score = 0.0
     last_roi_gray = None
 
+    # 1. HARVEST CLEAN FRAMES
     for f_idx in f_range:
         img_bgr = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]))
         if img_bgr is None: continue
@@ -95,35 +100,65 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         peak_p_score = max(peak_p_score, max_p)
         
         if max_p < PLAYER_REJECTION_GATE:
-            quality = cv2.Laplacian(roi_gray, cv2.CV_64F).var()
-            frame_candidates.append({'gray': roi_gray, 'quality': quality})
+            comp = cv2.Laplacian(roi_gray, cv2.CV_64F).var()
+            if comp >= COMPLEXITY_GATE:
+                frame_candidates.append({'gray': roi_gray, 'quality': comp})
 
-    tier_tallies, valid_matches, best_overall_score = [], [], 0
+    # 2. IDENTIFICATION WITH ANTI-BULLY LOGIC
+    tier_tallies, valid_matches = [], []
+    best_overall_score = 0
+    tag = ""
+    
     top_frames = sorted(frame_candidates, key=lambda x: x['quality'], reverse=True)[:HARVEST_COUNT]
     
     for f in top_frames:
         roi_30 = f['gray'][13:43, 13:43]
         if is_banner: roi_30 = roi_30[12:, :]
+        comp = f['quality']
+        
+        frame_results = []
         for tier in allowed_tiers:
             if tier not in res['ores']: continue
-            for tpl in res['ores'][tier]:
-                score = cv2.minMaxLoc(cv2.matchTemplate(tpl, roi_30, cv2.TM_CCOEFF_NORMED))[1]
-                if score > best_overall_score: best_overall_score = score
-                if score >= MIN_MATCH_CONFIDENCE: valid_matches.append(tier)
-                tier_tallies.append({'tier': tier, 'score': score})
+            best_t_score = max([cv2.minMaxLoc(cv2.matchTemplate(tpl, roi_30, cv2.TM_CCOEFF_NORMED))[1] for tpl in res['ores'][tier]])
+            
+            # COMPLEXITY AFFINITY: Boost high tiers if complexity is high
+            if comp > 650 and any(k in tier for k in ['rare', 'epic', 'leg', 'myth']):
+                best_t_score += 0.04
+            
+            frame_results.append({'tier': tier, 'score': best_t_score})
 
-    # Resolution hierarchy
+        if not frame_results: continue
+        
+        # Sort by score for this frame
+        sorted_results = sorted(frame_results, key=lambda x: x['score'], reverse=True)
+        winner = sorted_results[0]
+        runner_up = sorted_results[1] if len(sorted_results) > 1 else winner
+        
+        # ANTI-BULLY GUARD:
+        # If Dirt2 wins but a higher tier is very close, favor the higher tier if complexity is high.
+        if winner['tier'] in ['dirt1', 'dirt2'] and runner_up['tier'] not in ['dirt1', 'dirt2']:
+            if winner['score'] - runner_up['score'] < BULLY_MARGIN and comp > 500:
+                winner = runner_up
+                tag = "[C]" # Complexity Corrected
+
+        tier_tallies.append({'tier': winner['tier'], 'score': winner['score']})
+        if winner['score'] > best_overall_score: best_overall_score = winner['score']
+        if winner['score'] >= MIN_MATCH_CONFIDENCE:
+            valid_matches.append(winner['tier'])
+
+    # 3. RESOLUTION HIERARCHY
     if valid_matches:
-        winner, count = Counter(valid_matches).most_common(1)[0]
-        return winner, round(best_overall_score, 4), count, peak_p_score, ""
+        vote_winner, vote_count = Counter(valid_matches).most_common(1)[0]
+        return vote_winner, round(best_overall_score, 4), vote_count, peak_p_score, tag
 
     if tier_tallies:
-        counts = Counter([t['tier'] for t in sorted(tier_tallies, key=lambda x: x['score'], reverse=True)[:HARVEST_COUNT*3]])
-        winner, count = counts.most_common(1)[0]
-        max_win_score = max([t['score'] for t in tier_tallies if t['tier'] == winner])
+        counts = Counter([t['tier'] for t in tier_tallies])
+        vote_winner, vote_count = counts.most_common(1)[0]
+        max_win_score = max([t['score'] for t in tier_tallies if t['tier'] == vote_winner])
         if max_win_score >= PROMOTION_THRESHOLD:
-            return winner, round(max_win_score, 4), count, peak_p_score, "[P]"
+            return vote_winner, round(max_win_score, 4), vote_count, peak_p_score, "[P]"
 
+    # 4. FORENSIC FALLBACK (Likely Empty)
     if peak_p_score > PLAYER_REJECTION_GATE and last_roi_gray is not None:
         slice_s, is_empty = check_side_slice_empty(last_roi_gray, res['bg'], is_banner)
         if is_empty: return "likely_empty", round(slice_s, 4), 0, peak_p_score, "[L]"
@@ -132,47 +167,38 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
 
 def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     f_id = int(floor_data['floor_id'])
-    start_f = int(floor_data['true_start_frame'])
-    results = {'floor_id': f_id, 'start_frame': start_f}
+    results = {'floor_id': f_id, 'start_frame': int(floor_data['true_start_frame'])}
     
-    # 1. BOSS DATA ENFORCEMENT (Pulling from project_config.py)
+    # 1. BOSS DATA ENFORCEMENT
     if f_id in cfg.BOSS_DATA:
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
             r, c = divmod(s_idx, 6)
             identity = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
-            key = f"R{r+1}_S{c}"
-            results[key] = identity
-            results[f"{key}_score"] = 1.0
-            results[f"{key}_harv"] = 1
-            results[f"{key}_pmax"] = 0.0
-            results[f"{key}_tag"] = ""
+            results[f"R{r+1}_S{c}"] = identity
+            results[f"R{r+1}_S{c}_tag"] = ""
         return results
 
-    # 2. ORE RESTRICTION FILTERING
+    # 2. CONFIG FILTERING
     allowed = [t for t, (s, e) in cfg.ORE_RESTRICTIONS.items() if s <= f_id <= e]
     dna_row = dna_map[dna_map['floor_id'] == f_id].iloc[0]
-    f_range = range(start_f, int(floor_data['end_frame']) + 1)
+    f_range = range(int(floor_data['true_start_frame']), int(floor_data['end_frame']) + 1)
     
     for r_idx in range(4):
         for col in range(6):
             key = f"R{r_idx+1}_S{col}"
             if str(dna_row[key]) == '0':
-                results[key], results[f"{key}_score"], results[f"{key}_harv"], results[f"{key}_pmax"], results[f"{key}_tag"] = "empty", 0.0, 0, 0.0, ""
+                results[key], results[f"{key}_tag"] = "empty", ""
             else:
                 tier, score, harv, pmax, tag = identify_consensus(f_range, r_idx, col, buffer_dir, all_files, allowed, res)
                 results[key], results[f"{key}_score"], results[f"{key}_harv"], results[f"{key}_pmax"], results[f"{key}_tag"] = tier, score, harv, pmax, tag
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.0 ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.1 (Discriminatory) ---")
     
-    # Missing File Guard with Feedback
-    if not os.path.exists(BOUNDARIES_CSV):
-        print(f"Error: {BOUNDARIES_CSV} not found. Run Step 3 first.")
-        return
-    if not os.path.exists(DNA_INVENTORY_CSV):
-        print(f"Error: {DNA_INVENTORY_CSV} not found. Run Step 4.1 first.")
+    if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):
+        print(f"Error: Required CSV files missing.")
         return
 
     df_floors, df_dna = pd.read_csv(BOUNDARIES_CSV), pd.read_csv(DNA_INVENTORY_CSV)
@@ -192,10 +218,9 @@ def run_tier_identification():
             result = future.result()
             inventory.append(result)
             f_id = result['floor_id']
-            # Diagnostic tally
-            promoted = sum(1 for k, v in result.items() if k.endswith('_tag') and v == '[P]')
-            likely = sum(1 for k, v in result.items() if k.endswith('_tag') and v == '[L]')
-            print(f"  Floor {f_id:03d} processed. [Promoted: {promoted}, LikelyEmpty: {likely}] ({i+1}/{len(df_floors)})")
+            corrected = sum(1 for k, v in result.items() if v == '[C]')
+            likely = sum(1 for k, v in result.items() if v == '[L]')
+            print(f"  Floor {f_id:03d} processed. [Corr: {corrected}, LikelyEmpty: {likely}] ({i+1}/{len(df_floors)})")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id')
     final_df.to_csv(OUT_CSV, index=False)
@@ -211,11 +236,11 @@ def run_tier_identification():
                 if tier == "empty": continue
                 color = (0, 255, 0) if tier not in ["low_conf", "likely_empty"] else (0, 255, 255) if tier == "likely_empty" else (0, 0, 255)
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-                # Draw identification and forensic tag
+                # Text labels with forensic markers
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"[DONE] Final Inventory: {OUT_CSV}")
+    print(f"[DONE] Audit complete. Check {VERIFY_DIR}")
 
 if __name__ == "__main__":
     run_tier_identification()
