@@ -1,7 +1,7 @@
 # step4_1_dna_profiler.py
 # Purpose: Master Plan Step 4.1 - Establish 100% accurate 24-slot DNA Occupancy
-#          using Temporal Sliding-Window Scanning and Physical ROI Slicing.
-# Version: 1.0 (Standalone Occupancy Sensor)
+#          using Pure Background Temporal Scanning and Physical ROI Slicing.
+# Version: 1.2 (The Pure Background Profiler)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -15,15 +15,19 @@ OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_inventory.csv")
 DIAG_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_score_analysis.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_proofs")
 
+# DIAGNOSTIC CONTROL
+LIMIT_FLOORS = 20  
+
 # GRID CONSTANTS
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 
-# THRESHOLDS (CCOEFF_NORMED)
+# THRESHOLDS
 EMPTY_THRESHOLD = 0.80 
 MAX_DNA_WINDOW = 150 
 
 def load_bg_templates():
+    """Loads background and negative UI templates only. Player is excluded."""
     templates = []
     t_path = cfg.TEMPLATE_DIR
     for i in range(10):
@@ -58,6 +62,8 @@ def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls):
         
         if peak_bg_score >= 0.95: break
 
+    # Logic: If it doesn't match background, it's Occupied (1). 
+    # This includes cases where the player is blocking the slot.
     bit = '0' if peak_bg_score >= EMPTY_THRESHOLD else '1'
     return bit, round(float(peak_bg_score), 4)
 
@@ -87,12 +93,13 @@ def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
 def run_dna_profiling():
     if not os.path.exists(BOUNDARIES_CSV): return
     df_floors = pd.read_csv(BOUNDARIES_CSV)
+    if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
     buffer_dir = cfg.get_buffer_path(0)
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     bg_tpls = load_bg_templates()
     
-    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING ---")
+    print(f"--- STEP 4.1: DNA PROFILING v1.2 (Pure Background) ---")
     worker = partial(process_floor_dna, buffer_dir=buffer_dir, all_files=all_files, bg_tpls=bg_tpls)
     with concurrent.futures.ProcessPoolExecutor() as executor:
         inventory = list(executor.map(worker, [r for _, r in df_floors.iterrows()]))
