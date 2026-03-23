@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
 # Purpose: Master Plan Step 4.2 - Identify ore tiers using the Forensic Trinity:
-#          Triple-Sensor Fusion, Structural Band-Pass Filtering, and Side-Slice Fallbacks.
-# Version: 3.4 (The Structural Hybrid Engine)
+#          Triple-Sensor Fusion, Context-Aware Forensics, and Structural Filtering.
+# Version: 3.5 (The Context-Aware Auditor)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -26,16 +26,17 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs"
 # DIAGNOSTIC CONTROL
 LIMIT_FLOORS = 20  # Set to None for production
 
-# --- 2. DATA-DRIVEN CONSTANTS (Optimized) ---
-SIDE_SLICE_WIDTH = 12        # Balanced for precision
-SIDE_SLICE_STD_MAX = 11.0    # Strict background floor
-Z_TRUST_THRESHOLD = 1.5      # Softened for noisy buffer
-MIN_MOMENTUM_GATE = 3.5      # Softened for decisive calls
-COMPLEXITY_DIRT_CEILING = 450.0
-COMPLEXITY_HIGH_FLOOR = 750.0
+# --- 2. DATA-DRIVEN CONSTANTS (Calibrated) ---
+SIDE_SLICE_WIDTH = 12        
+SIDE_SLICE_STD_MAX = 11.0    
+Z_TRUST_THRESHOLD = 1.2      # Softened for high-noise buffer
+MIN_MOMENTUM_GATE = 2.5      # Lowered to recover quiet consensus
+PLAYER_PRESENCE_TRESHOLD = 0.45 # Trigger for likely_empty forensics
+COMPLEXITY_DIRT_CEILING = 480.0
+COMPLEXITY_HIGH_FLOOR = 720.0
 
-# Trinity Weights: Balanced for high-speed noise rejection
-W_TEX, W_GEO, W_GRA = 0.40, 0.30, 0.30
+# Trinity Weights: Favor Grayscale (Tex) for signal stability in noise
+W_TEX, W_GEO, W_GRA = 0.50, 0.25, 0.25
 HARVEST_COUNT = 15          
 
 def get_complexity(img):
@@ -81,14 +82,14 @@ def load_resources():
     return res
 
 def check_side_slice_empty(roi_gray):
-    """Forensic Fallback: Peeks at the side-slice for background presence."""
+    """Forensic Fallback: Peeks at side-slice for background smoothness."""
     slot_48 = roi_gray[4:52, 4:52]
     slice_roi = slot_48[:, 0:SIDE_SLICE_WIDTH]
     std_val = np.std(slice_roi)
     return std_val, std_val < SIDE_SLICE_STD_MAX
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """Consensus engine using Band-Pass complexity filtering."""
+    """Consensus engine with Context-Aware forensic fallback."""
     frame_candidates = []
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
@@ -96,7 +97,7 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     
     peak_p_score, best_roi_gray = 0.0, None
 
-    # 1. Harvest & Pre-Processing
+    # 1. Harvest frames
     for f_idx in f_range:
         img_bgr = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]))
         if img_bgr is None: continue
@@ -111,10 +112,10 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         if best_roi_gray is None or comp > get_complexity(best_roi_gray):
             best_roi_gray = roi_gray
             
-        if max_p < 0.75 and comp > 250:
+        if max_p < 0.75 and comp > 200:
             frame_candidates.append({'gray': roi_gray, 'comp': comp})
 
-    # 2. Consensus Identification
+    # 2. Identification Logic
     tier_z_momentum = defaultdict(float)
     max_z_seen = 0.0
     top_frames = sorted(frame_candidates, key=lambda x: x['comp'], reverse=True)[:HARVEST_COUNT]
@@ -126,7 +127,7 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         c_tex, c_geo, c_gra = roi_tex[13:43, 13:43], roi_geo[13:43, 13:43], roi_gra[13:43, 13:43]
         if is_banner: c_tex, c_geo, c_gra = c_tex[12:, :], c_geo[12:, :], c_gra[12:, :]
         
-        # STRUCTURAL BAND-PASS: Eliminate impossible candidates physically
+        # Band-Pass candidates
         valid_pool = allowed_tiers
         if roi_comp > COMPLEXITY_HIGH_FLOOR:
             valid_pool = [t for t in allowed_tiers if not any(k in t for k in ['dirt', 'com'])]
@@ -155,19 +156,19 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             mean_s, std_s = np.mean(scores), np.std(scores)
             winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
             z_score = (winner['score'] - mean_s) / max(0.01, std_s)
-            if z_score > 1.0:
+            if z_score > 0.8: # Minimal signal requirement
                 tier_z_momentum[winner['tier']] += z_score
                 max_z_seen = max(max_z_seen, z_score)
 
-    # 3. Resolution Hierarchy (Tier ID First)
+    # 3. Resolution Hierarchy
     if tier_z_momentum:
         winner_tier = max(tier_z_momentum, key=tier_z_momentum.get)
         if tier_z_momentum[winner_tier] >= MIN_MOMENTUM_GATE or max_z_seen >= Z_TRUST_THRESHOLD:
             tag = "[Z]" if max_z_seen >= Z_TRUST_THRESHOLD else "[M]"
             return winner_tier, round(max_z_seen, 2), int(tier_z_momentum[winner_tier]), peak_p_score, tag
 
-    # 4. Forensic Fallback (Only if ID failed)
-    if best_roi_gray is not None:
+    # 4. Forensic Fallback (ONLY if player presence was detected)
+    if peak_p_score > PLAYER_PRESENCE_TRESHOLD and best_roi_gray is not None:
         val, is_empty = check_side_slice_empty(best_roi_gray)
         if is_empty: return "likely_empty", round(val, 4), 0, peak_p_score, "[L]"
 
@@ -203,7 +204,7 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v3.4 (Structural Hybrid) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v3.5 (Context-Aware) ---")
     if not os.path.exists(DNA_INVENTORY_CSV): return
     df_floors, df_dna = pd.read_csv(BOUNDARIES_CSV), pd.read_csv(DNA_INVENTORY_CSV)
     if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
@@ -237,10 +238,10 @@ def run_tier_identification():
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
                 cv2.putText(img, f"{tier}{tag}", (cx+HUD_DX-25, cy+HUD_DY), 0, 0.4, color, 1)
-                # Multi-modal diagnostic OSD
+                
                 z_val = row.get(f"{key}_z", 0.0)
                 mom_val = row.get(f"{key}_mom", 0)
-                if not pd.isna(z_val) and not pd.isna(mom_val) and tier != "likely_empty":
+                if not pd.isna(z_val) and not pd.isna(mom_val) and tier not in ["likely_empty", "low_conf"]:
                     cv2.putText(img, f"Z:{z_val:.1f} M:{int(mom_val)}", (cx+HUD_DX-25, cy+HUD_DY+12), 0, 0.3, (255,255,255), 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
     print(f"[DONE] Final Inventory: {OUT_CSV}")
