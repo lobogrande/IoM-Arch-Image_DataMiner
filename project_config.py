@@ -40,10 +40,10 @@ BOSS_DATA = {
     34: {
         'tier': 'mixed', 
         'special': {
-            0: 'com2', 1: 'com2', 2: 'com2', 3: 'com2', 4: 'com2', 5: 'com2',
-            6: 'com2', 7: 'com2', 8: 'myth1', 9: 'myth1', 10: 'com2', 11: 'com2',
-            12: 'com2', 13: 'com2', 14: 'myth1', 15: 'myth1', 16: 'com2', 17: 'com2',
-            18: 'com2', 19: 'com2', 20: 'com2', 21: 'com2', 22: 'com2', 23: 'com2'
+            0: 'com3', 1: 'com3', 2: 'com3', 3: 'com3', 4: 'com3', 5: 'com3',
+            6: 'com3', 7: 'com3', 8: 'myth1', 9: 'myth1', 10: 'com3', 11: 'com3',
+            12: 'com3', 13: 'com3', 14: 'myth1', 15: 'myth1', 16: 'com3', 17: 'com3',
+            18: 'com3', 19: 'com3', 20: 'com3', 21: 'com3', 22: 'com3', 23: 'com3'
         }
     },
     35: {'tier': 'rare2'}, 41: {'tier': 'epic2'}, 44: {'tier': 'leg2'},
