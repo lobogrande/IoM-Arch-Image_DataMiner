@@ -1,6 +1,6 @@
 # audit_final_results.py
 # Purpose: Verify the logical and mathematical integrity of the 110-floor dataset.
-# Version: 1.1 (Path-Aware & Strictly Validated)
+# Version: 1.2 (Corrected Forensic Whitelist)
 
 import pandas as pd
 import sys, os
@@ -13,7 +13,6 @@ def run_integrity_audit():
     
     if not os.path.exists(csv_path):
         print(f"!!! ERROR: Could not find inventory at {csv_path}")
-        print("Ensure you have run step4_2_tier_identifier.py successfully first.")
         return
 
     df = pd.read_csv(csv_path)
@@ -26,7 +25,6 @@ def run_integrity_audit():
         f_id = int(row['floor_id'])
         
         # 1. Violation Check: ORE_RESTRICTIONS
-        # Ensure no tier appears on a floor where it is forbidden by the config
         for r in range(1, 5):
             for s in range(6):
                 slot_key = f"R{r}_S{s}"
@@ -38,15 +36,14 @@ def run_integrity_audit():
                     errors.append(f"Floor {f_id}: {tier} found in {slot_key} (FORBIDDEN by biome restrictions)")
 
         # 2. Forensic Check: The "Cyan/Yellow" Rule
-        # Only three specific spots are permitted to have forensic tags per user requirements
         for r in range(1, 5):
             for s in range(6):
                 tag_col = f"R{r}_S{s}_tag"
                 if tag_col in row:
                     tag = str(row[tag_col])
                     if tag in ["[L]", "[U]"]:
-                        # Rule: Only F2 (S1), F3 (S1), F7 (S0)
-                        valid_spots = [(2, "R1_S1"), (3, "R1_S1"), (7, "R1_S0")]
+                        # CORRECTED: F2 (S1), F3 (S3), F7 (S0)
+                        valid_spots = [(2, "R1_S1"), (3, "R1_S3"), (7, "R1_S0")]
                         if (f_id, f"R{r}_S{s}") not in valid_spots:
                             errors.append(f"Floor {f_id}: Unexpected Forensic call in {f'R{r}_S{s}'} (tag {tag})")
 
@@ -70,7 +67,6 @@ def run_integrity_audit():
         print(f"[FAILURE] Found {len(errors)} logical violations!")
         print("!"*40)
         for e in errors[:15]: print(f"  > {e}")
-        if len(errors) > 15: print(f"  ... and {len(errors)-15} more.")
 
 if __name__ == "__main__":
     run_integrity_audit()
