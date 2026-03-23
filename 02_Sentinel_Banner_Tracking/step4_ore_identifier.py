@@ -1,7 +1,7 @@
 # step4_ore_identifier.py
 # Purpose: Master Plan Step 4.1 - Establish 100% accurate 24-slot DNA Occupancy
 #          using Temporal Window Scanning and Boss-Data Enforcement.
-# Version: 1.4 (The Temporal DNA Profiler)
+# Version: 1.4.1 (NameError Fix)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -97,10 +97,10 @@ def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
         return results
 
     # 2. TEMPORAL DNA SCAN
-    f_range = range(start_f, min(end_f + 1, start_f + MAX_SCAN_WINDOW))
+    # Fix: Corrected MAX_SCAN_WINDOW to MAX_DNA_WINDOW
+    f_range = range(start_f, min(end_f + 1, start_f + MAX_DNA_WINDOW))
     
     for r_idx in range(4):
-        dna_bits = []
         for col in range(6):
             bit, score = get_slot_occupancy(f_range, r_idx, col, buffer_dir, all_files, bg_tpls)
             results[f"R{r_idx+1}_S{col}"] = bit
