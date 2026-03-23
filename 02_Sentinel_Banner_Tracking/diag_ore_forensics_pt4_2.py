@@ -12,7 +12,16 @@ TARGET_SLOTS = [
     (24, 2, 5, "com2"),  # F24 R3_S5
     (24, 3, 2, "dirt3"), # F24 R4_S2
     (27, 1, 3, "com2"),  # F27 R2_S3
-    (45, 3, 2, "dirt3")  # F45 R4_S2 (Common pattern)
+    (37, 3, 3, "dirt3"),  # F37 R4_S3 (Common pattern)
+    (45, 3, 2, "dirt3"),  # F45 R4_S2 (Common pattern)
+    (52, 3, 3, "dirt3"),  # F52 R4_S3 (Common pattern)
+    (54, 3, 2, "dirt3"),  # F54 R4_S2 (Common pattern)
+    (59, 3, 2, "dirt3"),  # F59 R4_S2 (Common pattern)
+    (69, 3, 2, "dirt3"),  # F69 R4_S2 (Common pattern)
+    (70, 3, 2, "dirt3"),  # F70 R4_S2 (Common pattern)
+    (83, 3, 3, "dirt3"),  # F83 R4_S3 (Common pattern)
+    (88, 3, 3, "dirt3"),  # F88 R4_S3 (Common pattern)
+    (91, 3, 2, "dirt3")  # F91 R4_S2 (Common pattern)
 ]
 
 ORE0_X, ORE0_Y = 74, 261
