@@ -1,7 +1,7 @@
 # step4_ore_identifier.py
 # Purpose: Master Plan Step 4.1 - Establish 100% accurate 24-slot DNA Occupancy
-#          using Temporal Sliding-Window Scanning and Diagnostic Auditing.
-# Version: 1.6 (Production Release - All Floors)
+#          using Spatial Masking to bypass "Dig Stage" UI interference.
+# Version: 1.8 (The Region-Restricted Scalpel)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -16,16 +16,27 @@ DIAG_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_score_analysis.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_proofs")
 
 # DIAGNOSTIC CONTROL
-LIMIT_FLOORS = None  # Process all 110 floors for production
+LIMIT_FLOORS = None  
 
 # GRID CONSTANTS (Ore Centers)
 ORE0_X, ORE0_Y = 72, 255
 STEP = 59.0
 
 # THRESHOLDS
-# Logic: High match with background = Empty (0). 
-EMPTY_THRESHOLD = 0.75
-MAX_DNA_WINDOW = 150 # Max frames to scan per floor for occupancy
+EMPTY_THRESHOLD = 0.82 
+MAX_DNA_WINDOW = 150 
+
+def get_dna_masks():
+    """
+    Generates two 30x30 masks:
+    1. Standard: Full occupancy (all 1s)
+    2. Banner: Ignores top 10px where "Dig Stage" text appears (specifically for R1_S2/S3)
+    """
+    std = np.ones((30, 30), dtype=np.uint8) * 255
+    banner = np.ones((30, 30), dtype=np.uint8) * 255
+    # Mask out the top 10 pixels (the text zone)
+    banner[0:10, :] = 0
+    return std, banner
 
 def load_bg_templates():
     """Loads background and negative UI templates (48x48)."""
@@ -38,15 +49,19 @@ def load_bg_templates():
         if os.path.exists(p_ui): templates.append(cv2.imread(p_ui, 0))
     return [t for t in templates if t is not None]
 
-def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls):
+def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls, masks):
     """
     Scans a window of frames to determine if a slot is EMPTY.
-    Uses sliding-window matchTemplate for robustness against coordinate drift.
+    Uses masked sliding-window matching for UI-noise rejection.
     """
+    std_mask, banner_mask = masks
+    # Only use the banner-exclusion mask for Row 1, Slots 2 and 3
+    active_mask = banner_mask if (r_idx == 0 and col_idx in [2, 3]) else std_mask
+    
     y_center = int(ORE0_Y + (r_idx * STEP))
     x_center = int(ORE0_X + (col_idx * STEP))
     
-    # 30x30 tight ROI from the grid
+    # 30x30 tight ROI
     tw, th = 30, 30
     tx, ty = x_center - (tw // 2), y_center - (th // 2)
     
@@ -61,20 +76,20 @@ def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls):
 
         for tpl in bg_tpls:
             # ROI (30x30) slides across Template (48x48)
-            res = cv2.matchTemplate(tpl, roi, cv2.TM_CCOEFF_NORMED)
+            # Using TM_CCORR_NORMED because it supports the spatial mask parameter
+            res = cv2.matchTemplate(tpl, roi, cv2.TM_CCORR_NORMED, mask=active_mask)
             score = cv2.minMaxLoc(res)[1]
             if score > peak_bg_score:
                 peak_bg_score = score
         
-        # Optimization: If we found an undeniable background match, stop scanning this slot
-        if peak_bg_score >= 0.92:
+        # Performance Break: If we found an undeniable background match
+        if peak_bg_score >= 0.95:
             break
 
-    # 0 = Empty (High BG match), 1 = Occupied (Low BG match)
     bit = '0' if peak_bg_score >= EMPTY_THRESHOLD else '1'
     return bit, round(float(peak_bg_score), 4)
 
-def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
+def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls, masks):
     """Worker Function: Profiles 24-slot DNA for one floor."""
     f_id = int(floor_data['floor_id'])
     start_f, end_f = int(floor_data['true_start_frame']), int(floor_data['end_frame'])
@@ -95,12 +110,12 @@ def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
             results[f"{key}_score"] = 1.0 
         return results
 
-    # 2. TEMPORAL DNA SCAN
+    # 2. TEMPORAL DNA SCAN (NO DELAYS)
     f_range = range(start_f, min(end_f + 1, start_f + MAX_DNA_WINDOW))
     
     for r_idx in range(4):
         for col in range(6):
-            bit, score = get_slot_occupancy(f_range, r_idx, col, buffer_dir, all_files, bg_tpls)
+            bit, score = get_slot_occupancy(f_range, r_idx, col, buffer_dir, all_files, bg_tpls, masks)
             results[f"R{r_idx+1}_S{col}"] = bit
             results[f"R{r_idx+1}_S{col}_score"] = score
 
@@ -112,31 +127,28 @@ def run_ore_identification():
         return
 
     df_floors = pd.read_csv(BOUNDARIES_CSV)
-    
-    # Apply floor processing limit for faster diagnostic turnaround
     if LIMIT_FLOORS is not None:
         df_floors = df_floors.head(LIMIT_FLOORS)
-        print(f"DIAGNOSTIC MODE: Limiting scan to first {LIMIT_FLOORS} floors.")
 
     buffer_dir = cfg.get_buffer_path(0)
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
     
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     bg_tpls = load_bg_templates()
+    masks = get_dna_masks()
     
-    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.6 ---")
-    print(f"Scanning 24 slots per floor using Robust Sliding-Window detection...")
+    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.8 ---")
+    print(f"Scanning 24 slots with Restricted-Region Spatial Masking...")
 
     inventory = []
     
-    # Parallel execution
-    worker = partial(process_floor_dna, buffer_dir=buffer_dir, all_files=all_files, bg_tpls=bg_tpls)
+    worker = partial(process_floor_dna, buffer_dir=buffer_dir, all_files=all_files, bg_tpls=bg_tpls, masks=masks)
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row for _, row in df_floors.iterrows()}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             inventory.append(future.result())
             if i % 10 == 0:
-                print(f"  Processed {len(inventory)}/{len(df_floors)} floors...", end="\r")
+                print(f"  Processed {i}/{len(df_floors)} floors...", end="\r")
 
     # 3. ANALYSIS & SAVING
     df_results = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
@@ -148,7 +160,6 @@ def run_ore_identification():
     df_results[['floor_id'] + score_cols].to_csv(DIAG_CSV, index=False)
     
     print(f"\n\n[DONE] DNA Inventory saved to: {OUT_CSV}")
-    print(f"Diagnostic Scores saved to: {DIAG_CSV}")
 
     # SUCCESS SUMMARY
     all_scores = df_results[score_cols].values.flatten()
@@ -158,16 +169,16 @@ def run_ore_identification():
     print(f"\n--- DIAGNOSTIC SUMMARY ---")
     print(f"Total slots analyzed: {len(all_scores)}")
     if len(empty_scores) > 0:
-        print(f"Mean 'Empty' Match Score: {np.mean(empty_scores):.4f} (Target > 0.85)")
+        print(f"Mean 'Empty' Match Score: {np.mean(empty_scores):.4f}")
     if len(occ_scores) > 0:
-        print(f"Mean 'Occupied' Match Score: {np.mean(occ_scores):.4f} (Target < 0.50)")
+        print(f"Mean 'Occupied' Match Score: {np.mean(occ_scores):.4f}")
 
     # Visual Proof Generation
-    print("\nGenerating DNA visual proofs (Annotated Scores)...")
+    print("\nGenerating DNA visual proofs...")
+    priority_floors = [1, 5, 10, 25, 30, 50, 75, 99, 100]
     for _, row in df_results.iterrows():
         f_id = int(row['floor_id'])
-        # Show specific checkpoints for verification
-        if f_id % 10 != 0 and f_id not in [1, 5, 25, 50, 75, 99]: continue
+        if f_id % 10 != 0 and f_id not in priority_floors: continue
         
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -177,10 +188,7 @@ def run_ore_identification():
                 key = f"R{r_idx+1}_S{col}"
                 bit = row[key]
                 score = row[f"{key}_score"]
-                
-                cy = int(ORE0_Y + (r_idx * STEP))
-                cx = int(ORE0_X + (col * STEP))
-                
+                cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
                 color = (0, 255, 0) if bit == '0' else (0, 0, 255)
                 hx, hy = cx + 20, cy + 30
                 cv2.putText(img, f"{bit}", (hx-5, hy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 3)
