@@ -1,7 +1,6 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID using Spatial Masking 
-#          to ignore UI icons and text interference.
-# Version: 5.6 (Icon Masking & Tier-Family Bias)
+# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID with Lava-Rock Discrimination.
+# Version: 5.7 (Low-Tier Bias & Luminance Discrimination)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -30,10 +29,11 @@ MIN_VOTE_CONFIDENCE = 0.42
 STATE_COMPLEXITY_THRESHOLD = 500
 ROTATION_VARIANTS = [-3, 0, 3]
 
-# Penalties to prevent high-complexity "Rare/Epic" from bullying "Dirt/Com"
+# Refined Penalties: Keep Rare/Epic from bullying the rocks
 BULLY_PENALTIES = {
-    'rare1': 0.05, 'epic1': 0.06, 'leg1': 0.08,
-    'rare2': 0.04, 'epic2': 0.05, 'leg2': 0.07,
+    'rare1': 0.06, 'epic1': 0.07, 'leg1': 0.09,
+    'rare2': 0.05, 'epic2': 0.06, 'leg2': 0.08,
+    'com1': 0.02 # New: Slight penalty to help Dirt1 compete
 }
 
 def rotate_image(image, angle):
@@ -43,11 +43,8 @@ def rotate_image(image, angle):
     return cv2.warpAffine(image, rot_mat, (image.shape[1], image.shape[0]), flags=cv2.INTER_LINEAR)
 
 def get_spatial_mask(r_idx):
-    """Creates a 48x48 mask focusing on the ore heart and ignoring UI icons."""
     mask = np.zeros((SIDE_PX, SIDE_PX), dtype=np.uint8)
-    # 18px radius circle covers the core of the block
     cv2.circle(mask, (24, 24), 18, 255, -1)
-    # If in Row 1, aggressively cut the top 40% to kill "Dig Stage" text
     if r_idx == 0:
         mask[0:20, :] = 0
     return mask
@@ -110,20 +107,30 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         comp = cv2.Laplacian(roi, cv2.CV_64F).var()
         target_state = 'active' if comp > STATE_COMPLEXITY_THRESHOLD else 'shadow'
         
+        # Discriminator: Mean brightness of the masked core
+        roi_brightness = cv2.mean(roi, mask=mask)[0]
+        
         best_f_tier, best_f_score = None, 0
         for tier in allowed_tiers:
             if tier not in res[target_state]: continue
             
             penalty = BULLY_PENALTIES.get(tier, 0.0)
             
-            # --- TIER BIAS LOGIC ---
-            # If we are in Floor 18-28, com2 is the "Natural" tier. Give it a tiny 0.02 bump.
+            # --- SURGICAL ROCK DISCRIMINATION ---
             bias = 0.0
-            if f_id >= 18 and 'com2' in tier: bias = 0.02
-            if f_id < 12 and 'dirt1' in tier: bias = 0.02
+            if f_id <= 11:
+                if 'dirt1' in tier:
+                    # Favor Dirt1 if the floor is young or the ROI is bright
+                    bias += 0.03
+                    if roi_brightness > 85: bias += 0.02
+                elif 'com1' in tier:
+                    # Neutralize Com1 slightly to prevent accidental rock swaps
+                    bias -= 0.01
+
+            # Higher floor context
+            if f_id >= 18 and 'com2' in tier: bias += 0.03
 
             for tpl in res[target_state][tier]:
-                # Use the MASK to ignore XP Icons and Stage Text
                 score = cv2.minMaxLoc(cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED, mask=mask))[1]
                 total_score = score - penalty + bias
                 if total_score > best_f_score:
@@ -172,7 +179,7 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.6 (Icon & Text Masking) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.7 (Rock Discrimination) ---")
     df_dna = pd.read_csv(DNA_INVENTORY_CSV)
     df_homing = pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
