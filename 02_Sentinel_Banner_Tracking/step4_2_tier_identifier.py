@@ -1,6 +1,6 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - Production Run for all 110 floors.
-# Version: 5.8 (Production Clean - Full Run)
+# Purpose: Master Plan Step 4.2 - Production Run with Range Bounds and Visual Cleanup.
+# Version: 5.9 (Range-Bound Surgical consensus)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -22,7 +22,8 @@ OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
 # --- 2. PRODUCTION CONTROLS ---
-LIMIT_FLOORS = None      # PROCESS ALL 110 FLOORS
+START_FLOOR_BOUND = 1    # SET LOWER BOUND HERE
+END_FLOOR_BOUND = 110    # SET UPPER BOUND HERE
 MAX_SAMPLES = 40         
 MIN_VOTE_CONFIDENCE = 0.42 
 STATE_COMPLEXITY_THRESHOLD = 500
@@ -164,11 +165,13 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: PRODUCTION TIER IDENTIFICATION (v5.8) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION (v5.9) ---")
     df_dna, df_homing = pd.read_csv(DNA_INVENTORY_CSV), pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
     df_floors = pd.read_csv(BOUNDARIES_CSV)
-    if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
+    
+    # APPLY RANGE BOUNDS
+    df_floors = df_floors[(df_floors['floor_id'] >= START_FLOOR_BOUND) & (df_floors['floor_id'] <= END_FLOOR_BOUND)]
     
     buffer_dir, res = cfg.get_buffer_path(0), load_all_templates()
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
@@ -177,17 +180,22 @@ def run_tier_identification():
     worker = partial(process_floor_tier, dna_map=df_dna, homing_map=homing_map, buffer_dir=buffer_dir, all_files=all_files, res=res)
     inventory = []
     
+    total = len(df_floors)
+    print(f"Scanning range: Floor {START_FLOOR_BOUND} to {END_FLOOR_BOUND}...")
+
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+        count = 0
+        for future in concurrent.futures.as_completed(futures):
+            count += 1
             result = future.result()
             inventory.append(result)
-            print(f"  Processed Floor {result['floor_id']:03d} ({i+1}/{len(df_floors)})", end="\r")
+            print(f"  Processed ({count}/{total}) Floor {result['floor_id']:03d}", end="\r")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
     
-    print("\nGenerating Final Visual Audits...")
+    print("\nGenerating Range-Bound Visual Audits...")
     for _, row in final_df.iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -197,20 +205,20 @@ def run_tier_identification():
                 tier, tag = str(row[key]), str(row.get(f"{key}_tag", ""))
                 if tier == "empty": continue
                 
-                # Production Color Mapping
-                if tag == "[L]": color = (255, 255, 0)      # Cyan (Likely Empty)
-                elif tag == "[U]": color = (0, 255, 255)    # Yellow (Obstructed/Unknown)
-                elif tier == "low_conf": color = (0, 0, 255) # Red (Failed ID)
-                else: color = (0, 255, 0)                   # Green (Confirmed)
+                # Colors
+                if tag == "[L]": color = (255, 255, 0)      # Cyan
+                elif tag == "[U]": color = (0, 255, 255)    # Yellow
+                elif tier == "low_conf": color = (0, 0, 255) # Red
+                else: color = (0, 255, 0)                   # Green
                 
-                # Visual label without the [M] tag
-                clean_label = f"{tier}" if tag == "[M]" else f"{tier}{tag}"
+                # Cleanup Label: No [M] for consensus, No [B] for Bosses
+                clean_label = tier if tag in ["[M]", "[B]"] else f"{tier}{tag}"
                 
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
-        cv2.imwrite(os.path.join(VERIFY_DIR, f"final_audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"\n[COMPLETE] Master Inventory saved to {OUT_CSV}")
+        cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
+    print(f"\n[DONE] Range Inventory saved to {OUT_CSV}")
 
 if __name__ == "__main__":
     run_tier_identification()
