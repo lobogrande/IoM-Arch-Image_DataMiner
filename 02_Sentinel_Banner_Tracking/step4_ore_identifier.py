@@ -1,7 +1,7 @@
 # step4_ore_identifier.py
 # Purpose: Master Plan Step 4 - Identify all ores on every floor using 
-#          multi-frame pristine selection and DNA-masked scanning.
-# Version: 1.0 (The Pristine Scanner)
+#          independent per-slot scanning and start-frame anchoring.
+# Version: 1.1 (The Independent Slot Scalpel)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -23,8 +23,8 @@ SIDE_PX = int(AI_DIM * SCALE) # 57px
 HUD_DX, HUD_DY = 20, 30
 
 # SEARCH SETTINGS
-PRISTINE_WINDOW = 15 # Look at first 15 frames to find cleanest view
-MATCH_THRESHOLD = 0.45
+PRISTINE_WINDOW = 15 # Look at first 15 frames to find cleanest view for EACH slot
+MATCH_THRESHOLD = 0.55 # Raised threshold for "Pristine" plain templates
 
 def load_plain_templates():
     """Loads only ore templates with the '_plain_' modifier."""
@@ -84,7 +84,7 @@ def run_ore_identification():
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
     print(f"--- STEP 4: ORE IDENTIFICATION (110 Floors) ---")
-    print(f"Using {len(ore_tpls)} template tiers for identification...")
+    print(f"Using {len(ore_tpls)} template tiers for per-slot independent scanning...")
 
     inventory = []
 
@@ -96,81 +96,87 @@ def run_ore_identification():
         # Parse DNA into row-occupancy masks
         r4_dna, r3_dna = floor['dna_sig'].split('-')
         
-        # 1. FIND PRISTINE FRAME
-        # We check the first few frames to see which one gives us the best match scores.
-        # This bypasses frames where a banner might be scrolling through the grid.
-        best_overall_score = -1
-        pristine_idx = start_f
-        
+        # 1. PER-SLOT INDEPENDENT SCANNING
+        # Instead of one "pristine" frame, we find the best frame for every single slot.
+        # This bypasses different ores being blocked by different noise at different times.
+        floor_results = {'floor_id': floor_id, 'start_frame': start_f}
         search_limit = min(end_f, start_f + PRISTINE_WINDOW)
-        for f_idx in range(start_f, search_limit + 1):
-            img = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]), 0)
-            if img is None: continue
-            
-            current_total_score = 0
-            count = 0
-            # Sample Row 4 (usually cleanest) to determine frame quality
-            for col in range(6):
-                if r4_dna[col] == '1':
-                    roi = get_slot_roi(img, 3, col)
-                    if roi is not None:
-                        _, score = identify_ore(roi, ore_tpls)
-                        current_total_score += score
-                        count += 1
-            
-            avg_score = current_total_score / max(1, count)
-            if avg_score > best_overall_score:
-                best_overall_score = avg_score
-                pristine_idx = f_idx
         
-        # 2. PERFORM FINAL IDENTIFICATION ON PRISTINE FRAME
-        print(f"Floor {floor_id:03d}: Identifying on Frame {pristine_idx}...", end="\r")
-        img_pristine = cv2.imread(os.path.join(buffer_dir, all_files[pristine_idx]))
-        img_gray = cv2.cvtColor(img_pristine, cv2.COLOR_BGR2GRAY)
-        
-        floor_ores = {'floor_id': floor_id, 'pristine_frame': pristine_idx}
-        
-        # Process Row 3 (Slots 0-5) and Row 4 (Slots 6-11)
-        # Note: We represent the grid as a flat 12-slot array
+        print(f"Floor {floor_id:03d}: Forensic Scanning {start_f} -> {search_limit}...", end="\r")
+
         for r_idx, dna_str in [(2, r3_dna), (3, r4_dna)]:
             row_label = "R3" if r_idx == 2 else "R4"
             for col in range(6):
                 slot_key = f"{row_label}_S{col}"
+                
                 if dna_str[col] == '1':
-                    roi = get_slot_roi(img_gray, r_idx, col)
-                    tier, score = identify_ore(roi, ore_tpls)
+                    best_slot_score = -1
+                    best_slot_tier = "low_conf"
                     
-                    is_valid = score >= MATCH_THRESHOLD
-                    identity = tier if is_valid else "low_conf"
-                    floor_ores[slot_key] = identity
-                    floor_ores[f"{slot_key}_score"] = score
+                    # Scan the window specifically for THIS slot
+                    for f_idx in range(start_f, search_limit + 1):
+                        img_gray = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]), 0)
+                        if img_gray is None: continue
+                        
+                        roi = get_slot_roi(img_gray, r_idx, col)
+                        if roi is not None:
+                            tier, score = identify_ore(roi, ore_tpls)
+                            if score > best_slot_score:
+                                best_slot_score = score
+                                best_slot_tier = tier
                     
-                    # Diagnostic Drawing
-                    # AI Center
+                    # Lock in the best identity found across the window
+                    is_valid = best_slot_score >= MATCH_THRESHOLD
+                    floor_results[slot_key] = best_slot_tier if is_valid else "low_conf"
+                    floor_results[f"{slot_key}_score"] = best_slot_score
+                else:
+                    floor_results[slot_key] = "empty"
+                    floor_results[f"{slot_key}_score"] = 0.0
+
+        inventory.append(floor_results)
+        
+        # 2. VISUAL PROOF GENERATION (Always Anchored to Start Frame)
+        # Regardless of which frame the ore was found in, we draw on the start frame for audit.
+        img_anchor = cv2.imread(os.path.join(buffer_dir, all_files[start_f]))
+        if img_anchor is not None:
+            for r_idx, row_label in [(2, "R3"), (3, "R4")]:
+                for col in range(6):
+                    slot_key = f"{row_label}_S{col}"
+                    if floor_results[slot_key] == "empty": continue
+                    
+                    identity = floor_results[slot_key]
+                    score = floor_results[f"{slot_key}_score"]
+                    is_valid = identity != "low_conf"
+                    
+                    # Coordinates
                     ax = int(ORE0_X + (col * STEP))
                     ay = int(ORE0_Y + (r_idx * STEP))
-                    # HUD Drawing coords
                     hx, hy = ax + HUD_DX, ay + HUD_DY
                     
                     color = (0, 255, 0) if is_valid else (0, 0, 255)
-                    cv2.putText(img_pristine, identity, (hx-25, hy), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-                else:
-                    floor_ores[slot_key] = "empty"
-                    floor_ores[f"{slot_key}_score"] = 0.0
+                    # Text annotation with shadow for legibility
+                    cv2.putText(img_anchor, f"{identity}", (hx-25, hy), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 2)
+                    cv2.putText(img_anchor, f"{identity}", (hx-25, hy), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                    cv2.putText(img_anchor, f"{score:.2f}", (hx-25, hy+15), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,255), 1)
 
-        inventory.append(floor_ores)
-        
-        # Periodic visual export
-        if floor_id % 5 == 0:
-            out_name = f"ore_id_f{floor_id:03d}_frame_{pristine_idx}.jpg"
-            cv2.imwrite(os.path.join(VERIFY_DIR, out_name), img_pristine)
+            out_name = f"floor_{floor_id:03d}_start_frame_{start_f}.jpg"
+            cv2.imwrite(os.path.join(VERIFY_DIR, out_name), img_anchor)
 
-    # 3. SAVE RESULTS
+    # 3. SAVE RESULTS & SUCCESS DIAGNOSTIC
     out_df = pd.DataFrame(inventory)
     out_df.to_csv(OUT_CSV, index=False)
-    print(f"\n[DONE] Identified ores for {len(inventory)} floors.")
-    print(f"Inventory saved to: {OUT_CSV}")
-    print(f"Visual proofs saved to: {VERIFY_DIR}")
+    
+    # Audit logic: How many "low_conf" per floor?
+    low_conf_cols = [c for c in out_df.columns if not c.endswith("_score") and c not in ["floor_id", "start_frame"]]
+    out_df['low_conf_count'] = (out_df[low_conf_cols] == "low_conf").sum(axis=1)
+    
+    print(f"\n--- IDENTIFICATION SUMMARY ---")
+    print(f"Total Ores Identified: {(out_df[low_conf_cols] != 'low_conf').sum().sum() - (out_df[low_conf_cols] == 'empty').sum().sum()}")
+    print(f"Low Confidence Detections: {(out_df[low_conf_cols] == 'low_conf').sum().sum()}")
+    print(f"Floors requiring audit (3+ low_conf): {len(out_df[out_df['low_conf_count'] >= 3])}")
+    
+    print(f"\nInventory saved to: {OUT_CSV}")
+    print(f"Visual proofs (Anchored to Start Frames) saved to: {VERIFY_DIR}")
 
 if __name__ == "__main__":
     run_ore_identification()
