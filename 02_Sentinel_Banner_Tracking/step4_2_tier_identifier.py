@@ -1,7 +1,6 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID using Row-Aware 
-#          Overlap Discrimination and Homing-Locked Forensics.
-# Version: 5.3 (Row-Boundary Enforcement & Directional Logic)
+# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID using Validated Grid Anchor.
+# Version: 5.5 (Corrected Slot-Offset & Forensic Reporting)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -10,11 +9,10 @@ from collections import Counter, defaultdict
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
-# --- 1. GRID & HUD CONSTANTS ---
-ORE0_X, ORE0_Y = 72, 255
+# --- 1. VALIDATED PIXEL CONSTANTS ---
+ORE0_X, ORE0_Y = 74, 261  # Corrected Anchor (133 - 59)
 STEP = 59.0
-SCALE = 1.20
-SIDE_PX = int(48 * SCALE) # 57px
+SIDE_PX = 48 
 HUD_DX, HUD_DY = 20, 30
 
 BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "final_floor_boundaries.csv")
@@ -23,12 +21,12 @@ HOMING_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
-# Test Control
-LIMIT_FLOORS = 20        
+# Test Set Control
+LIMIT_FLOORS = 20 
 
 # Logic Constants
-MAX_SAMPLES = 60         
-MIN_SCORE_GATE = 0.40
+MAX_SAMPLES = 40         # Focused arrival window
+MIN_VOTE_CONFIDENCE = 0.45 
 STATE_COMPLEXITY_THRESHOLD = 500
 ROTATION_VARIANTS = [-3, 0, 3]
 
@@ -50,36 +48,26 @@ def load_all_templates():
         tier = f.split("_")[0]
         state = 'active' if '_act_' in f else 'shadow'
         if tier not in templates[state]: templates[state][tier] = []
-        img_scaled = cv2.resize(img_raw, (SIDE_PX, SIDE_PX), interpolation=cv2.INTER_AREA)
+        img_native = cv2.resize(img_raw, (SIDE_PX, SIDE_PX))
         for angle in ROTATION_VARIANTS:
-            templates[state][tier].append(rotate_image(img_scaled, angle))
+            templates[state][tier].append(rotate_image(img_native, angle))
     return templates
 
 def check_side_slice_forensics(roi_gray):
-    """Surgical 2px sliver check of the left edge to confirm background ground."""
-    left_slice = roi_gray[20:40, 1:3]
-    right_slice = roi_gray[20:40, 54:56]
+    """Surgical 2px edge check to differentiate empty ground from obscured ore."""
+    left_slice = roi_gray[15:40, 1:3]
+    right_slice = roi_gray[15:40, 45:47]
     best_std = min(np.std(left_slice), np.std(right_slice))
     return best_std, best_std < 11.5
 
 def get_overlap_slot(homing_id):
-    """
-    Directional Overlap Logic:
-    Facing Right (Default): Overlaps slot to the Left (N-1).
-    Facing Left (Slot 11): Overlaps slot to the Right (N+1).
-    """
+    """Calculates which slot the player is physically covering."""
     if homing_id is None or homing_id < 0: return -99
-    
     row = homing_id // 6
-    # Identify direction based on Step 1 configuration
-    is_facing_left = (homing_id == 11)
-    
-    overlap_candidate = (homing_id + 1) if is_facing_left else (homing_id - 1)
-    
-    # HARD GATE: The overlapped area MUST be in the same row and within the grid
+    # Left overlap if facing left (Slot 11), otherwise Right overlap
+    overlap_candidate = (homing_id + 1) if homing_id == 11 else (homing_id - 1)
     if overlap_candidate // 6 != row or not (0 <= overlap_candidate <= 23):
-        return -99 # Overlap falls off the grid/row
-        
+        return -99
     return overlap_candidate
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res, homing_map):
@@ -88,34 +76,28 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     slot_id = r_idx * 6 + col_idx
     is_text_zone = (r_idx == 0 and col_idx in [2, 3])
     
-    # 1. PERMANENT OCCLUSION GATING
-    total_frames = len(f_range)
-    # Filter frames where the player is PHYSICALLY OVERLAPPING this specific slot
-    frames_overlapping = [f for f in f_range if get_overlap_slot(homing_map.get(f)) == slot_id]
+    # Slice the sampling to the arrival window (earliest available frames)
+    sample_indices = f_range[:MAX_SAMPLES]
     
-    if len(frames_overlapping) == total_frames:
-        img = cv2.imread(os.path.join(buffer_dir, all_files[f_range[0]]), 0)
-        if img is not None:
-            roi = img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
-            val, is_empty = check_side_slice_forensics(roi)
-            if is_empty: return "likely_empty", round(val, 4), total_frames, "[L]"
-            else: return "obstructed", 0, total_frames, "[O]"
-
-    # 2. CLEAN VOTING PATH
-    # We sample indices where the player is NOT overlapping the slot
-    clean_indices = [f for f in f_range if get_overlap_slot(homing_map.get(f)) != slot_id]
-    if not clean_indices: clean_indices = f_range 
-    
-    if len(clean_indices) > MAX_SAMPLES:
-        step = len(clean_indices) // MAX_SAMPLES
-        clean_indices = clean_indices[::step][:MAX_SAMPLES]
-
     votes = defaultdict(float)
-    for f_idx in clean_indices:
+    frames_obstructed = 0
+    obstructed_sample_roi = None
+
+    for f_idx in sample_indices:
+        # Check if the player is physically on TOP of this slot
+        player_is_blocking = (get_overlap_slot(homing_map.get(f_idx)) == slot_id)
+        
         img = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]), 0)
         if img is None: continue
         roi = img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
-        
+        if roi.shape != (SIDE_PX, SIDE_PX): continue
+
+        if player_is_blocking:
+            frames_obstructed += 1
+            if obstructed_sample_roi is None: obstructed_sample_roi = roi.copy()
+            continue
+
+        # Complexity check for text/noise suppression
         calc_roi = roi[int(SIDE_PX*0.4):, :] if is_text_zone else roi
         comp = cv2.Laplacian(calc_roi, cv2.CV_64F).var()
         target_state = 'active' if comp > STATE_COMPLEXITY_THRESHOLD else 'shadow'
@@ -129,12 +111,19 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                     best_f_score = score
                     best_f_tier = tier
         
-        if best_f_tier and best_f_score > MIN_SCORE_GATE:
+        if best_f_tier and best_f_score > MIN_VOTE_CONFIDENCE:
             votes[best_f_tier] += best_f_score
 
+    # --- FORENSIC RESOLUTION (100% Occlusion Cases) ---
+    if frames_obstructed == len(sample_indices) and obstructed_sample_roi is not None:
+        val, is_empty = check_side_slice_forensics(obstructed_sample_roi)
+        if is_empty: return "likely_empty", round(val, 4), frames_obstructed, "[L]"
+        else: return "unknown_obstructed", 0, frames_obstructed, "[U]"
+
+    # --- CONSENSUS RESOLUTION ---
     if votes:
         winner = max(votes, key=votes.get)
-        return winner, round(votes[winner]/len(clean_indices), 4), len(clean_indices), "[M]"
+        return winner, round(votes[winner]/len(sample_indices), 4), len(sample_indices), "[M]"
 
     return "low_conf", 0, 0, ""
 
@@ -146,8 +135,7 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
             r, c = divmod(s_idx, 6)
-            identity = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
-            results[f"R{r+1}_S{c}"] = identity
+            results[f"R{r+1}_S{c}"] = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
             results[f"R{r+1}_S{c}_tag"] = "[B]"
         return results
 
@@ -166,7 +154,7 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.3 (Row-Boundary Enforcement) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.5 (Validated Offset) ---")
     df_dna = pd.read_csv(DNA_INVENTORY_CSV)
     df_homing = pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
@@ -189,11 +177,12 @@ def run_tier_identification():
             result = future.result()
             inventory.append(result)
             tags = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  ({count}/{total}) Floor {result['floor_id']:03d} | Cyan: {tags['[L]']} | Yellow: {tags['[O]']}")
+            print(f"  ({count}/{total}) Floor {result['floor_id']:03d} | Cyan: {tags['[L]']} | Yellow: {tags['[U]']}")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
     
+    # Generate Visual Proofs
     for _, row in final_df.iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -203,15 +192,15 @@ def run_tier_identification():
                 tier, tag = str(row[key]), str(row.get(f"{key}_tag", ""))
                 if tier == "empty": continue
                 
-                # Colors: BGR
+                # Colors: BGR Format
                 if tag == "[L]": color = (255, 255, 0)      # Cyan
-                elif tag == "[O]": color = (0, 255, 255)    # Yellow
+                elif tag == "[U]": color = (0, 255, 255)    # Yellow
                 elif tier == "low_conf": color = (0, 0, 255) # Red
-                else: color = (0, 255, 0)                   # Green
+                else: color = (0, 255, 0)                   # Green (Consensus)
                 
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
-                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
+                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.4, (0,0,0), 2)
+                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.4, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
     print(f"[DONE] Final Inventory: {OUT_CSV}")
 
