@@ -1,7 +1,7 @@
 # step4_ore_identifier.py
 # Purpose: Master Plan Step 4.1 - Establish 100% accurate 24-slot DNA Occupancy
 #          using Temporal Sliding-Window Scanning and Diagnostic Auditing.
-# Version: 1.5.1 (Floor Limiting & Robust Matching)
+# Version: 1.6 (Production Release - All Floors)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -16,7 +16,7 @@ DIAG_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_score_analysis.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_proofs")
 
 # DIAGNOSTIC CONTROL
-LIMIT_FLOORS = 20   # Set to None to process all 110 floors; use small numbers for fast testing
+LIMIT_FLOORS = None  # Process all 110 floors for production
 
 # GRID CONSTANTS (Ore Centers)
 ORE0_X, ORE0_Y = 72, 255
@@ -124,7 +124,7 @@ def run_ore_identification():
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     bg_tpls = load_bg_templates()
     
-    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.5.1 ---")
+    print(f"--- STEP 4.1: TEMPORAL DNA PROFILING v1.6 ---")
     print(f"Scanning 24 slots per floor using Robust Sliding-Window detection...")
 
     inventory = []
@@ -135,7 +135,7 @@ def run_ore_identification():
         futures = {executor.submit(worker, row): row for _, row in df_floors.iterrows()}
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             inventory.append(future.result())
-            if i % 5 == 0:
+            if i % 10 == 0:
                 print(f"  Processed {len(inventory)}/{len(df_floors)} floors...", end="\r")
 
     # 3. ANALYSIS & SAVING
@@ -166,8 +166,8 @@ def run_ore_identification():
     print("\nGenerating DNA visual proofs (Annotated Scores)...")
     for _, row in df_results.iterrows():
         f_id = int(row['floor_id'])
-        # Show every 10th floor, or specific checkpoints
-        if f_id % 10 != 0 and f_id not in [1, 5, LIMIT_FLOORS]: continue
+        # Show specific checkpoints for verification
+        if f_id % 10 != 0 and f_id not in [1, 5, 25, 50, 75, 99]: continue
         
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
