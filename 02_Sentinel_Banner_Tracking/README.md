@@ -1,72 +1,68 @@
-# Ore Floor Tracker: Step 1 (Sprite Homing)
+# Ore Data Collection Pipeline
 
-This module handles the spatial detection of mining events. It is designed to identify exactly when and where a player is mining in Row 1 (Slots 0–5) and Row 2 (Slot 11) to facilitate floor-start identification.
+This project converts raw video captures of mining gameplay into a structured 110-floor dataset of ore distributions. It uses a 4-step computer vision pipeline optimized for high-noise environments (Lava Biome).
 
-## 1. The Physics: The Consensus Grid
+## Pipeline Steps
 
-The system operates on a "Consensus Grid" derived from dual-coordinate calibration. It strictly decouples the **AI Match Point** (the top-left anchor used for calculation) from the **HUD Visual Center** (the torso/shadow point used for verification).
+### Step 0: Grid Calibration
+**Script:** `step0_calibrate_grid.py`
+Before running a new dataset, the AI must discover the physical resolution and grid alignment.
+* **Input:** `capture_buffer_X/frame_0.png`
+* **Action:** Brute-force sweeps scale (0.7–1.5) to find the "Geometric Truth."
+* **Output:** Validated `ORE0_X`, `ORE0_Y`, and `STEP` constants. Update these in `project_config.py` or the subsequent scripts.
+
+### Step 1: Sprite Homing
+**Script:** `step1_sprite_homing.py`
+Identifies exactly when and where the player is mining in the grid.
+* **Logic:** Uses the **Hybrid Staircase Sensor** (Max of Full-Body vs. Bottom-Half) to detect the player through UI text.
+* **Output:** `sprite_homing_run_X.csv`.
+
+### Step 2: DNA & Occupancy
+**Script:** `step2_dna_occupancy.py`
+Determines which of the 24 slots contain an object (Ore or Player) vs. empty ground.
+* **Logic:** Uses a "Valley Threshold" (0.75) against background templates to generate a 24-bit signature per frame.
+* **Output:** `dna_sensor_final.csv`.
+
+### Step 3: Floor Segmentation
+**Script:** `step3_floor_segmentation.py`
+Groups frames into distinct floors using Kinematic laws.
+* **Laws:** 
+    1. **Slot Reversal:** If player moves from right to left, the floor reset.
+    2. **DNA Immutability:** If Row 4 changes significantly, a new floor has arrived.
+* **Output:** `final_floor_boundaries.csv`.
+
+### Step 4: Identification Phase
+
+#### Step 4.1: Floor Occupancy
+**Script:** `step4_1_floor_occupancy.py`
+Determines which slots are occupied at the start of each floor.
+* **Input:** `final_floor_boundaries.csv` (Step 3)
+* **Action:** Scans a 150-frame window after floor arrival. Uses pure background matching to differentiate between static ground and "something" (Ore/Player).
+* **Output:** `floor_dna_inventory.csv` (A 24-slot 1/0 mask used as the filter for Step 4.2).
+
+#### Step 4.2: Tier Consensus
+**Script:** `step4_2_tier_consensus.py`
+The final forensic identification engine.
+* **Logic:** Applies the 1/0 mask from 4.1. Samples the first 40 frames and uses Temporal Consensus Voting + Homing Hard-Gates to identify tiers with 100% accuracy.
+
+### Step 5: Integrity Audit
+**Script:** `step5_integrity_audit.py`
+A mathematical check to ensure no "impossible" ores exist.
+* **Checks:** Validates results against `ORE_RESTRICTIONS` and verifies the 3 authorized forensic locations (F2, F3, F7).
+
+---
+
+## Technical Constants (Lava Biome Baseline)
 
 | Constant | Value | Description |
 | :--- | :--- | :--- |
-| **Origin (S0 AI)** | `(11, 225)` | The Top-Left pixel where the AI begins its Slot 0 match. |
-| **Grid Step** | `59.0px` | The precise horizontal and vertical distance between tile centers. |
-| **Stand Offset** | `41.0px` | Lateral distance from the Ore Center to the Player Stand position. |
-| **Stand Flip** | `82.0px` | The total shift required when the player faces Left (Slot 11) vs. Right (Slots 0-5). |
+| **Grid Origin** | `(74, 261)` | Validated center of Slot 0. |
+| **Grid Step** | `59.0px` | Distance between ores. |
+| **Complexity Gate**| `500` | Minimum Laplacian variance to distinguish Shadow from Active. |
+| **Signal Floor** | `0.30` | Minimum confidence required for a vote to count. |
 
-### Coordinate Translation
-
-To verify alignment visually, use the following translation:
-* $X_{HUD} = X_{AI} + 20$
-* $Y_{HUD} = Y_{AI} + 30$
-
----
-
-## 2. Core Logic: The Hybrid Staircase (v2.8)
-
-Standard template matching fails in high-activity zones due to "Dig Stage" banners and scrolling UI text. `sprite_sequencer.py` employs two specialized mechanisms to ensure 100% coverage of the "Happy Path":
-
-### A. Hybrid Redundancy Sensor
-For every slot, the AI runs two simultaneous checks and takes the **Maximum** confidence:
-1. **Full-Body Match**: Uses the entire $40 \times 60$ sprite. Offers high entropy but is vulnerable to UI text overlapping the player's head.
-2. **Bottom-Half Match**: Targets only the feet and ground shadow (bottom $30\text{px}$). Offers lower entropy but is immune to top-row UI interference.
-
-### B. The Staircase Thresholds
-Detection confidence naturally decays from left to right as background noise increases. We use a "Staircase" model to prevent false negatives on the right edge while maintaining strictness on the left:
-* **Slot 0**: `0.90` (Pristine)
-* **Slot 3**: `0.78` (Moderate Noise)
-* **Slot 5**: `0.72` (Maximum Sensitivity)
-* **Slot 11**: `0.82` (Clean Row 2)
-
----
-
-## 3. Re-Calibration Guide (New Datasets)
-
-If applying these scripts to a new capture buffer with different resolutions or UI scaling, follow this diagnostic pipeline:
-
-### Step A: Verify Coordinates
-**Script:** `sprite_consensus_verification.py`  
-Run this first. If the yellow HUD boxes do not perfectly "wrap" the player sprite in the output images, your `AI_S0_X/Y` origin or `STEP` constants require adjustment.
-
-### Step B: Audit Signal-to-Noise (SNR)
-**Script:** `sprite_right_side_pulse_audit.py`  
-If Slots 4 and 5 report zero hits, run this to visualize the "Pulses." It compares Full-Body vs. Bottom-Half scores to identify if UI text is suppressing the signal.
-
-### Step C: Tune Thresholds
-**Script:** `sprite_hybrid_sensitivity_audit.py`  
-Generates a mean confidence report for every slot. Use the `Bottom_Half_Avg` column to set the new floor for your Staircase Thresholds.
-
-### Step D: Negative Space Accounting
-**Script:** `sprite_negative_audit.py`  
-The final check. This analyzes every frame the sequencer *ignored*. It categorizes discards into Rows 1–4 to ensure no high-confidence mining events were left behind.
-
----
-
-## 4. File Manifest
-
-| File | Role |
-| :--- | :--- |
-| **`sprite_sequencer.py`** | **Production.** Generates the `sprite_homing_run_X.csv`. |
-| **`sprite_negative_audit.py`** | **Audit.** Validates exclusion logic and accounts for all buffer frames. |
-| **`sprite_staircase_threshold_proof.py`** | **Diagnostic.** Validates the per-slot threshold model. |
-| **`sprite_ultimate_audit.py`** | **Diagnostic.** Verifies Slot 11 Stand-Flip and row transitions. |
-| **`project_config.py`** | **Global.** Stores paths, directory structures, and environment settings. |
+## Dataset Migration (Repeatability)
+To process a new dataset (e.g., Run 1):
+1. Update `BUFFER_ID = 1` in `project_config.py`.
+2. Run **Step 0** to confirm the grid hasn't shifted more than 1-2 pixels.
+3. Execute **Steps 1 through 5** in sequence.
