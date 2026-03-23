@@ -1,6 +1,6 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID with Lava-Rock Discrimination.
-# Version: 5.7 (Low-Tier Bias & Luminance Discrimination)
+# Purpose: Master Plan Step 4.2 - Production Run for all 110 floors.
+# Version: 5.8 (Production Clean - Full Run)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -21,19 +21,17 @@ HOMING_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
-LIMIT_FLOORS = 20 
-
-# --- 2. LOGIC CONSTANTS ---
-MAX_SAMPLES = 40 
+# --- 2. PRODUCTION CONTROLS ---
+LIMIT_FLOORS = None      # PROCESS ALL 110 FLOORS
+MAX_SAMPLES = 40         
 MIN_VOTE_CONFIDENCE = 0.42 
 STATE_COMPLEXITY_THRESHOLD = 500
 ROTATION_VARIANTS = [-3, 0, 3]
 
-# Refined Penalties: Keep Rare/Epic from bullying the rocks
 BULLY_PENALTIES = {
     'rare1': 0.06, 'epic1': 0.07, 'leg1': 0.09,
     'rare2': 0.05, 'epic2': 0.06, 'leg2': 0.08,
-    'com1': 0.02 # New: Slight penalty to help Dirt1 compete
+    'com1': 0.02 
 }
 
 def rotate_image(image, angle):
@@ -45,8 +43,7 @@ def rotate_image(image, angle):
 def get_spatial_mask(r_idx):
     mask = np.zeros((SIDE_PX, SIDE_PX), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
-    if r_idx == 0:
-        mask[0:20, :] = 0
+    if r_idx == 0: mask[0:20, :] = 0
     return mask
 
 def load_all_templates():
@@ -93,7 +90,6 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
 
     for f_idx in sample_indices:
         player_is_blocking = (get_overlap_slot(homing_map.get(f_idx)) == slot_id)
-        
         img = cv2.imread(os.path.join(buffer_dir, all_files[f_idx]), 0)
         if img is None: continue
         roi = img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
@@ -106,36 +102,25 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
 
         comp = cv2.Laplacian(roi, cv2.CV_64F).var()
         target_state = 'active' if comp > STATE_COMPLEXITY_THRESHOLD else 'shadow'
-        
-        # Discriminator: Mean brightness of the masked core
         roi_brightness = cv2.mean(roi, mask=mask)[0]
         
         best_f_tier, best_f_score = None, 0
         for tier in allowed_tiers:
             if tier not in res[target_state]: continue
-            
             penalty = BULLY_PENALTIES.get(tier, 0.0)
-            
-            # --- SURGICAL ROCK DISCRIMINATION ---
             bias = 0.0
             if f_id <= 11:
                 if 'dirt1' in tier:
-                    # Favor Dirt1 if the floor is young or the ROI is bright
                     bias += 0.03
                     if roi_brightness > 85: bias += 0.02
-                elif 'com1' in tier:
-                    # Neutralize Com1 slightly to prevent accidental rock swaps
-                    bias -= 0.01
-
-            # Higher floor context
+                elif 'com1' in tier: bias -= 0.01
             if f_id >= 18 and 'com2' in tier: bias += 0.03
 
             for tpl in res[target_state][tier]:
                 score = cv2.minMaxLoc(cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED, mask=mask))[1]
                 total_score = score - penalty + bias
                 if total_score > best_f_score:
-                    best_f_score = total_score
-                    best_f_tier = tier
+                    best_f_score, best_f_tier = total_score, tier
         
         if best_f_tier and best_f_score > MIN_VOTE_CONFIDENCE:
             votes[best_f_tier] += best_f_score
@@ -179,9 +164,8 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.7 (Rock Discrimination) ---")
-    df_dna = pd.read_csv(DNA_INVENTORY_CSV)
-    df_homing = pd.read_csv(HOMING_CSV)
+    print(f"--- STEP 4.2: PRODUCTION TIER IDENTIFICATION (v5.8) ---")
+    df_dna, df_homing = pd.read_csv(DNA_INVENTORY_CSV), pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
     df_floors = pd.read_csv(BOUNDARIES_CSV)
     if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
@@ -193,20 +177,17 @@ def run_tier_identification():
     worker = partial(process_floor_tier, dna_map=df_dna, homing_map=homing_map, buffer_dir=buffer_dir, all_files=all_files, res=res)
     inventory = []
     
-    total = len(df_floors)
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
-        count = 0
-        for future in concurrent.futures.as_completed(futures):
-            count += 1
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
             result = future.result()
             inventory.append(result)
-            tags = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  ({count}/{total}) Floor {result['floor_id']:03d} | Consensus: {tags['[M]']} | Cyan: {tags['[L]']}")
+            print(f"  Processed Floor {result['floor_id']:03d} ({i+1}/{len(df_floors)})", end="\r")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
     
+    print("\nGenerating Final Visual Audits...")
     for _, row in final_df.iterrows():
         img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
@@ -215,15 +196,21 @@ def run_tier_identification():
                 key = f"R{r_idx+1}_S{col}"
                 tier, tag = str(row[key]), str(row.get(f"{key}_tag", ""))
                 if tier == "empty": continue
-                if tag == "[L]": color = (255, 255, 0)      # Cyan
-                elif tag == "[U]": color = (0, 255, 255)    # Yellow
-                elif tier == "low_conf": color = (0, 0, 255) # Red
-                else: color = (0, 255, 0)                   # Green
+                
+                # Production Color Mapping
+                if tag == "[L]": color = (255, 255, 0)      # Cyan (Likely Empty)
+                elif tag == "[U]": color = (0, 255, 255)    # Yellow (Obstructed/Unknown)
+                elif tier == "low_conf": color = (0, 0, 255) # Red (Failed ID)
+                else: color = (0, 255, 0)                   # Green (Confirmed)
+                
+                # Visual label without the [M] tag
+                clean_label = f"{tier}" if tag == "[M]" else f"{tier}{tag}"
+                
                 cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
-                cv2.putText(img, f"{tier}{tag}", (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
-        cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"[DONE] Final Inventory: {OUT_CSV}")
+                cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
+                cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
+        cv2.imwrite(os.path.join(VERIFY_DIR, f"final_audit_f{int(row['floor_id']):03d}.jpg"), img)
+    print(f"\n[COMPLETE] Master Inventory saved to {OUT_CSV}")
 
 if __name__ == "__main__":
     run_tier_identification()
