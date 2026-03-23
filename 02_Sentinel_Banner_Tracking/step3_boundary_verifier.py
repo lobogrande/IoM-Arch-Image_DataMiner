@@ -1,7 +1,7 @@
 # step3_boundary_verifier.py
 # Purpose: Master Plan Step 3 - Finalize floor boundaries by scanning backward 
 #          from Step 2 anchors to find the exact DNA shift frame.
-# Version: 1.5 (The Context-Aware Scalpel: Preventing Boss Leaks)
+# Version: 1.6 (The Identity-Locked Scalpel: Boss Protection & Collision Fix)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -13,8 +13,8 @@ OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "final_floor_boundaries.csv")
 REPORT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "boundary_integrity_report.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "boundary_verification")
 
-# TARGET TRUTH SET (For console highlighting and visual export)
-TRUTH_SET = [70, 71, 77, 78, 96, 98, 99]
+# TARGET TRUTH SET (The only floors that definitely need correction)
+TRUTH_SET = [70, 71, 77, 78, 96]
 
 # DNA SENSOR CONSTANTS
 ORE0_X, ORE0_Y = 72, 255
@@ -61,7 +61,7 @@ def run_boundary_verification():
     
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    print(f"--- STEP 3: BOUNDARY VERIFICATION v1.5 ---")
+    print(f"--- STEP 3: BOUNDARY VERIFICATION v1.6 ---")
     
     final_boundaries = []
     integrity_logs = []
@@ -74,50 +74,51 @@ def run_boundary_verification():
         target_r3 = str(row['r3_dna_stable']).zfill(6)
         target_dna = f"{target_r4}-{target_r3}"
         
-        # Determine scanning limit
-        limit_idx = 0
-        is_collision = False
+        # SMART BACKTRACKING LOGIC
+        limit_idx = anchor_idx # Default: No scan
+        skip_scan = False
+        
         if i > 0:
             prev_r4 = str(df.iloc[i-1]['r4_dna_stable']).zfill(6)
             prev_r3 = str(df.iloc[i-1]['r3_dna_stable']).zfill(6)
             prev_dna = f"{prev_r4}-{prev_r3}"
             
-            # BOSS COLLISION CIRCUIT BREAKER
-            # If DNA matches, we cannot scan back into the previous floor's anchor zone.
+            # Identity Lock: If signatures are identical (Boss Floors), do not backtrack.
             if target_dna == prev_dna:
-                is_collision = True
-                # Allow only a 15-frame backtrack to find the grid appearance
-                limit_idx = max(int(df.iloc[i-1]['start_frame']) + 20, anchor_idx - 15)
+                skip_scan = True
             else:
+                # Hard Wall: Limit scan to the previous floor's anchor frame + 1
+                # This prevents Floor 67 from leaking into Floor 66's mining period.
                 limit_idx = int(df.iloc[i-1]['start_frame']) + 1
             
         true_start = anchor_idx
         b_idx = anchor_idx - 1
         
-        while b_idx >= limit_idx:
-            if b_idx % 50 == 0 or floor_id in TRUTH_SET:
-                tag = " [BOSS COLLISION]" if is_collision else ""
-                print(f"Floor {floor_id:03d}{tag}: Scanning back {anchor_idx} -> {b_idx}...", end="\r")
-            
-            img = cv2.imread(os.path.join(buffer_dir, all_files[b_idx]), 0)
-            if img is None: break
-            
-            dna = get_frame_dna(img, bg_tpls)
-            
-            if dna == target_dna:
-                true_start = b_idx
-                b_idx -= 1
-            else:
-                found_reversion = False
-                for look_idx in range(b_idx - 1, max(limit_idx - 1, b_idx - TUNNEL_LIMIT), -1):
-                    chk_img = cv2.imread(os.path.join(buffer_dir, all_files[look_idx]), 0)
-                    if chk_img is None: break
-                    if get_frame_dna(chk_img, bg_tpls) == target_dna:
-                        found_reversion = True
-                        true_start = look_idx
-                        b_idx = look_idx - 1
-                        break
-                if not found_reversion: break
+        if not skip_scan:
+            while b_idx >= limit_idx:
+                if b_idx % 100 == 0 or floor_id in TRUTH_SET:
+                    print(f"Floor {floor_id:03d}: Scanning back {anchor_idx} -> {b_idx}...", end="\r")
+                
+                img = cv2.imread(os.path.join(buffer_dir, all_files[b_idx]), 0)
+                if img is None: break
+                
+                dna = get_frame_dna(img, bg_tpls)
+                
+                if dna == target_dna:
+                    true_start = b_idx
+                    b_idx -= 1
+                else:
+                    # Tunneling for fairies
+                    found_reversion = False
+                    for look_idx in range(b_idx - 1, max(limit_idx - 1, b_idx - TUNNEL_LIMIT), -1):
+                        chk_img = cv2.imread(os.path.join(buffer_dir, all_files[look_idx]), 0)
+                        if chk_img is None: break
+                        if get_frame_dna(chk_img, bg_tpls) == target_dna:
+                            found_reversion = True
+                            true_start = look_idx
+                            b_idx = look_idx - 1
+                            break
+                    if not found_reversion: break
         
         floor_data = {
             'floor_id': floor_id,
@@ -146,19 +147,26 @@ def run_boundary_verification():
     
     print(f"\n[DONE] Verified {len(final_boundaries)} floors. Results saved to {OUT_CSV}")
     
-    # VISUAL AUDIT: Generate images for critical floors
-    print("\nGenerating visual verification proofs...")
+    # VISUAL AUDIT & TRUTH SET SUMMARY
+    print("\n--- TRUTH SET AUDIT ---")
     log_df = pd.DataFrame(integrity_logs)
-    for idx, f in enumerate(final_boundaries):
-        # We output images for our manual truth set AND any floor that actually shifted significantly
+    for f_id in TRUTH_SET:
+        match = log_df[log_df['floor_id'] == f_id]
+        if not match.empty:
+            dist = int(match.iloc[0]['shift_dist'])
+            status = "FIXED" if dist > 0 else "ANCHOR ONLY"
+            print(f"Floor {f_id:03d}: Backtracked {dist} frames. [{status}]")
+
+    print("\nGenerating visual verification proofs for Truth Set & Shifts...")
+    for f in final_boundaries:
         dist = int(log_df[log_df['floor_id'] == f['floor_id']].iloc[0]['shift_dist'])
-        if f['floor_id'] in TRUTH_SET or dist > 5:
+        if f['floor_id'] in TRUTH_SET or dist > 0:
             img = cv2.imread(os.path.join(buffer_dir, all_files[f['true_start_frame']]))
             if img is not None:
                 h, w = img.shape[:2]
                 cv2.rectangle(img, (10, h-65), (700, h-10), (0,0,0), -1)
-                cv2.putText(img, f"FLOOR {f['floor_id']:03d} TRUE START | Frame: {f['true_start_frame']}", (20, h-40), 0, 0.6, (0,255,0), 2)
-                cv2.putText(img, f"Shifted: {dist} frames from anchor", (20, h-15), 0, 0.5, (255,255,255), 1)
+                cv2.putText(img, f"FLOOR {f['floor_id']:03d} START | Frame: {f['true_start_frame']}", (20, h-40), 0, 0.6, (0,255,0), 2)
+                cv2.putText(img, f"Backtracked: {dist} frames from mining anchor", (20, h-15), 0, 0.5, (255,255,255), 1)
                 cv2.imwrite(os.path.join(VERIFY_DIR, f"boundary_f{f['floor_id']:03d}_start.jpg"), img)
 
 if __name__ == "__main__":
