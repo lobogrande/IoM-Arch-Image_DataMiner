@@ -1,7 +1,6 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID using Strict Homing 
-#          Occlusion and Batch Voting.
-# Version: 5.1 (Strict Homing Occlusion & Discrimination)
+# Purpose: Master Plan Step 4.2 - High-Accuracy Ore ID using Zonal Overlap Logic.
+# Version: 5.2 (Surgical Overlap Discrimination)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -23,9 +22,8 @@ HOMING_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
-# --- 2. SURGICAL CONTROLS ---
 LIMIT_FLOORS = 20        
-MAX_SAMPLES = 60         # Sample up to 60 frames per floor for efficiency
+MAX_SAMPLES = 60         
 MIN_SCORE_GATE = 0.40
 STATE_COMPLEXITY_THRESHOLD = 500
 ROTATION_VARIANTS = [-3, 0, 3]
@@ -54,12 +52,27 @@ def load_all_templates():
     return templates
 
 def check_side_slice_forensics(roi_gray):
-    """Surgical 2px sliver check of the left edge to confirm background ground."""
-    # We check the area typically clear of the player torso/head
-    slice_roi = roi_gray[20:40, 1:3]
-    std_val = np.std(slice_roi)
-    # Background in Lava Biome is extremely uniform (STD < 11.0)
-    return std_val, std_val < 11.0
+    """Surgical check of absolute edge slivers (2px wide) to confirm background ground."""
+    left_slice = roi_gray[20:40, 1:3]
+    right_slice = roi_gray[20:40, 54:56]
+    best_std = min(np.std(left_slice), np.std(right_slice))
+    return best_std, best_std < 11.5
+
+def get_overlap_slot(homing_id):
+    """
+    Translates the Interaction Slot (where player stands) 
+    to the Overlap Slot (what player physically covers).
+    """
+    if homing_id is None: return -99
+    # Logic: Facing Right (Standard) -> Overlaps slot to the Left
+    # Interaction Slot 2 -> Overlap Slot 1
+    # Interaction Slot 1 -> Overlap Slot 0
+    # Interaction Slot 0 -> Overlaps outside grid (-1)
+    if 0 <= homing_id <= 23:
+        # Special case: Player is facing left at Slot 11 (Floor 13)
+        if homing_id == 11: return 12 # Overlaps outside grid to the right
+        return homing_id - 1
+    return -99
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res, homing_map):
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
@@ -67,26 +80,24 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     slot_id = r_idx * 6 + col_idx
     is_text_zone = (r_idx == 0 and col_idx in [2, 3])
     
-    # 1. TEMPORAL ANALYSIS
-    total_floor_frames = len(f_range)
-    frames_where_player_is_here = [f for f in f_range if homing_map.get(f) == slot_id]
-    occlusion_ratio = len(frames_where_player_is_here) / total_floor_frames
-
-    # 2. DECISION: Is this slot permanently occluded?
-    # Must be a grid slot (0-23) and player must not move for 100% of duration
-    if occlusion_ratio >= 1.0:
-        # Forensic Path
+    # 1. PERMANENT OCCLUSION CHECK
+    # We check if the player's position (homing) resulted in THIS slot being overlapped for 100% of frames
+    total_frames = len(f_range)
+    frames_overlapping_this_slot = [f for f in f_range if get_overlap_slot(homing_map.get(f)) == slot_id]
+    
+    if len(frames_overlapping_this_slot) == total_frames:
         img = cv2.imread(os.path.join(buffer_dir, all_files[f_range[0]]), 0)
         if img is not None:
             roi = img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
             val, is_empty = check_side_slice_forensics(roi)
-            if is_empty: return "likely_empty", round(val, 4), len(f_range), "[L]"
-            else: return "unknown_obstructed", 0, len(f_range), "[U]"
+            if is_empty: return "likely_empty", round(val, 4), total_frames, "[L]"
+            else: return "unknown_obstructed", 0, total_frames, "[U]"
+
+    # 2. IDENTIFICATION PATH
+    # Find frames where the player is NOT overlapping this slot
+    clean_indices = [f for f in f_range if get_overlap_slot(homing_map.get(f)) != slot_id]
+    if not clean_indices: clean_indices = f_range # Fallback if all frames are "dirty"
     
-    # 3. VOTING PATH: Use frames where the player is NOT on this slot
-    clean_indices = [f for f in f_range if homing_map.get(f) != slot_id]
-    
-    # Batch sample if duration is long
     if len(clean_indices) > MAX_SAMPLES:
         step = len(clean_indices) // MAX_SAMPLES
         clean_indices = clean_indices[::step][:MAX_SAMPLES]
@@ -127,8 +138,7 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
             r, c = divmod(s_idx, 6)
-            identity = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
-            results[f"R{r+1}_S{c}"] = identity
+            results[f"R{r+1}_S{c}"] = boss['special'][s_idx] if boss.get('tier') == 'mixed' else boss['tier']
             results[f"R{r+1}_S{c}_tag"] = "[B]"
         return results
 
@@ -147,13 +157,13 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.1 (Occlusion Discrimination) ---")
-    df_floors = pd.read_csv(BOUNDARIES_CSV)
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v5.2 (Zonal Overlap Logic) ---")
     df_dna = pd.read_csv(DNA_INVENTORY_CSV)
     df_homing = pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
-    
+    df_floors = pd.read_csv(BOUNDARIES_CSV)
     if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
+    
     buffer_dir, res = cfg.get_buffer_path(0), load_all_templates()
     all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
@@ -161,7 +171,6 @@ def run_tier_identification():
     worker = partial(process_floor_tier, dna_map=df_dna, homing_map=homing_map, buffer_dir=buffer_dir, all_files=all_files, res=res)
     inventory = []
     
-    total = len(df_floors)
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
         count = 0
@@ -170,7 +179,7 @@ def run_tier_identification():
             result = future.result()
             inventory.append(result)
             tags = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  ({count}/{total}) Floor {result['floor_id']:03d} | Cyan: {tags['[L]']} | Yellow: {tags['[U]']}")
+            print(f"  ({count}/{len(df_floors)}) Floor {result['floor_id']:03d} | Cyan: {tags['[L]']} | Yellow: {tags['[U]']}")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
