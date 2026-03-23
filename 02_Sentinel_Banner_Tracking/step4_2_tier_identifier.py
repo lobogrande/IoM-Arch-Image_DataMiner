@@ -1,7 +1,7 @@
 # step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - Identify ore tiers using Temporal Consensus,
-#          Structural Probability Fusion, and Config-Exclusive Boss Enforcement.
-# Version: 2.8 (The Structural Probability Engine)
+# Purpose: Master Plan Step 4.2 - Identify ore tiers using the Forensic Trinity:
+#          Triple-Sensor Fusion (Texture, Geometry, Grain) and Structural Affinity.
+# Version: 2.9 (The Forensic Trinity Engine)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -26,55 +26,81 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs"
 # DIAGNOSTIC CONTROL
 LIMIT_FLOORS = 20  # Set to None for production
 
-# MATHEMATICAL GATES
-MIN_FUSED_CONFIDENCE = 0.38  # Lowered gate because Fusion is more restrictive
-AFFINITY_SIGMA = 0.45        # Width of the complexity envelope (Lower = Stricter)
+# --- 2. TRINITY SENSOR CONSTANTS ---
+# Weights for Fusion: Texture (40%), Geometry (30%), Grain (30%)
+W_TEX, W_GEO, W_GRA = 0.40, 0.30, 0.30
+MIN_FUSED_CONFIDENCE = 0.35  # Trinity agreement is more restrictive
+AFFINITY_SIGMA = 0.40        # Stricter complexity envelope
 PLAYER_REJECTION_GATE = 0.75 
-SIDE_SLICE_WIDTH = 14        # Extreme left edge peek
-SIDE_SLICE_STD_MAX = 14.0    # Background smoothness floor
+SIDE_SLICE_WIDTH = 14        
+SIDE_SLICE_STD_MAX = 14.0    
 HARVEST_COUNT = 15          
-COMPLEXITY_GATE = 300        # Inclusive to catch low-detail Dirt1
+COMPLEXITY_GATE = 300        
 
 def get_complexity(img):
-    """Calculates Laplacian variance to measure structural energy."""
     if img is None or img.size == 0: return 0
     return cv2.Laplacian(img, cv2.CV_64F).var()
 
+def apply_clahe(img):
+    """Normalizes contrast to expose structural grain."""
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    return clahe.apply(img)
+
+def get_silhouette(img_gray):
+    """Produces binary geometry map for shape matching."""
+    blurred = cv2.GaussianBlur(img_gray, (5, 5), 0)
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Ensure ore (center) is white
+    if thresh[SIDE_PX//2, SIDE_PX//2] == 0: thresh = cv2.bitwise_not(thresh)
+    return thresh
+
+def get_gradient_map(img_gray):
+    """Produces Sobel-based edge magnitude map for grain matching."""
+    gx = cv2.Sobel(img_gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(img_gray, cv2.CV_32F, 0, 1, ksize=3)
+    mag = cv2.magnitude(gx, gy)
+    return cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
 def load_resources():
-    """Loads ore tiers and computes their 'Biological Signature' (Mean Complexity)."""
+    """Pre-calculates Trinity Blueprints (Texture/Geo/Grain) for all templates."""
     res = {'ores': {}, 'player': [], 'bg': []}
     t_path = cfg.TEMPLATE_DIR
+    print("Blueprinting Trinity Template Library...")
     
-    print("Profiling Template Structural Library...")
     for f in os.listdir(t_path):
         img = cv2.imread(os.path.join(t_path, f), 0)
         if img is None: continue
-        img_48 = cv2.resize(img, (48, 48))
+        img_scaled = cv2.resize(img, (SIDE_PX, SIDE_PX))
         
         if "_act_plain_" in f and not any(x in f for x in ["player", "background"]):
             tier = f.split("_")[0]
             if tier not in res['ores']: res['ores'][tier] = {'tpls': [], 'mean_comp': 0.0}
-            res['ores'][tier]['tpls'].append(img_48)
             
-        if "negative_player" in f: res['player'].append(img_48)
-        if "background_plain" in f: res['bg'].append(img_48)
+            # Create Trinity blueprints
+            img_tex = apply_clahe(img_scaled)
+            img_geo = get_silhouette(img_tex)
+            img_gra = get_gradient_map(img_tex)
+            
+            res['ores'][tier]['tpls'].append({
+                'tex': img_tex, 'geo': img_geo, 'gra': img_gra,
+                'comp': get_complexity(img_scaled)
+            })
+            
+        if "negative_player" in f: res['player'].append(img_scaled)
+        if "background_plain" in f: res['bg'].append(img_scaled)
 
-    # Compute expected complexity for every tier
     for tier in res['ores']:
-        comps = [get_complexity(t) for t in res['ores'][tier]['tpls']]
+        comps = [t['comp'] for t in res['ores'][tier]['tpls']]
         res['ores'][tier]['mean_comp'] = np.mean(comps)
         
     return res
 
 def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
-    """Forensic check: Peeks at the extreme left 14px for background presence."""
+    """Extreme-Edge Forensic check for background presence."""
     slot_48 = roi_gray[4:52, 4:52]
     if is_banner: slot_48 = slot_48[12:, :]
     slice_roi = slot_48[:, 0:SIDE_SLICE_WIDTH]
-    
-    if np.std(slice_roi) < SIDE_SLICE_STD_MAX:
-        return np.std(slice_roi), True
-        
+    if np.std(slice_roi) < SIDE_SLICE_STD_MAX: return np.std(slice_roi), True
     best_s = 0
     for tpl in bg_tpls:
         tpl_slice = tpl[:, 0:SIDE_SLICE_WIDTH]
@@ -84,12 +110,11 @@ def check_side_slice_empty(roi_gray, bg_tpls, is_banner):
     return best_s, best_s > 0.70
 
 def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_tiers, res):
-    """Weighted consensus engine driven by Structural Probability Fusion."""
+    """Weighted consensus engine driven by Triple-Sensor Fusion."""
     frame_candidates = []
     cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col_idx * STEP))
     y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2 
     is_banner = (r_idx == 0 and col_idx in [2, 3])
-    
     peak_p_score, last_roi_gray = 0.0, None
 
     for f_idx in f_range:
@@ -98,6 +123,7 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         roi_gray = cv2.cvtColor(img_bgr[y1:y1+SIDE_PX, x1:x1+SIDE_PX], cv2.COLOR_BGR2GRAY)
         if roi_gray.shape != (SIDE_PX, SIDE_PX): continue
         last_roi_gray = roi_gray
+        # Player Obstruction Check
         roi_30 = roi_gray[13:43, 13:43]
         max_p = max([cv2.minMaxLoc(cv2.matchTemplate(pt, roi_30, cv2.TM_CCOEFF_NORMED))[1] for pt in res['player']] + [0])
         peak_p_score = max(peak_p_score, max_p)
@@ -117,49 +143,55 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     top_frames = sorted(frame_candidates, key=lambda x: x['comp'], reverse=True)[:HARVEST_COUNT]
     
     for f in top_frames:
-        roi_30 = f['gray'][13:43, 13:43]
-        if is_banner: roi_30 = roi_30[12:, :]
+        roi_gray = f['gray']
         roi_comp = f['comp']
+        # Apply Trinity preprocessing
+        roi_tex = apply_clahe(roi_gray)
+        roi_geo = get_silhouette(roi_tex)
+        roi_gra = get_gradient_map(roi_tex)
+        
+        # Central Crop for matching
+        c_tex = roi_tex[13:43, 13:43]
+        c_geo = roi_geo[13:43, 13:43]
+        c_gra = roi_gra[13:43, 13:43]
+        if is_banner:
+            c_tex, c_geo, c_gra = c_tex[12:, :], c_geo[12:, :], c_gra[12:, :]
         
         frame_results = []
         for tier in allowed_tiers:
             if tier not in res['ores']: continue
-            
-            # 1. Spatial Correlation Score
-            spatial_score = max([cv2.minMaxLoc(cv2.matchTemplate(tpl, roi_30, cv2.TM_CCOEFF_NORMED))[1] for tpl in res['ores'][tier]['tpls']])
-            
-            # 2. Structural Affinity Probability (Gaussian on Log-Complexity)
-            # This formula defines 'How likely is this tier to have this ROI complexity?'
-            # If roi_comp and mean_comp are far apart, affinity collapses.
+            # Check complexity affinity first
             ratio = roi_comp / max(1.0, res['ores'][tier]['mean_comp'])
             affinity = np.exp(-0.5 * (np.log(ratio) / AFFINITY_SIGMA)**2)
+            if affinity < 0.1: continue # Early exit for physically impossible matches
             
-            # 3. Fused Probability (Spatial * Structural)
-            fused_score = spatial_score * affinity
-            frame_results.append({'tier': tier, 'score': fused_score, 'raw': spatial_score})
+            best_t_score = 0
+            for tpl in res['ores'][tier]['tpls']:
+                t_tex, t_geo, t_gra = tpl['tex'][13:43, 13:43], tpl['geo'][13:43, 13:43], tpl['gra'][13:43, 13:43]
+                if is_banner:
+                    t_tex, t_geo, t_gra = t_tex[12:, :], t_geo[12:, :], t_gra[12:, :]
+                
+                s_tex = cv2.minMaxLoc(cv2.matchTemplate(t_tex, c_tex, cv2.TM_CCOEFF_NORMED))[1]
+                s_geo = cv2.minMaxLoc(cv2.matchTemplate(t_geo, c_geo, cv2.TM_CCOEFF_NORMED))[1]
+                s_gra = cv2.minMaxLoc(cv2.matchTemplate(t_gra, c_gra, cv2.TM_CCOEFF_NORMED))[1]
+                
+                fused = (s_tex * W_TEX) + (s_geo * W_GEO) + (s_gra * W_GRA)
+                if fused > best_t_score: best_t_score = fused
+            
+            frame_results.append({'tier': tier, 'score': best_t_score * affinity})
 
         if not frame_results: continue
-        
-        # Outlier Validation: Winning tier must be statistically distinct in this frame
-        scores_arr = np.array([x['score'] for x in frame_results])
-        mean_s, std_s = np.mean(scores_arr), np.std(scores_arr)
-        
-        sorted_fs = sorted(frame_results, key=lambda x: x['score'], reverse=True)
-        winner = sorted_fs[0]
-        z_score = (winner['score'] - mean_s) / max(0.01, std_s)
-        
-        if z_score > 1.2: # Minimum uniqueness check
-            tier_momentum[winner['tier']] += z_score
-            if winner['score'] > best_overall_score: best_overall_score = winner['score']
+        winner = sorted(frame_results, key=lambda x: x['score'], reverse=True)[0]
+        # Statistical weighting
+        tier_momentum[winner['tier']] += winner['score']
+        if winner['score'] > best_overall_score: best_overall_score = winner['score']
 
     if not tier_momentum: return "low_conf", 0.0, 0, peak_p_score, ""
-    
     winner = max(tier_momentum, key=tier_momentum.get)
-    # Check if we hit hard confidence threshold
-    is_valid = best_overall_score >= MIN_FUSED_CONFIDENCE
+    is_valid = best_overall_score >= MIN_FUSED_CONFIDENCE or tier_momentum[winner] > 4.5
     
     if is_valid:
-        return winner, round(best_overall_score, 4), int(tier_momentum[winner]), peak_p_score, "[A]"
+        return winner, round(best_overall_score, 4), int(tier_momentum[winner]), peak_p_score, "[T]" # [T] Trinity
 
     if peak_p_score > PLAYER_REJECTION_GATE and last_roi_gray is not None:
         val, is_empty = check_side_slice_empty(last_roi_gray, res['bg'], is_banner)
@@ -171,7 +203,6 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     f_id = int(floor_data['floor_id'])
     results = {'floor_id': f_id, 'start_frame': int(floor_data['true_start_frame'])}
     
-    # PRIORITY 1: PROJECT CONFIG ENFORCEMENT
     if hasattr(cfg, 'BOSS_DATA') and f_id in cfg.BOSS_DATA:
         boss = cfg.BOSS_DATA[f_id]
         for s_idx in range(24):
@@ -196,7 +227,7 @@ def process_floor_tier(floor_data, dna_map, buffer_dir, all_files, res):
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.8 (Structural Probability) ---")
+    print(f"--- STEP 4.2: TIER IDENTIFICATION v2.9 (The Trinity Engine) ---")
     if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):
         print(f"Error: Missing Input Files.")
         return
@@ -218,7 +249,7 @@ def run_tier_identification():
             inventory.append(result)
             f_id = result['floor_id']
             tag_counts = Counter([v for k, v in result.items() if k.endswith('_tag')])
-            print(f"  Floor {f_id:03d} processed. [Affinity: {tag_counts['[A]']}, Likely: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
+            print(f"  Floor {f_id:03d} processed. [Trinity: {tag_counts['[T]']}, Likely: {tag_counts['[L]']}] ({i+1}/{len(df_floors)})")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id')
     final_df.to_csv(OUT_CSV, index=False)
