@@ -2,7 +2,7 @@
 
 Linear 8-step pipeline to convert raw video captures into validated 110-floor datasets.
 
-## 1. Technical Constants (Asc1 Baseline)
+## 1. Technical Constants (Asc1 Biome Baseline)
 
 | Constant | Value | Description |
 | :--- | :--- | :--- |
@@ -13,12 +13,26 @@ Linear 8-step pipeline to convert raw video captures into validated 110-floor da
 
 ---
 
-## 2. Pipeline Execution Order
+## 2. Understanding the Output Tags & Colors
+
+The identification engine (Step 6) generates visual proofs with specific tags to indicate *how* a slot was identified. 
+
+| Tag | Color | Meaning |
+| :--- | :--- | :--- |
+| `[M]` | **Green** | **Momentum/Majority Consensus.** Ore confirmed via temporal voting across clean frames. |
+| `[B]` | **Green** | **Boss Floor.** Identification bypassed AI vision and was pulled from `project_config.py` hardcoded layouts. |
+| `[L]` | **Cyan** | **Likely Empty.** Player obstructed the slot for 100% of the floor, but extreme-edge forensics confirmed the background ground texture. |
+| `[U]` | **Yellow** | **Unknown/Obstructed.** Player obstructed the slot for 100% of the floor, and edge forensics could not definitively prove the ground was empty. |
+| `low_conf` | **Red** | **Low Confidence.** The AI detected an object, but no template matched above the `Signal Floor` (0.30). |
+
+---
+
+## 3. Pipeline Execution Order
 
 ### Step 0: Grid Calibration
 **Script:** `step0_calibrate_grid.py`
 Run for every new dataset to find physical resolution and alignment.
-* **Tip:** If the script suggests **Y=320**, it found Row 2. Subtract 59 to reach the true **Y=261** baseline.
+* **Tip:** If the script suggests **Y=320**, it found Row 2 because Row 1 was obscured. Subtract 59 to reach the true **Y=261** baseline.
 
 ### Step 1: Sprite Homing
 **Script:** `step1_sprite_homing.py`
@@ -58,19 +72,23 @@ Run this if you suspect the Homing script is missing floors.
 
 #### 🔍 Step 6 Quality Control (Optional)
 **Script:** `step6_audit_profiler.py`
-Run this if the Tier Consensus script is misidentifying ores or failing to reach the confidence threshold.
-* **Action:** It extracts the raw mathematical fingerprints (Texture, Geometry, Grain, and Laplacian Complexity) of every occupied slot in the dataset's pristine arrival frames. 
-* **Interpretation:** By reviewing `trinity_sensor_profile_run_X.csv`, you can identify if ambient noise (like Lava Biome brightness) is skewing the complexity too high, or if specific ores require adjustments to the `BULLY_PENALTIES` in Step 6.
+Run this to extract the raw mathematical fingerprints (Texture, Geometry, Grain, and Laplacian Complexity) of every occupied slot to establish baselines.
+
+**Script:** `diag_ore_forensics.py` (or your renamed equivalent)
+Run this if specific slots are failing to identify correctly.
+* **Action:** Deep-dives into a specific `(Floor, Row, Col)` to output the exact leaderboard of template matches, ROI brightness, and complexity.
+* **Interpretation:** Use this to determine if `BULLY_PENALTIES` need tweaking or if floating UI icons are washing out the template match.
 
 ### Step 7: Integrity Audit
 **Script:** `step7_integrity_audit.py`
-* **Action:** Mathematical Quality Control. Validates final IDs against biome restrictions, limits forensic calls to user-approved spots, and outputs the Tier Distribution Summary.
+* **Action:** Mathematical Quality Control. Validates final IDs against biome restrictions, restricts forensic calls to a global 2% threshold, and outputs the Tier Distribution Summary.
 
 ---
 
-## 3. Dataset Migration (Repeatability)
+## 4. Dataset Migration (Repeatability)
 To process a new capture buffer (e.g., moving from Run 1 to Run 2):
 
 1. **Update Project Config:** Open `project_config.py` and change the default value in `get_buffer_path(buffer_id=2)`.
-2. **Step 0 Verify:** Run `step0_calibrate_grid.py`. Check the image in `Data_04_Calibration_Vault`. If the grid shifted (due to different window positions), update the `ORE0` constants in config.
-3. **Execute 1–7:** Run the scripts in sequence. Because paths are dynamic, the scripts will automatically name their outputs (e.g., `sprite_homing_run_2.csv`) based on your config change.
+2. **Verify Biome Restrictions:** Ensure `cfg.ORE_RESTRICTIONS` and `cfg.BOSS_DATA` match the biome of the new dataset. *Failure to update this will result in perfect math outputting the wrong tiers!*
+3. **Step 0 Verify:** Run `step0_calibrate_grid.py`. Check the image in `Data_04_Calibration_Vault`. If the grid shifted (due to different window positions), update the `ORE0` constants in your scripts/config.
+4. **Execute 1–7:** Run the scripts in sequence. Because paths are dynamic, the scripts will automatically name their outputs (e.g., `sprite_homing_run_2.csv`) based on your config change.
