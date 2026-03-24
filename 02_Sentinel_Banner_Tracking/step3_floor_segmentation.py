@@ -1,7 +1,7 @@
 # step3_floor_segmentation.py
 # Purpose: Execute Master Plan Step 3 - Group frames into distinct floors using 
 #          Kinematic rules and Strict Row 4 Immutability.
-# Version: 7.2 (Dynamic Pathing & Slot-Bound R4 Micro-Despeckle)
+# Version: 3.3 (Dynamic Pathing & Slot-Bound R4 Micro-Despeckle)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -92,7 +92,7 @@ def run_temporal_chunking():
 
     # 2. FLOOR GROUPING (Kinematics & R4 Immutability)
     floors = []
-    curr_floor =[blocks[0]]
+    curr_floor = [blocks[0]]
     
     for b in blocks[1:]:
         prev_b = curr_floor[-1]
@@ -101,6 +101,8 @@ def run_temporal_chunking():
         reason = ""
         
         # LAW 1: Slot Reversal (Guaranteed Reset)
+        # Note: Frame 0 enters with slot -1. Because -1 < any real slot, 
+        # this logic will not trigger a false reset on the first actual homing event.
         if b['slot'] < prev_b['slot']:
             is_new_floor = True
             reason = f"Slot Reversal ({prev_b['slot']} -> {b['slot']})"
@@ -119,7 +121,7 @@ def run_temporal_chunking():
         if is_new_floor:
             b['transition_reason'] = reason
             floors.append(curr_floor)
-            curr_floor = [b]
+            curr_floor =[b]
         else:
             curr_floor.append(b)
             
@@ -128,27 +130,7 @@ def run_temporal_chunking():
 
     # 3. EXPORT & VISUAL PROOFS
     print(f"Exporting Step 3 candidates to: {os.path.basename(VERIFY_DIR)}")
-    # --- THE FRAME 0 INJECTION FIX ---
-    all_files = sorted([f for f in os.listdir(SOURCE_DIR) if f.endswith(('.png', '.jpg'))])
-
-    if floors[0][0]['start_frame'] > 0:
-        first_real_frame = floors[0][0]['start_frame']
-        print(f"[*] Notice: Initial hit at Frame {first_real_frame}. Injecting Frame 0 as Floor 1.")
-        
-        synthetic_block = {
-            'start_frame': 0,
-            'slot': -1, # Unknown Slot
-            'filename': all_files[0],
-            'r4_mode': '000000', 
-            'r3_mode': '000000',
-            'transition_reason': 'Initial Start (Frame 0)'
-        }
-        
-        # Modify the old Floor 1 reason
-        floors[0][0]['transition_reason'] = f"Late Homing Detection (Gap 0 -> {first_real_frame})"
-        # Prepend the synthetic block as a new floor
-        floors.insert(0, [synthetic_block])
-
+    
     # --- CANDIDATE GENERATION ---
     final_candidates =[]
     
@@ -162,7 +144,7 @@ def run_temporal_chunking():
             'slot_id': start_block['slot'],
             'r4_dna_stable': start_block['r4_mode'],
             'r3_dna_stable': start_block['r3_mode'],
-            'transition_reason': start_block.get('transition_reason', 'Initial Start')
+            'transition_reason': start_block.get('transition_reason', 'Initial Start (Frame 0)')
         }
         final_candidates.append(candidate)
         

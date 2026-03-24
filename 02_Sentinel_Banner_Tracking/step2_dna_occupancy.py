@@ -1,6 +1,6 @@
-# step2_dna_occupancy.py
+# step2_frame_dna.py
 # Purpose: Generate the final DNA occupancy map for all Step 1 frames.
-# Version: 2.0 (Dynamic Pathing & Validated Constants)
+# Version: 2.1 (Forced Frame 0 Baseline Injection)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -63,7 +63,25 @@ def run_final_dna_scan():
 
     templates = load_all_bg_templates()
     df = pd.read_csv(INPUT_CSV)
+    all_files = sorted([f for f in os.listdir(SOURCE_DIR) if f.endswith(('.png', '.jpg'))])
     
+    # --- FRAME 0 INJECTION ---
+    # Ensure Frame 0 is always the first data point for Step 3 baseline
+    if not df.empty and df['frame_idx'].iloc[0] != 0:
+        print("[*] Frame 0 missing from Homing data. Injecting into Step 2 scan queue.")
+        frame_0_df = pd.DataFrame([{
+            'frame_idx': 0,
+            'filename': all_files[0],
+            'slot_id': -1,  # -1 indicates un-homed start frame
+            'confidence': 1.0
+        }])
+        df = pd.concat([frame_0_df, df], ignore_index=True)
+    elif df.empty:
+        print("[*] Homing data empty. Injecting Frame 0 to establish baseline.")
+        df = pd.DataFrame([{
+            'frame_idx': 0, 'filename': all_files[0], 'slot_id': -1, 'confidence': 1.0
+        }])
+
     print(f"--- STEP 2: DNA OCCUPANCY SCAN (Target: Run {RUN_ID} | Frames: {len(df)}) ---")
     
     results =[]
@@ -74,7 +92,7 @@ def run_final_dna_scan():
         if img is None: continue
         
         r3_bits, r4_bits = [],[]
-        scores = []
+        scores =[]
         
         # Process Rows 3 and 4
         for r_idx in[2, 3]:
@@ -84,7 +102,6 @@ def run_final_dna_scan():
                 if r_idx == 2: r3_bits.append(bit)
                 else: r4_bits.append(bit)
                 
-                # Separation Check: Log if a score lands in the "valley"
                 if 0.50 < score < 0.70:
                     ambiguous_count += 1
 
@@ -105,18 +122,13 @@ def run_final_dna_scan():
         if idx % 1000 == 0:
             print(f"  Processed {idx}/{len(df)} frames...")
 
-    # Save final dataset
     final_df = pd.DataFrame(results)
     final_df.to_csv(OUT_CSV, index=False)
     
     print(f"\n--- SCAN COMPLETE ---")
     print(f"Saved: {os.path.basename(OUT_CSV)}")
-    print(f"Ambiguous Scores Detected: {ambiguous_count} (Lower is better)")
+    print(f"Ambiguous Scores Detected: {ambiguous_count}")
     print(f"Unique DNA Signatures: {len(final_df['dna_sig'].unique())}")
-    
-    # Show the "Signature Cliff" - How many frames share the same DNA?
-    print("\nTop 10 DNA Signatures by Frame Count:")
-    print(final_df['dna_sig'].value_counts().head(10))
 
 if __name__ == "__main__":
     run_final_dna_scan()
