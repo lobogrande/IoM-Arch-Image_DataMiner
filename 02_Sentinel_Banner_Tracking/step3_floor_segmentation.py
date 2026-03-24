@@ -1,6 +1,6 @@
 # step3_floor_segmentation.py
 # Purpose: Execute Master Plan Step 3 - Group frames into distinct floors.
-# Version: 3.8 (Gap-Forced Micro-Blocking)
+# Version: 3.9 (Dual-Layer Gap Logic for Teleports vs Walking)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -55,8 +55,7 @@ def run_temporal_chunking():
     df = df.groupby('slot_chunk', group_keys=False).apply(clean_r4)
     df = df.sort_values('frame_idx').reset_index(drop=True)
 
-    # --- THE BUG FIX: GAP-FORCED BLOCKING ---
-    # A block breaks if the slot changes, R4 DNA changes, OR the player vanishes for >= 15 frames.
+    # GAP-FORCED BLOCKING
     df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | 
                       (df['r4_clean'] != df['r4_clean'].shift(1)) |
                       (df['gap'] >= 15)).cumsum()
@@ -82,10 +81,9 @@ def run_temporal_chunking():
         
         # LAW 1: Slot Reversal (Guaranteed Reset)
         if b['slot'] < prev_b['slot']:
-            # Exception for false 11 -> 10 overlap positives
             if prev_b['slot'] == 11 and b['slot'] == 10:
                 if len(curr_floor) == 1:
-                    curr_floor = [b]
+                    curr_floor =[b]
                     continue 
             else:
                 is_new_floor = True
@@ -96,10 +94,19 @@ def run_temporal_chunking():
             is_new_floor = True
             reason = f"R4 DNA Shift ({prev_b['r4_mode']} -> {b['r4_mode']})"
             
-        # LAW 3: Off-Radar Spawn (Row 3/4)
-        elif b['gap_to_prev'] >= 15 and b['r3_mode'] != prev_b['r3_mode']:
-            is_new_floor = True
-            reason = f"Off-Radar Spawn (Gap {b['gap_to_prev']}f + R3 Shift)"
+        # LAW 3a: Same-Slot Teleport (Catches Floor 65 edge-case)
+        # Player vanished for transition, but reappeared on the exact same slot.
+        elif b['slot'] == prev_b['slot'] and b['gap_to_prev'] >= 15:
+            if b['r3_mode'] != prev_b['r3_mode']:
+                is_new_floor = True
+                reason = f"Same-Slot Teleport (Gap {b['gap_to_prev']}f + R3 Shift)"
+
+        # LAW 3b: Off-Radar Spawn (Catches long absences)
+        # Player went completely off-grid to mine Row 3/4.
+        elif b['gap_to_prev'] >= 60:
+            if b['r3_mode'] != prev_b['r3_mode']:
+                is_new_floor = True
+                reason = f"Off-Radar Spawn (Gap {b['gap_to_prev']}f + R3 Shift)"
 
         if is_new_floor:
             b['transition_reason'] = reason
