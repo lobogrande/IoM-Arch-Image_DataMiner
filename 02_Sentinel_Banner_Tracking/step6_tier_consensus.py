@@ -1,6 +1,6 @@
 # step6_tier_consensus.py
-# Purpose: Master Plan Step 6 - Production Run for all 110 floors.
-# Version: 6.5 (Architecture Aligned & Dynamic Pathing)
+# Purpose: Master Plan Step 6 - Production Run for all floors (Dynamic bounds).
+# Version: 6.6 (Dynamic Range Bounds & Pathing Fix)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -26,8 +26,9 @@ SIDE_PX = 48
 HUD_DX, HUD_DY = 20, 30
 
 # --- 2. PRODUCTION CONTROLS ---
-START_FLOOR_BOUND = 1    
-END_FLOOR_BOUND = 110    # Set to 110 for full data sweep
+# Set to None to process ALL floors in the dataset, or set integers for specific diagnostic ranges
+START_FLOOR_BOUND = None    
+END_FLOOR_BOUND = None      
 MAX_SAMPLES = 40         
 # Surgical Gate: Set to 0.30 based on forensics showing valid com2 signals at 0.33
 MIN_VOTE_CONFIDENCE = 0.30 
@@ -183,14 +184,19 @@ def run_tier_identification():
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
     df_floors = pd.read_csv(BOUNDARIES_CSV)
     
-    # RANGE BOUNDING: Floor 1 to 110
-    df_floors = df_floors[(df_floors['floor_id'] >= START_FLOOR_BOUND) & (df_floors['floor_id'] <= END_FLOOR_BOUND)]
+    # RANGE BOUNDING: Dynamic application
+    if START_FLOOR_BOUND is not None:
+        df_floors = df_floors[df_floors['floor_id'] >= START_FLOOR_BOUND]
+    if END_FLOOR_BOUND is not None:
+        df_floors = df_floors[df_floors['floor_id'] <= END_FLOOR_BOUND]
     
-    all_files = sorted([f for f in os.listdir(SOURCE_DIR) if f.endswith(('.png', '.jpg'))])
+    buffer_dir = SOURCE_DIR
     res = load_all_templates()
+    all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
+    
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    worker = partial(process_floor_tier, dna_map=df_dna, homing_map=homing_map, buffer_dir=SOURCE_DIR, all_files=all_files, res=res)
+    worker = partial(process_floor_tier, dna_map=df_dna, homing_map=homing_map, buffer_dir=buffer_dir, all_files=all_files, res=res)
     inventory =[]
     
     total = len(df_floors)
@@ -205,11 +211,16 @@ def run_tier_identification():
             print(f"  Processed ({count}/{total}) Floor {result['floor_id']:03d}", end="\r")
 
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
+    
+    # If processing a subset, warn the user. Otherwise, output to the main CSV.
+    if START_FLOOR_BOUND is not None or END_FLOOR_BOUND is not None:
+        print("\n[!] WARNING: Outputting a partial run. This will overwrite the main inventory CSV.")
+        
     final_df.to_csv(OUT_CSV, index=False)
     
     print("\nGenerating Production Proofs...")
     for _, row in final_df.iterrows():
-        img = cv2.imread(os.path.join(SOURCE_DIR, all_files[int(row['start_frame'])]))
+        img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
         if img is None: continue
         for r_idx in range(4):
             for col in range(6):
