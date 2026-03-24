@@ -10,22 +10,30 @@ DROP_TABLES_FILE = os.path.join(SCRIPT_DIR, "simulator_drop_tables.json")
 
 class OreSimulator:
     def __init__(self):
-        # Load spawn densities
+        # Load Gaussian spawn parameters
         try:
             self.spawn_df = pd.read_csv(SPAWN_RATES_FILE)
-            # Create a dictionary of {floor_id: chance_to_spawn}
-            self.spawn_rates = dict(zip(self.spawn_df.floor_id, self.spawn_df.chance_to_spawn))
+            if not self.spawn_df.empty:
+                self.spawn_df.set_index('floor_id', inplace=True)
+                self.spawn_stats = self.spawn_df.to_dict(orient='index')
+            else:
+                self.spawn_stats = {}
         except FileNotFoundError:
-            print("Error: Run generate_ore_statistics.py first to create spawn rates.")
-            self.spawn_rates = {}
+            print(f"Error: {SPAWN_RATES_FILE} not found. Run generate_ore_statistics.py first.")
+            self.spawn_stats = {}
+            self.spawn_df = pd.DataFrame()
 
         # Load Drop Tables (Epoch distributions)
         try:
             with open(DROP_TABLES_FILE, 'r') as f:
                 self.drop_tables = json.load(f)
         except FileNotFoundError:
-            print("Error: Run generate_ore_statistics.py first to create drop tables.")
+            print(f"Error: {DROP_TABLES_FILE} not found. Run generate_ore_statistics.py first.")
             self.drop_tables = {}
+
+        # Global fallbacks just in case a floor isn't in the dataset
+        self.global_mean = self.spawn_df['mean_ores'].mean() if not self.spawn_df.empty else 15.5
+        self.global_std = self.spawn_df['std_ores'].mean() if not self.spawn_df.empty else 2.5
 
     def get_epoch_key(self, floor_id):
         """Finds the correct epoch drop table string for the given floor."""
@@ -38,29 +46,57 @@ class OreSimulator:
         return None
 
     def populate_floor(self, floor_id):
-        """Simulates 24 slots of a floor using calculated probabilities."""
-        # 1. Determine density (default to a global average if floor not in dataset)
-        spawn_chance = self.spawn_rates.get(floor_id, 0.35) # example fallback: 35%
-        
-        # 2. Grab the appropriate probability table
+        """Simulates 24 slots of a floor using calculated probabilities and Gaussian counts."""
+        # 1. Get Gaussian parameters for this specific floor (or global fallback)
+        if floor_id in self.spawn_stats:
+            mu = self.spawn_stats[floor_id]['mean_ores']
+            sigma = self.spawn_stats[floor_id]['std_ores']
+            min_bound = self.spawn_stats[floor_id]['min_ores']
+            max_bound = self.spawn_stats[floor_id]['max_ores']
+        else:
+            mu, sigma = self.global_mean, self.global_std
+            min_bound, max_bound = 8, 24 # Safe fallback limits based on observed game bounds
+
+        # 2. Determine EXACTLY how many ores will spawn on this floor
+        if sigma == 0:
+            target_ores = int(mu) # Floor is perfectly static in size (e.g., only 1 run of data)
+        else:
+            # Pick a number from the bell curve, round to nearest integer
+            target_ores = round(random.gauss(mu, sigma))
+            
+            # Ensure the number respects the absolute boundaries seen in the game
+            target_ores = max(int(min_bound), min(int(max_bound), target_ores))
+
+        # Absolute grid boundary safety check
+        target_ores = max(0, min(24, target_ores))
+
+        # 3. Get the correct Drop Table
         epoch_key = self.get_epoch_key(floor_id)
         if not epoch_key:
             return ["empty"] * 24
 
-        drop_table = self.drop_tables[epoch_key]
+        drop_table = self.drop_tables.get(epoch_key, {})
+        if not drop_table:
+            return ["empty"] * 24
+
         ore_pool = list(drop_table.keys())
         ore_weights = list(drop_table.values())
 
-        # 3. Roll for 24 slots
-        grid =[]
-        for _ in range(24):
-            if random.random() < spawn_chance:
-                # Pick an ore based on its weighted probability
-                chosen_ore = random.choices(ore_pool, weights=ore_weights, k=1)[0]
-                grid.append(chosen_ore)
-            else:
-                grid.append('empty')
+        # 4. Generate the required number of random ores based on epoch weights
+        if target_ores > 0:
+            generated_ores = random.choices(ore_pool, weights=ore_weights, k=target_ores)
+        else:
+            generated_ores =[]
+
+        # 5. Distribute them randomly across the 24 slots
+        grid = ['empty'] * 24
         
+        # Pick 'target_ores' unique indices out of the 24 available slots
+        chosen_indices = random.sample(range(24), target_ores)
+        
+        for idx, ore in zip(chosen_indices, generated_ores):
+            grid[idx] = ore
+            
         return grid
 
 if __name__ == "__main__":

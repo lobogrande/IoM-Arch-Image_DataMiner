@@ -10,8 +10,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
 # --- CONFIGURATION ---
-# Assuming the raw CSV files are stored in Data_03 (Update this path if they are elsewhere)
-DATA_PATH = os.path.join("..", "Data_03_Surgical_Mining_Results", "floor_ore_inventory_run_*.csv")
+# Target the correct tracking archive folder based on project structure
+DATA_PATH = os.path.join("..", "Data_02_Tracking_Archive", "floor_ore_inventory_run_*.csv")
 OUTPUT_DIR = os.path.dirname(__file__)
 
 # Generate the 24 slot column names (R1_S0 to R4_S5)
@@ -46,7 +46,7 @@ def main():
     for file in file_list:
         df = pd.read_csv(file)
         # Verify columns exist, extract just floor_id and slots
-        available_cols = ['floor_id'] + [col for col in SLOT_COLS if col in df.columns]
+        available_cols = ['floor_id'] +[col for col in SLOT_COLS if col in df.columns]
         df = df[available_cols]
         all_data.append(df)
 
@@ -59,20 +59,31 @@ def main():
     # Fill NaNs in slot columns with 'empty'
     master_df[SLOT_COLS] = master_df[SLOT_COLS].fillna('empty')
 
-    # --- PROCESS SPAWN RATES ---
-    melted_df = master_df.melt(id_vars=['floor_id'], value_vars=SLOT_COLS, 
-                               var_name='slot', value_name='ore_id')
-    melted_df['is_filled'] = melted_df['ore_id'] != 'empty'
+    # --- PROCESS SPAWN RATES (GAUSSIAN MODEL) ---
+    print("Calculating Gaussian spawn models...")
+    # Calculate the total number of ores that spawned on every single row (floor run)
+    master_df['total_ores'] = master_df[SLOT_COLS].apply(lambda x: (x != 'empty').sum(), axis=1)
 
-    spawn_rates = melted_df.groupby('floor_id')['is_filled'].agg(['count', 'sum', 'mean']).reset_index()
-    spawn_rates.columns =['floor_id', 'total_slots_observed', 'total_ores_spawned', 'chance_to_spawn']
-    spawn_rates['avg_ores_per_floor'] = spawn_rates['chance_to_spawn'] * 24
+    # Group by floor to get the Mean and Standard Deviation of total ores
+    spawn_rates = master_df.groupby('floor_id')['total_ores'].agg(
+        mean_ores='mean',
+        std_ores='std',
+        min_ores='min',
+        max_ores='max'
+    ).reset_index()
+
+    # Fill NaN standard deviations (happens if a floor only has 1 run in the dataset) with 0
+    spawn_rates['std_ores'] = spawn_rates['std_ores'].fillna(0)
 
     spawn_csv_path = os.path.join(OUTPUT_DIR, "simulator_spawn_rates.csv")
     spawn_rates.to_csv(spawn_csv_path, index=False)
-    print(f"Saved spawn rates to {spawn_csv_path}")
+    print(f"Saved Gaussian spawn rates to {spawn_csv_path}")
 
     # --- PROCESS DROP TABLES PER EPOCH ---
+    print("Calculating drop tables per epoch...")
+    melted_df = master_df.melt(id_vars=['floor_id'], value_vars=SLOT_COLS, 
+                               var_name='slot', value_name='ore_id')
+    
     ores_only_df = melted_df[melted_df['ore_id'] != 'empty'].copy()
 
     def get_epoch_label(floor):
