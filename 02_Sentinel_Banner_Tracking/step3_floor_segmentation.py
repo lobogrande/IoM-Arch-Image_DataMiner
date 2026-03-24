@@ -128,6 +128,28 @@ def run_temporal_chunking():
 
     # 3. EXPORT & VISUAL PROOFS
     print(f"Exporting Step 3 candidates to: {os.path.basename(VERIFY_DIR)}")
+    # --- THE FRAME 0 INJECTION FIX ---
+    all_files = sorted([f for f in os.listdir(SOURCE_DIR) if f.endswith(('.png', '.jpg'))])
+
+    if floors[0][0]['start_frame'] > 0:
+        first_real_frame = floors[0][0]['start_frame']
+        print(f"[*] Notice: Initial hit at Frame {first_real_frame}. Injecting Frame 0 as Floor 1.")
+        
+        synthetic_block = {
+            'start_frame': 0,
+            'slot': -1, # Unknown Slot
+            'filename': all_files[0],
+            'r4_mode': '000000', 
+            'r3_mode': '000000',
+            'transition_reason': 'Initial Start (Frame 0)'
+        }
+        
+        # Modify the old Floor 1 reason
+        floors[0][0]['transition_reason'] = f"Late Homing Detection (Gap 0 -> {first_real_frame})"
+        # Prepend the synthetic block as a new floor
+        floors.insert(0, [synthetic_block])
+
+    # --- CANDIDATE GENERATION ---
     final_candidates =[]
     
     for idx, floor_blocks in enumerate(floors):
