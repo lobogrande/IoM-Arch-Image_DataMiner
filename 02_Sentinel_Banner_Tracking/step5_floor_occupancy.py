@@ -1,7 +1,7 @@
-# step4_1_floor_occupancy.py
-# Purpose: Master Plan Step 4.1 - Establish accurate 24-slot DNA Occupancy 
+# step5_floor_occupancy.py
+# Purpose: Master Plan Step 5 - Establish accurate 24-slot DNA Occupancy 
 #          per floor to act as a mask for tier identification.
-# Version: 1.3 (Standardized & Validated Constants)
+# Version: 2.0 (Architecture Aligned & Dynamic Pathing)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -9,18 +9,22 @@ from functools import partial
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
+# --- DYNAMIC CONFIGURATION ---
+SOURCE_DIR = cfg.get_buffer_path()
+RUN_ID = os.path.basename(SOURCE_DIR).split('_')[-1]
+
 # INPUT/OUTPUT
-BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "final_floor_boundaries.csv")
-OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_inventory.csv")
-DIAG_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_score_analysis.csv")
-VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_proofs")
+BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"final_floor_boundaries_run_{RUN_ID}.csv")
+OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_dna_inventory_run_{RUN_ID}.csv")
+DIAG_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"dna_score_analysis_run_{RUN_ID}.csv")
+VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_dna_proofs_run_{RUN_ID}")
 
 # --- VALIDATED CONSTANTS ---
 ORE0_X, ORE0_Y = 74, 261
 STEP = 59.0
 
 # DIAGNOSTIC CONTROL
-LIMIT_FLOORS = None  # Process all 110 floors
+LIMIT_FLOORS = None  # Process all floors
 
 # THRESHOLDS
 EMPTY_THRESHOLD = 0.80 
@@ -28,7 +32,7 @@ MAX_DNA_WINDOW = 150
 
 def load_bg_templates():
     """Loads background and negative UI templates only. Player is excluded."""
-    templates = []
+    templates =[]
     t_path = cfg.TEMPLATE_DIR
     for i in range(10):
         p_bg = os.path.join(t_path, f"background_plain_{i}.png")
@@ -95,20 +99,19 @@ def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
     return results
 
 def run_dna_profiling():
-    print(f"--- STEP 4.1: FLOOR OCCUPANCY PROFILING (v1.3) ---")
+    print(f"--- STEP 5: FLOOR OCCUPANCY PROFILING (Run {RUN_ID}) ---")
     if not os.path.exists(BOUNDARIES_CSV):
-        print(f"Error: {BOUNDARIES_CSV} not found. Run Step 3 first.")
+        print(f"Error: {os.path.basename(BOUNDARIES_CSV)} not found. Run Step 4 first.")
         return
 
     df_floors = pd.read_csv(BOUNDARIES_CSV)
     if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
     
-    buffer_dir = cfg.get_buffer_path(0)
-    all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
+    all_files = sorted([f for f in os.listdir(SOURCE_DIR) if f.endswith(('.png', '.jpg'))])
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     bg_tpls = load_bg_templates()
     
-    worker = partial(process_floor_dna, buffer_dir=buffer_dir, all_files=all_files, bg_tpls=bg_tpls)
+    worker = partial(process_floor_dna, buffer_dir=SOURCE_DIR, all_files=all_files, bg_tpls=bg_tpls)
     
     print(f"Sampling temporal window for {len(df_floors)} floors...")
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -117,14 +120,14 @@ def run_dna_profiling():
     df_results = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     
     # Column Organization
-    score_cols = [c for c in df_results.columns if '_score' in c]
-    bit_cols = [c for c in df_results.columns if c not in score_cols and c not in ['floor_id', 'start_frame']]
+    score_cols =[c for c in df_results.columns if '_score' in c]
+    bit_cols =[c for c in df_results.columns if c not in score_cols and c not in ['floor_id', 'start_frame']]
     
     # Save Data
     df_results[['floor_id', 'start_frame'] + bit_cols].to_csv(OUT_CSV, index=False)
     df_results[['floor_id'] + score_cols].to_csv(DIAG_CSV, index=False)
     
-    print(f"[DONE] Occupancy Mask saved to: {OUT_CSV}")
+    print(f"[DONE] Occupancy Mask saved to: {os.path.basename(OUT_CSV)}")
 
 if __name__ == "__main__":
     run_dna_profiling()
