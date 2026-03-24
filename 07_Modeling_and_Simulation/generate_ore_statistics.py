@@ -1,3 +1,10 @@
+# ==============================================================================
+# Script: generate_ore_statistics.py
+# Version: 1.1.0
+# Description: Ingests run data to calculate Gaussian spawn rates and epoch-based 
+#              ore drop probabilities. Excludes boss floors.
+# ==============================================================================
+
 import sys
 import os
 import glob

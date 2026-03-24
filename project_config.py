@@ -15,7 +15,7 @@ DATA_DIRS = {
 }
 
 # --- 3. PATH HELPERS ---
-def get_buffer_path(buffer_id=2):
+def get_buffer_path(buffer_id=4):
     """Returns absolute path to a specific capture buffer."""
     return os.path.join(DATA_DIRS["RAW"], f"capture_buffer_{buffer_id}")
 
@@ -75,4 +75,36 @@ BOSS_DATA = {
         18: "com3", 19: "rare3", 20: "epic3", 21: "leg3", 22: "myth3", 23: "div2"
       }
     }
+}
+
+# Base stats for every ore. 
+# hp = Health, xp = Base XP, a = Armor, ft = Fragment Type (e.g., 0-6), fa = Fragment Amount
+ORE_BASE_STATS = {
+    'dirt1': {'hp': 100, 'xp': 0.05, 'a': 0, 'ft': 0, 'fa': 0},
+    'dirt2': {'hp': 300, 'xp': 0.15, 'a': 0, 'ft': 0, 'fa': 0},
+    'dirt3': {'hp': 900, 'xp': 0.45, 'a': 0, 'ft': 0, 'fa': 0},
+    
+    'com1':  {'hp': 250, 'xp': 0.15, 'a': 5, 'ft': 1, 'fa': 0.01},
+    'com2':  {'hp': 750, 'xp': 0.45, 'a': 8, 'ft': 1, 'fa': 0.02},
+    'com3':  {'hp': 2250, 'xp': 1.35, 'a': 14, 'ft': 1, 'fa': 0.04},
+    
+    'rare1': {'hp': 550, 'xp': 0.35, 'a': 12, 'ft': 2, 'fa': 0.01},
+    'rare2': {'hp': 1650, 'xp': 1.05, 'a': 20, 'ft': 2, 'fa': 0.02},
+    'rare3': {'hp': 4950, 'xp': 3.15, 'a': 33, 'ft': 2, 'fa': 0.04},
+    
+    'epic1': {'hp': 1150, 'xp': 1, 'a': 25, 'ft': 3, 'fa': 0.01},
+    'epic2': {'hp': 3450, 'xp': 3, 'a': 41, 'ft': 3, 'fa': 0.02},
+    'epic3': {'hp': 10350, 'xp': 9, 'a': 68, 'ft': 3, 'fa': 0.04},
+    
+    'leg1':  {'hp': 1950, 'xp': 3.5, 'a': 50, 'ft': 4, 'fa': 0.01},
+    'leg2':  {'hp': 5850, 'xp': 10.5, 'a': 83, 'ft': 4, 'fa': 0.02},
+    'leg3':  {'hp': 17550, 'xp': 31.5, 'a': 136, 'ft': 4, 'fa': 0.04},
+    
+    'myth1': {'hp': 3500, 'xp': 7.5, 'a': 150, 'ft': 5, 'fa': 0.01},
+    'myth2': {'hp': 10500, 'xp': 22.5, 'a': 248, 'ft': 5, 'fa': 0.02},
+    'myth3': {'hp': 31500, 'xp': 67.5, 'a': 408, 'ft': 5, 'fa': 0.04},
+    
+    'div1':  {'hp': 25000, 'xp': 20, 'a': 300, 'ft': 6, 'fa': 0.01},
+    'div2':  {'hp': 75000, 'xp': 60, 'a': 495, 'ft': 6, 'fa': 0.02},
+    'div3':  {'hp': 225000, 'xp': 180, 'a': 817, 'ft': 6, 'fa': 0.04}
 }
