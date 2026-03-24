@@ -1,6 +1,6 @@
-# step4_2_tier_identifier.py
-# Purpose: Master Plan Step 4.2 - Production Run for all 110 floors.
-# Version: 6.4 (Full Run Production - Forensic Core)
+# step6_tier_consensus.py
+# Purpose: Master Plan Step 6 - Production Run for all 110 floors.
+# Version: 6.5 (Architecture Aligned & Dynamic Pathing)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -9,17 +9,21 @@ from collections import Counter, defaultdict
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
+# --- DYNAMIC CONFIGURATION ---
+SOURCE_DIR = cfg.get_buffer_path()
+RUN_ID = os.path.basename(SOURCE_DIR).split('_')[-1]
+
+BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"final_floor_boundaries_run_{RUN_ID}.csv")
+DNA_INVENTORY_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_dna_inventory_run_{RUN_ID}.csv")
+HOMING_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"sprite_homing_run_{RUN_ID}.csv")
+OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_ore_inventory_run_{RUN_ID}.csv")
+VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], f"ore_identification_proofs_run_{RUN_ID}")
+
 # --- 1. VALIDATED PIXEL CONSTANTS ---
 ORE0_X, ORE0_Y = 74, 261 
 STEP = 59.0
 SIDE_PX = 48 
 HUD_DX, HUD_DY = 20, 30
-
-BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "final_floor_boundaries.csv")
-DNA_INVENTORY_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_inventory.csv")
-HOMING_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
-OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_ore_inventory.csv")
-VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_identification_proofs")
 
 # --- 2. PRODUCTION CONTROLS ---
 START_FLOOR_BOUND = 1    
@@ -60,7 +64,7 @@ def load_all_templates():
         if img_raw is None: continue
         tier = f.split("_")[0]
         state = 'active' if '_act_' in f else 'shadow'
-        if tier not in templates[state]: templates[state][tier] = []
+        if tier not in templates[state]: templates[state][tier] =[]
         img_native = cv2.resize(img_raw, (SIDE_PX, SIDE_PX))
         for angle in ROTATION_VARIANTS:
             templates[state][tier].append(rotate_image(img_native, angle))
@@ -155,7 +159,7 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
             results[f"R{r+1}_S{c}_tag"] = "[B]"
         return results
 
-    allowed = [t for t, (s, e) in cfg.ORE_RESTRICTIONS.items() if s <= f_id <= e]
+    allowed =[t for t, (s, e) in cfg.ORE_RESTRICTIONS.items() if s <= f_id <= e]
     dna_row = dna_map[dna_map['floor_id'] == f_id].iloc[0]
     f_range = list(range(int(floor_data['true_start_frame']), int(floor_data['end_frame']) + 1))
     
@@ -170,7 +174,11 @@ def process_floor_tier(floor_data, dna_map, homing_map, buffer_dir, all_files, r
     return results
 
 def run_tier_identification():
-    print(f"--- STEP 4.2: TIER IDENTIFICATION v6.4 (Production Run) ---")
+    print(f"--- STEP 6: TIER CONSENSUS ENGINE (Run {RUN_ID}) ---")
+    if not os.path.exists(DNA_INVENTORY_CSV) or not os.path.exists(HOMING_CSV):
+        print(f"Error: Missing dependency CSVs for Run {RUN_ID}")
+        return
+
     df_dna, df_homing = pd.read_csv(DNA_INVENTORY_CSV), pd.read_csv(HOMING_CSV)
     homing_map = df_homing.set_index('frame_idx')['slot_id'].to_dict()
     df_floors = pd.read_csv(BOUNDARIES_CSV)
@@ -178,14 +186,15 @@ def run_tier_identification():
     # RANGE BOUNDING: Floor 1 to 110
     df_floors = df_floors[(df_floors['floor_id'] >= START_FLOOR_BOUND) & (df_floors['floor_id'] <= END_FLOOR_BOUND)]
     
-    buffer_dir, res = cfg.get_buffer_path(0), load_all_templates()
-    all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
+    all_files = sorted([f for f in os.listdir(SOURCE_DIR) if f.endswith(('.png', '.jpg'))])
+    res = load_all_templates()
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
-    worker = partial(process_floor_tier, dna_map=df_dna, homing_map=homing_map, buffer_dir=buffer_dir, all_files=all_files, res=res)
-    inventory = []
+    worker = partial(process_floor_tier, dna_map=df_dna, homing_map=homing_map, buffer_dir=SOURCE_DIR, all_files=all_files, res=res)
+    inventory =[]
     
     total = len(df_floors)
+    print(f"Executing parallel scan on {total} floors...")
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
         count = 0
@@ -198,9 +207,9 @@ def run_tier_identification():
     final_df = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     final_df.to_csv(OUT_CSV, index=False)
     
-    print("\n\nGenerating Production Proofs...")
+    print("\nGenerating Production Proofs...")
     for _, row in final_df.iterrows():
-        img = cv2.imread(os.path.join(buffer_dir, all_files[int(row['start_frame'])]))
+        img = cv2.imread(os.path.join(SOURCE_DIR, all_files[int(row['start_frame'])]))
         if img is None: continue
         for r_idx in range(4):
             for col in range(6):
@@ -209,10 +218,10 @@ def run_tier_identification():
                 if tier == "empty": continue
                 
                 # Production Color Logic
-                if tag == "[L]": color = (255, 255, 0)      
-                elif tag == "[O]": color = (0, 255, 255)    
-                elif tier == "low_conf": color = (0, 0, 255) 
-                else: color = (0, 255, 0)                   
+                if tag == "[L]": color = (255, 255, 0)      # Cyan
+                elif tag == "[O]": color = (0, 255, 255)    # Yellow
+                elif tier == "low_conf": color = (0, 0, 255) # Red
+                else: color = (0, 255, 0)                   # Green
                 
                 # Cleanup: No Momentum/Boss tags in proofs
                 clean_label = tier if tag in ["[M]", "[B]"] else f"{tier}{tag}"
@@ -221,7 +230,7 @@ def run_tier_identification():
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, (0,0,0), 2)
                 cv2.putText(img, clean_label, (cx-25, cy+HUD_DY), 0, 0.35, color, 1)
         cv2.imwrite(os.path.join(VERIFY_DIR, f"audit_f{int(row['floor_id']):03d}.jpg"), img)
-    print(f"\n[COMPLETE] Master Run finished. Data: {OUT_CSV}")
+    print(f"\n[COMPLETE] Master Run finished. Data: {os.path.basename(OUT_CSV)}")
 
 if __name__ == "__main__":
     run_tier_identification()
