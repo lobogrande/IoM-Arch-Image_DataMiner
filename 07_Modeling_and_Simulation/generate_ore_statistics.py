@@ -1,8 +1,9 @@
 # ==============================================================================
 # Script: generate_ore_statistics.py
-# Version: 1.1.0
+# Version: 1.2.0
 # Description: Ingests run data to calculate Gaussian spawn rates and epoch-based 
-#              ore drop probabilities. Excludes boss floors.
+#              ore drop probabilities. Excludes boss floors and normalizes 
+#              'likely_empty' values to 'empty'.
 # ==============================================================================
 
 import sys
@@ -17,7 +18,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
 # --- CONFIGURATION ---
-# Target the correct tracking archive folder based on project structure
 DATA_PATH = os.path.join("..", "Data_02_Tracking_Archive", "floor_ore_inventory_run_*.csv")
 OUTPUT_DIR = os.path.dirname(__file__)
 
@@ -25,7 +25,6 @@ OUTPUT_DIR = os.path.dirname(__file__)
 SLOT_COLS =[f"R{r}_S{s}" for r in range(1, 5) for s in range(6)]
 
 def calculate_epochs(restrictions):
-    """Calculates distinct floor ranges (epochs) where the ore pool changes."""
     boundaries = {1}
     for min_f, max_f in restrictions.values():
         boundaries.add(min_f)
@@ -52,7 +51,6 @@ def main():
     all_data =[]
     for file in file_list:
         df = pd.read_csv(file)
-        # Verify columns exist, extract just floor_id and slots
         available_cols = ['floor_id'] +[col for col in SLOT_COLS if col in df.columns]
         df = df[available_cols]
         all_data.append(df)
@@ -62,16 +60,17 @@ def main():
     # --- REMOVE BOSS FLOORS ---
     boss_floors = set(cfg.BOSS_DATA.keys())
     master_df = master_df[~master_df['floor_id'].isin(boss_floors)]
-
+    
     # Fill NaNs in slot columns with 'empty'
     master_df[SLOT_COLS] = master_df[SLOT_COLS].fillna('empty')
+    
+    # Normalize 'likely_empty' to 'empty' so they are treated identically
+    master_df[SLOT_COLS] = master_df[SLOT_COLS].replace('likely_empty', 'empty')
 
     # --- PROCESS SPAWN RATES (GAUSSIAN MODEL) ---
     print("Calculating Gaussian spawn models...")
-    # Calculate the total number of ores that spawned on every single row (floor run)
     master_df['total_ores'] = master_df[SLOT_COLS].apply(lambda x: (x != 'empty').sum(), axis=1)
 
-    # Group by floor to get the Mean and Standard Deviation of total ores
     spawn_rates = master_df.groupby('floor_id')['total_ores'].agg(
         mean_ores='mean',
         std_ores='std',
@@ -79,7 +78,6 @@ def main():
         max_ores='max'
     ).reset_index()
 
-    # Fill NaN standard deviations (happens if a floor only has 1 run in the dataset) with 0
     spawn_rates['std_ores'] = spawn_rates['std_ores'].fillna(0)
 
     spawn_csv_path = os.path.join(OUTPUT_DIR, "simulator_spawn_rates.csv")
@@ -88,9 +86,7 @@ def main():
 
     # --- PROCESS DROP TABLES PER EPOCH ---
     print("Calculating drop tables per epoch...")
-    melted_df = master_df.melt(id_vars=['floor_id'], value_vars=SLOT_COLS, 
-                               var_name='slot', value_name='ore_id')
-    
+    melted_df = master_df.melt(id_vars=['floor_id'], value_vars=SLOT_COLS, var_name='slot', value_name='ore_id')
     ores_only_df = melted_df[melted_df['ore_id'] != 'empty'].copy()
 
     def get_epoch_label(floor):
@@ -106,8 +102,6 @@ def main():
     epoch_stats['probability_weight'] = epoch_stats['count'] / epoch_totals
 
     dist_matrix = epoch_stats.pivot(index='epoch', columns='ore_id', values='probability_weight').fillna(0)
-    
-    # Sort epochs chronologically
     dist_matrix['sort_key'] = dist_matrix.index.str.extract(r'Floors_(\d+)_').astype(int)
     dist_matrix = dist_matrix.sort_values('sort_key').drop(columns=['sort_key'])
 

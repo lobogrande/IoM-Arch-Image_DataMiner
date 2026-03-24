@@ -1,6 +1,6 @@
 # ==============================================================================
 # Script: ore_simulator_mockup.py
-# Version: 2.0.0
+# Version: 2.0.1
 # Description: Simulates floor generation using Gaussian stats and executes a 
 #              serpentine pathing run-through. Calculates damage, handles 4 
 #              modifier types, and tracks time-to-clear based on Attack Speed.
