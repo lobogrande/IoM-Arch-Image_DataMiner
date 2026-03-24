@@ -15,7 +15,7 @@ DATA_DIRS = {
 }
 
 # --- 3. PATH HELPERS ---
-def get_buffer_path(buffer_id=1):
+def get_buffer_path(buffer_id=2):
     """Returns absolute path to a specific capture buffer."""
     return os.path.join(DATA_DIRS["RAW"], f"capture_buffer_{buffer_id}")
 
