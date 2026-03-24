@@ -1,7 +1,7 @@
 # step5_floor_occupancy.py
 # Purpose: Master Plan Step 5 - Establish accurate 24-slot DNA Occupancy 
 #          per floor to act as a mask for tier identification.
-# Version: 2.0 (Architecture Aligned & Dynamic Pathing)
+# Version: 2.1 (Progress Tracking & Visual Proofs)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -22,6 +22,7 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_dna_proofs_run_{RUN
 # --- VALIDATED CONSTANTS ---
 ORE0_X, ORE0_Y = 74, 261
 STEP = 59.0
+SIDE_PX = 48
 
 # DIAGNOSTIC CONTROL
 LIMIT_FLOORS = None  # Process all floors
@@ -112,22 +113,61 @@ def run_dna_profiling():
     bg_tpls = load_bg_templates()
     
     worker = partial(process_floor_dna, buffer_dir=SOURCE_DIR, all_files=all_files, bg_tpls=bg_tpls)
+    inventory =[]
     
-    print(f"Sampling temporal window for {len(df_floors)} floors...")
+    total = len(df_floors)
+    print(f"Sampling temporal window for {total} floors...")
+    
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        inventory = list(executor.map(worker, [r for _, r in df_floors.iterrows()]))
+        futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
+        count = 0
+        for future in concurrent.futures.as_completed(futures):
+            count += 1
+            result = future.result()
+            inventory.append(result)
+            print(f"  Processed ({count}/{total}) Floor {result['floor_id']:03d}", end="\r")
 
     df_results = pd.DataFrame(inventory).sort_values('floor_id').reset_index(drop=True)
     
     # Column Organization
-    score_cols =[c for c in df_results.columns if '_score' in c]
-    bit_cols =[c for c in df_results.columns if c not in score_cols and c not in ['floor_id', 'start_frame']]
+    score_cols = [c for c in df_results.columns if '_score' in c]
+    bit_cols = [c for c in df_results.columns if c not in score_cols and c not in['floor_id', 'start_frame']]
     
     # Save Data
     df_results[['floor_id', 'start_frame'] + bit_cols].to_csv(OUT_CSV, index=False)
     df_results[['floor_id'] + score_cols].to_csv(DIAG_CSV, index=False)
-    
-    print(f"[DONE] Occupancy Mask saved to: {os.path.basename(OUT_CSV)}")
+    print(f"\n[DONE] Occupancy Mask saved to: {os.path.basename(OUT_CSV)}")
+
+    # --- GENERATE VISUAL PROOFS ---
+    print("Generating Visual DNA Proofs...")
+    for _, row in df_results.iterrows():
+        f_id = int(row['floor_id'])
+        start_f = int(row['start_frame'])
+        
+        img = cv2.imread(os.path.join(SOURCE_DIR, all_files[start_f]))
+        if img is None: continue
+        
+        for r_idx in range(4):
+            for col in range(6):
+                key = f"R{r_idx+1}_S{col}"
+                bit = str(row[key])
+                
+                cy = int(ORE0_Y + (r_idx * STEP))
+                cx = int(ORE0_X + (col * STEP))
+                x1, y1 = cx - (SIDE_PX // 2), cy - (SIDE_PX // 2)
+                
+                # Color logic: Green for Occupied (1), Red for Empty (0)
+                color = (0, 255, 0) if bit == '1' else (0, 0, 255)
+                
+                # Draw Box and Bit
+                cv2.rectangle(img, (x1, y1), (x1 + SIDE_PX, y1 + SIDE_PX), color, 1)
+                cv2.putText(img, bit, (cx - 5, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                cv2.putText(img, bit, (cx - 5, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                
+        out_name = f"dna_proof_f{f_id:03d}.jpg"
+        cv2.imwrite(os.path.join(VERIFY_DIR, out_name), img)
+        
+    print(f"[DONE] Visual proofs saved to {os.path.basename(VERIFY_DIR)}")
 
 if __name__ == "__main__":
     run_dna_profiling()
