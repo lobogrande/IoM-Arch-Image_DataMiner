@@ -80,7 +80,12 @@ def check_side_slice_forensics(roi_gray):
 def get_overlap_slot(homing_id):
     if homing_id is None or homing_id < 0: return -99
     row = homing_id // 6
-    overlap_candidate = (homing_id + 1) if homing_id == 11 else (homing_id - 1)
+    
+    # Directional Logic: Left-facing player (Row 2 / Slots 6-11) overlaps the slot to their right (+1)
+    # Right-facing player (Row 1 / Slots 0-5) overlaps the slot to their left (-1)
+    is_facing_left = (homing_id >= 6)
+    overlap_candidate = (homing_id + 1) if is_facing_left else (homing_id - 1)
+    
     if overlap_candidate // 6 != row or not (0 <= overlap_candidate <= 23):
         return -99
     return overlap_candidate

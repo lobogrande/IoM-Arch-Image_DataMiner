@@ -1,6 +1,6 @@
 # step1_sprite_homing.py
 # Purpose: Step 1 - Spatial detection of mining events using Elastic Homing.
-# Version: 3.1 (Universal Elastic Search & Generalized Thresholds)
+# Version: 3.2 (Added Slot 10 Support for Run 3 Edge Cases)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -21,14 +21,16 @@ TPL_W, TPL_H = 40, 60
 SEARCH_BUFFER = 8 
 
 # GENERALIZED STAIRCASE: Relaxed thresholds to accommodate dataset lighting/compression variance
-# Based on Audit averages of ~0.80-0.83
-STAIRCASE = {0: 0.80, 1: 0.78, 2: 0.76, 3: 0.74, 4: 0.72, 5: 0.70, 11: 0.78}
+# Added Slot 10 support for datasets where the player spawns short of the wall.
+STAIRCASE = {0: 0.80, 1: 0.78, 2: 0.76, 3: 0.74, 4: 0.72, 5: 0.70, 10: 0.80, 11: 0.78}
 
 def get_slot_geometry(slot_id):
     col = slot_id % 6
     row = slot_id // 6
     hox = int(ORE0_HUD_X + (col * STEP))
     hoy = int(ORE0_HUD_Y + (row * STEP))
+    
+    # Logic: Slots 0-5 face right (stand left). Slots 6-11 face left (stand right).
     hpx = int(hox - PLAYER_OFFSET) if slot_id < 6 else int(hox + PLAYER_OFFSET)
     apx, apy = int(hpx - (TPL_W // 2)), int(hoy - (TPL_H // 2))
     return (apx, apy)
@@ -50,6 +52,7 @@ def run_homing_scan():
         ax, ay = get_slot_geometry(s_id)
         targets.append({
             'id': s_id, 'x': ax, 'y': ay,
+            # Assign correct facing template
             'tpl_f': full_r if s_id < 6 else full_l,
             'tpl_b': bot_r if s_id < 6 else bot_l,
             'thresh': STAIRCASE[s_id]
@@ -88,7 +91,7 @@ def run_homing_scan():
 
     pd.DataFrame(results).to_csv(OUT_CSV, index=False)
     print(f"[DONE] Total Detections: {len(results)}")
-    print(f"Homing map saved to {OUT_CSV}")
+    print(f"Homing map saved to {os.path.basename(OUT_CSV)}")
 
 if __name__ == "__main__":
     run_homing_scan()
