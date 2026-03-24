@@ -1,7 +1,7 @@
-# step4_2_forensic_profiler.py
-# Purpose: Preliminary Diagnostic - Extract raw sensor metrics (Tex, Geo, Gra, Ent)
-#          from the first 20 floors to establish a data-driven baseline.
-# Version: 1.1 (Config-Integrated Baseline)
+# step6_audit_profiler.py
+# Purpose: Diagnostic Tool - Extract raw sensor metrics (Complexity, Texture, Geometry, Grain)
+#          to establish data-driven baselines for tier identification.
+# Version: 2.0 (Architecture Aligned & Validated Constants)
 
 import sys, os, cv2, numpy as np, pandas as pd
 import concurrent.futures
@@ -9,21 +9,22 @@ from functools import partial
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
-# --- 1. GRID & HUD CONSTANTS (Verified) ---
-ORE0_X, ORE0_Y = 72, 255
-STEP = 59.0
-SCALE = 1.20
-SIDE_PX = int(48 * SCALE) # 57px
-HUD_DX, HUD_DY = 20, 30
+# --- DYNAMIC CONFIGURATION ---
+SOURCE_DIR = cfg.get_buffer_path()
+RUN_ID = os.path.basename(SOURCE_DIR).split('_')[-1]
 
-# INPUT/OUTPUT
-BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "final_floor_boundaries.csv")
-DNA_INVENTORY_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "floor_dna_inventory.csv")
-OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "trinity_sensor_profile.csv")
+# INPUT/OUTPUT PATHS
+BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"final_floor_boundaries_run_{RUN_ID}.csv")
+DNA_INVENTORY_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_dna_inventory_run_{RUN_ID}.csv")
+OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"trinity_sensor_profile_run_{RUN_ID}.csv")
+
+# --- VALIDATED GRID CONSTANTS ---
+ORE0_X, ORE0_Y = 74, 261
+STEP = 59.0
+SIDE_PX = 48
 
 # Diagnostic Settings
 LIMIT_FLOORS = 20
-SIDE_SLICE_WIDTH = 16
 
 def get_complexity(img):
     """Calculates Laplacian variance as a measure of structural texture."""
@@ -55,7 +56,7 @@ def load_templates():
     res = {}
     t_path = cfg.TEMPLATE_DIR
     for f in os.listdir(t_path):
-        if "_act_plain_" in f and not any(x in f for x in ["player", "background"]):
+        if "_act_plain_" in f and not any(x in f for x in["player", "background"]):
             img = cv2.imread(os.path.join(t_path, f), 0)
             if img is None: continue
             img_scaled = cv2.resize(img, (SIDE_PX, SIDE_PX))
@@ -75,11 +76,10 @@ def profile_floor(floor_data, dna_map, buffer_dir, all_files, templates):
     
     # Analyze the initial "Pristine" state of the floor
     img_bgr = cv2.imread(os.path.join(buffer_dir, all_files[start_f]))
-    if img_bgr is None: return []
+    if img_bgr is None: return[]
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-    floor_profiles = []
-    # SOURCE OF TRUTH: Reference the project config for boss status
+    floor_profiles =[]
     is_boss = f_id in cfg.BOSS_DATA if hasattr(cfg, 'BOSS_DATA') else False
     
     for r_idx in range(4):
@@ -88,34 +88,35 @@ def profile_floor(floor_data, dna_map, buffer_dir, all_files, templates):
             if str(dna_row[key]) == '0': continue
             
             cy, cx = int(ORE0_Y + (r_idx * STEP)), int(ORE0_X + (col * STEP))
-            y1, x1 = cy - SIDE_PX//2, cx - SIDE_PX//2
+            y1, x1 = int(cy - SIDE_PX//2), int(cx - SIDE_PX//2)
             roi_gray = img_gray[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
             if roi_gray.shape != (SIDE_PX, SIDE_PX): continue
             
             # 1. Structural Energy (Affinity)
             comp = get_complexity(roi_gray)
             
-            # 2. Side-Slice Variance (Forensic Gatekeeper)
-            slice_roi = roi_gray[4:52, 4:52][:, 0:SIDE_SLICE_WIDTH]
+            # 2. Side-Slice Variance (Matches Step 6 forensic sliver logic)
+            slice_roi = roi_gray[15:40, 1:3]
             slice_std = np.std(slice_roi)
             
             # 3. Trinity Pre-processing
             roi_tex = apply_clahe(roi_gray)
             roi_geo = get_silhouette(roi_tex)
             roi_gra = get_gradient_map(roi_tex)
-            c_tex, c_geo, c_gra = roi_tex[13:43, 13:43], roi_geo[13:43, 13:43], roi_gra[13:43, 13:43]
             
-            # Helper to pull raw unweighted trinity scores for comparison
+            # Center 30x30 crop to avoid border noise
+            c_tex, c_geo, c_gra = roi_tex[9:39, 9:39], roi_geo[9:39, 9:39], roi_gra[9:39, 9:39]
+            
             def get_raw_trinity(tier):
                 if tier not in templates: return 0, 0, 0
                 t = templates[tier][0]
-                t_tex, t_geo, t_gra = t['tex'][13:43, 13:43], t['geo'][13:43, 13:43], t['gra'][13:43, 13:43]
+                t_tex, t_geo, t_gra = t['tex'][9:39, 9:39], t['geo'][9:39, 9:39], t['gra'][9:39, 9:39]
                 s_tex = cv2.minMaxLoc(cv2.matchTemplate(t_tex, c_tex, cv2.TM_CCOEFF_NORMED))[1]
                 s_geo = cv2.minMaxLoc(cv2.matchTemplate(t_geo, c_geo, cv2.TM_CCOEFF_NORMED))[1]
                 s_gra = cv2.minMaxLoc(cv2.matchTemplate(t_gra, c_gra, cv2.TM_CCOEFF_NORMED))[1]
                 return s_tex, s_geo, s_gra
 
-            # Sample extremes (Dirt1 vs Rare1) to find the separation gap
+            # Sample extremes (Dirt1 vs Rare1) to find separation gaps
             s_dirt_tex, s_dirt_geo, s_dirt_gra = get_raw_trinity('dirt1')
             s_rare_tex, s_rare_geo, s_rare_gra = get_raw_trinity('rare1')
 
@@ -131,29 +132,33 @@ def profile_floor(floor_data, dna_map, buffer_dir, all_files, templates):
     return floor_profiles
 
 def run_profiler():
-    print(f"--- STEP 4.2 FORENSIC PROFILER v1.1 (Config-Integrated) ---")
+    print(f"--- STEP 6 AUDIT: TRINITY SENSOR PROFILER (Run {RUN_ID}) ---")
     
     if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):
-        print("Error: Input CSVs missing.")
+        print("Error: Input CSVs missing. Run Steps 3 and 5 first.")
         return
 
-    df_floors = pd.read_csv(BOUNDARIES_CSV).head(LIMIT_FLOORS)
+    df_floors = pd.read_csv(BOUNDARIES_CSV)
+    if LIMIT_FLOORS: df_floors = df_floors.head(LIMIT_FLOORS)
+    
     df_dna = pd.read_csv(DNA_INVENTORY_CSV)
-    buffer_dir = cfg.get_buffer_path(0)
-    all_files = sorted([f for f in os.listdir(buffer_dir) if f.endswith(('.png', '.jpg'))])
+    all_files = sorted([f for f in os.listdir(SOURCE_DIR) if f.endswith(('.png', '.jpg'))])
     templates = load_templates()
     
-    all_data = []
-    worker = partial(profile_floor, dna_map=df_dna, buffer_dir=buffer_dir, all_files=all_files, templates=templates)
+    all_data =[]
+    worker = partial(profile_floor, dna_map=df_dna, buffer_dir=SOURCE_DIR, all_files=all_files, templates=templates)
     
+    print(f"Profiling {len(df_floors)} floors...")
     with concurrent.futures.ProcessPoolExecutor() as executor:
         futures = {executor.submit(worker, row): row['floor_id'] for _, row in df_floors.iterrows()}
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+        count = 0
+        for future in concurrent.futures.as_completed(futures):
+            count += 1
             all_data.extend(future.result())
-            print(f"  Profiled Floor {i+1}/{LIMIT_FLOORS}...", end="\r")
+            print(f"  Processed Floor {count}/{len(df_floors)}...", end="\r")
 
     pd.DataFrame(all_data).to_csv(OUT_CSV, index=False)
-    print(f"\n[DONE] Baseline metrics saved to: {OUT_CSV}")
+    print(f"\n[DONE] Baseline metrics saved to: {os.path.basename(OUT_CSV)}")
 
 if __name__ == "__main__":
     run_profiler()

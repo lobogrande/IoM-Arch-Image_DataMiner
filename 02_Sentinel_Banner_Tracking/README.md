@@ -56,6 +56,12 @@ Run this if you suspect the Homing script is missing floors.
 * **Action:** The forensic identification engine. Uses the Step 5 mask, Step 1 Homing data (to exclude player-obstructed frames), and Temporal Consensus Voting to achieve 100% identification accuracy.
 * **Output:** `floor_ore_inventory_run_X.csv` and visual proofs.
 
+#### 🔍 Step 6 Quality Control (Optional)
+**Script:** `step6_audit_profiler.py`
+Run this if the Tier Consensus script is misidentifying ores or failing to reach the confidence threshold.
+* **Action:** It extracts the raw mathematical fingerprints (Texture, Geometry, Grain, and Laplacian Complexity) of every occupied slot in the dataset's pristine arrival frames. 
+* **Interpretation:** By reviewing `trinity_sensor_profile_run_X.csv`, you can identify if ambient noise (like Lava Biome brightness) is skewing the complexity too high, or if specific ores require adjustments to the `BULLY_PENALTIES` in Step 6.
+
 ### Step 7: Integrity Audit
 **Script:** `step7_integrity_audit.py`
 * **Action:** Mathematical Quality Control. Validates final IDs against biome restrictions, limits forensic calls to user-approved spots, and outputs the Tier Distribution Summary.
