@@ -1,6 +1,6 @@
 # step3_floor_segmentation.py
 # Purpose: Execute Master Plan Step 3 - Group frames into distinct floors.
-# Version: 3.4 (Slot 10 Homing Exception & False-Start Rejection)
+# Version: 3.8 (Gap-Forced Micro-Blocking)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -15,6 +15,7 @@ OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_start_candidates_run_{
 VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_verification_run_{RUN_ID}")
 
 def despeckle_series(series, max_glitch_len=2):
+    """Surgical micro-filter to remove 1-to-2 frame falling ore glitches."""
     vals = series.tolist()
     n = len(vals)
     clean = vals.copy()
@@ -43,7 +44,6 @@ def run_temporal_chunking():
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     
     print(f"--- STEP 3: KINEMATIC FLOOR GROUPING (Run {RUN_ID}) ---")
-    print(f"Processing {len(df)} frames using Row 4 Anchoring...")
 
     df['slot_chunk'] = (df['slot_id'] != df['slot_id'].shift(1)).cumsum()
     
@@ -55,8 +55,11 @@ def run_temporal_chunking():
     df = df.groupby('slot_chunk', group_keys=False).apply(clean_r4)
     df = df.sort_values('frame_idx').reset_index(drop=True)
 
+    # --- THE BUG FIX: GAP-FORCED BLOCKING ---
+    # A block breaks if the slot changes, R4 DNA changes, OR the player vanishes for >= 15 frames.
     df['block_id'] = ((df['slot_id'] != df['slot_id'].shift(1)) | 
-                      (df['r4_clean'] != df['r4_clean'].shift(1))).cumsum()
+                      (df['r4_clean'] != df['r4_clean'].shift(1)) |
+                      (df['gap'] >= 15)).cumsum()
     
     blocks =[]
     for block_id, group in df.groupby('block_id'):
@@ -69,7 +72,7 @@ def run_temporal_chunking():
             'gap_to_prev': int(group['gap'].iloc[0])
         })
     
-    floors = []
+    floors =[]
     curr_floor = [blocks[0]]
     
     for b in blocks[1:]:
@@ -79,19 +82,11 @@ def run_temporal_chunking():
         
         # LAW 1: Slot Reversal (Guaranteed Reset)
         if b['slot'] < prev_b['slot']:
-            # --- EDGE CASE FIX: Overlap False Positives (11 -> 10) ---
-            # If the player spawns at Slot 10, their body overlaps Slot 11.
-            # Step 1 may falsely report a few frames of Slot 11 before locking onto 10.
-            # This is NOT a floor reset.
+            # Exception for false 11 -> 10 overlap positives
             if prev_b['slot'] == 11 and b['slot'] == 10:
                 if len(curr_floor) == 1:
-                    # If this false 11 was the very first block of the floor,
-                    # we THROW IT AWAY. The floor now anchors cleanly on Slot 10.
                     curr_floor = [b]
                     continue 
-                else:
-                    # The player is legitimately moving leftward along the row.
-                    pass
             else:
                 is_new_floor = True
                 reason = f"Slot Reversal ({prev_b['slot']} -> {b['slot']})"
@@ -101,11 +96,10 @@ def run_temporal_chunking():
             is_new_floor = True
             reason = f"R4 DNA Shift ({prev_b['r4_mode']} -> {b['r4_mode']})"
             
-        # LAW 3: The AoE Board Wipe Fallback
-        elif b['slot'] == prev_b['slot'] and b['gap_to_prev'] > 60:
-            if b['r3_mode'] != prev_b['r3_mode']:
-                is_new_floor = True
-                reason = f"AoE Board Wipe Detected"
+        # LAW 3: Off-Radar Spawn (Row 3/4)
+        elif b['gap_to_prev'] >= 15 and b['r3_mode'] != prev_b['r3_mode']:
+            is_new_floor = True
+            reason = f"Off-Radar Spawn (Gap {b['gap_to_prev']}f + R3 Shift)"
 
         if is_new_floor:
             b['transition_reason'] = reason
@@ -146,7 +140,7 @@ def run_temporal_chunking():
             cv2.imwrite(os.path.join(VERIFY_DIR, out_name), vis)
 
     pd.DataFrame(final_candidates).to_csv(OUT_CSV, index=False)
-    print(f"\n[DONE] Saved {len(final_candidates)} candidates to: {os.path.basename(OUT_CSV)}")
+    print(f"\n[DONE] Saved {len(final_candidates)} validated start frames to: {os.path.basename(OUT_CSV)}")
 
 if __name__ == "__main__":
     run_temporal_chunking()
