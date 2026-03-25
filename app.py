@@ -733,14 +733,27 @@ with tab_optimizer:
         st.session_state.sims_per_sec = 0
         st.session_state.eta_profiles = {}
 
-    col_bench, col_prof = st.columns([1, 2])
+    with st.expander("🧠 How does the AI Optimizer work? (Click to read)"):
+        st.markdown("""
+        **1. The 3-Phase "Zoom-In" Grid Search:**
+        Testing every possible stat combination point-by-point would require millions of simulations and take days. Instead, we "zoom in":
+        * **Phase 1 (Coarse):** We cast a wide net across your entire stat budget in large leaps (e.g., leaps of 10 points) to find the general neighborhood of the optimal build.
+        * **Phase 2 (Fine):** We draw a tight box around the Phase 1 winner and test smaller leaps (e.g., leaps of 3 points).
+        * **Phase 3 (Exact):** We draw a final box around the Phase 2 winner and test *every single point* (leaps of 1) to find the mathematical peak.
+        
+        **2. Successive Halving (Early Culling):**
+        During each phase, we don't test bad builds thoroughly. We test all builds briefly (15 runs), immediately delete the bottom 80% of performers, test the survivors a bit more (35 runs), and reserve the heaviest testing purely for the top contenders.
+        """)
+
+    col_bench, col_prof = st.columns([1, 1.5])
+    
     with col_bench:
         st.write("#### 1. Hardware Benchmark")
-        st.write("*(Optional: Runs automatically when you start the optimizer if skipped)*")
-        if st.button("⏱️ Preview ETA / Benchmark", use_container_width=True):
-            with st.spinner("Running micro-benchmark..."):
+        st.write("*(Optional: Runs automatically on start if skipped)*")
+        if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
+            with st.spinner("Running 200 micro-simulations to test CPU speed..."):
                 # Construct baseline payload
-                STATS_TO_OPTIMIZE = ['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                 if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                 
                 payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}}
@@ -758,21 +771,51 @@ with tab_optimizer:
                     st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
         
         if st.session_state.sims_per_sec > 0:
-            st.success(f"⚡ {st.session_state.sims_per_sec:,.0f} sims/sec")
+            st.success(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second")
+        else:
+            st.info("Awaiting Benchmark...")
 
     with col_prof:
-        st.write("#### 2. Optimization Depth")
-        depth_choice = st.radio("Select Depth",["Fast", "Standard", "Deep"], horizontal=True, label_visibility="collapsed")
+        st.write("#### 2. Search Depth (Initial Step Size)")
+        
+        # Transparent labels that show exactly what the knob is doing
+        depth_labels = {
+            "Fast": "Fast (Step 15) - Best for quick checks",
+            "Standard": "Standard (Step 10) - Recommended balance",
+            "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
+        }
+        
+        depth_choice_raw = st.radio(
+            "Select Search Depth", 
+            options=list(depth_labels.keys()), 
+            format_func=lambda x: depth_labels[x],
+            horizontal=True, 
+            label_visibility="collapsed"
+        )
+        
+        # Derive the exact steps that will be used based on the choice
+        step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice_raw]
+        step_2 = max(2, step_1 // 3)
+        step_3 = 1
+        
+        # Build the dynamic preview box
+        preview_html = f"""
+        <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
+            <b>Engine Execution Plan:</b><br>
+            🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
+            🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
+            🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.
+        """
         
         if st.session_state.eta_profiles:
-            # Match the chosen key with the dictionary profile key
-            prof_key = next(k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice))
+            prof_key = next(k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice_raw))
             prof_data = st.session_state.eta_profiles[prof_key]
-            st.info(f"**Est. Time:** {prof_data['time_label']} | **Search Space:** ~{prof_data['builds']:,.0f} builds tested")
-            step_size = prof_data['step']
-        else:
-            st.warning("Run benchmark or click Run Optimizer to see time estimates.")
-            step_size = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
+            
+            # Append the ETA inside the dynamic box
+            preview_html += f"<br><br>⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>"
+        
+        preview_html += "</div>"
+        st.markdown(preview_html, unsafe_allow_html=True)
 
     st.divider()
 
