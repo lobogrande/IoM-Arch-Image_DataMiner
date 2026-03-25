@@ -2,8 +2,8 @@
 # Script: app.py
 # Layer 5: Streamlit Web UI
 # Description: Features perfect CSS Flexbox centering for Text and Images using
-#              a custom Base64 HTML injection engine. Includes 4x7 Ore Card grid
-#              and dynamic Base Stat image rendering.
+#              a custom Base64 HTML injection engine. Includes 4x7 Ore Card grid,
+#              dynamic Base Stat rendering, and JSON Save/Export functionality.
 # ==============================================================================
 
 import streamlit as st
@@ -23,13 +23,13 @@ from PIL import Image
 
 # --- BASE STATS ---
 # Width of the stat icons
-UI_STAT_IMG_WIDTH = 220
+UI_STAT_IMG_WIDTH = 60
 
 # --- INTERNAL UPGRADES ---
 # The layout ratio for the single-column feed:[Left_Spacer, Center_Feed, Right_Spacer]
 # To shrink the center box: Increase the outer numbers (e.g.,[2, 2, 2] or [1, 1, 1])
 # To widen the center box: Increase the middle number (e.g.,[1, 3, 1])
-UI_INT_COL_RATIO = [1, 1, 1]  
+UI_INT_COL_RATIO =[1, 1, 1]  
 
 # --- EXTERNAL UPGRADES ---
 # The layout ratio:[Left_Spacer, Content_Cols..., Right_Spacer]
@@ -63,7 +63,7 @@ if SIM_DIR not in sys.path:
     sys.path.append(SIM_DIR)
 
 from core.player import Player
-from tools.verify_player import load_state_from_json
+from tools.verify_player import load_state_from_json, save_state_to_json # <--- Added save_state import
 import project_config as cfg
 
 # --- AUTO-CLAMPING CALLBACKS ---
@@ -152,7 +152,7 @@ st.set_page_config(page_title="AI Arch Optimizer", layout="wide", page_icon="⛏
 # SIDEBAR
 # ==========================================
 with st.sidebar:
-    st.header("📂 Player Data")
+    st.header("📂 Import Data")
     uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
     
     if uploaded_file is not None:
@@ -164,12 +164,34 @@ with st.sidebar:
         
         # Flush existing widget keys so they resync to the new JSON file!
         for k in list(st.session_state.keys()):
-            # Included 'card_' in the flush check so the 4x7 grid updates instantly on upload
             if k.startswith("upg_") or k.startswith("stat_") or k.startswith("ext_") or k.startswith("card_"):
                 del st.session_state[k]
         st.success("Save file loaded!")
     
     st.divider()
+    
+    # --- EXPORT FUNCTIONALITY ---
+    st.header("💾 Export Data")
+    st.write("Download your current UI configuration.")
+    
+    # We write the current memory state to a temporary file, read it as a string, and pass it to Streamlit
+    temp_export = os.path.join(ROOT_DIR, "temp_export.json")
+    save_state_to_json(p, temp_export, readable_keys=True)
+    with open(temp_export, "r") as f:
+        export_json_str = f.read()
+    if os.path.exists(temp_export):
+        os.remove(temp_export)
+        
+    st.download_button(
+        label="📥 Download player_state.json",
+        data=export_json_str,
+        file_name="player_state.json",
+        mime="application/json",
+        use_container_width=True
+    )
+    
+    st.divider()
+    
     st.header("⚙️ Global Settings")
     p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", value=p.asc2_unlocked)
     p.arch_level = st.number_input("Arch Level", min_value=1, value=int(p.arch_level), step=1)
@@ -187,7 +209,6 @@ STAT_CAPS = {
     'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
 }
 
-# --- RENAMED TAB ---
 tab_stats, tab_upgrades, tab_cards, tab_optimizer = st.tabs([
     "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🚀 Run Optimizer"
 ])
@@ -421,6 +442,7 @@ with tab_cards:
                             on_change=update_card_level, args=(widget_key, card_id),
                             label_visibility="collapsed"
                         )
+
 
 with tab_optimizer:
     st.subheader("Target Optimization")
