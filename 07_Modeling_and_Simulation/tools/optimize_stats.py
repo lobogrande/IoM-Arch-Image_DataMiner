@@ -140,7 +140,7 @@ if __name__ == "__main__":
     temp_player = Player()
     load_state_from_json(temp_player, JSON_PATH)
     
-    DYNAMIC_BUDGET = sum(temp_player.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE)
+    DYNAMIC_BUDGET = int(sum(temp_player.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
     FIXED_STATS = {k: v for k, v in temp_player.base_stats.items() if k not in STATS_TO_OPTIMIZE}
     
     print(f"Target Stats to Optimize: {STATS_TO_OPTIMIZE}")
@@ -155,17 +155,25 @@ if __name__ == "__main__":
     with mp.Pool(CPU_CORES) as pool:
         # PHASE 1: Coarse Search (Jump by 15)
         step_1 = 15
-        best_p1, _ = run_optimization_phase("Phase 1: Coarse Search", STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, step_1, ITERATIONS_PER_DIST, pool)
+        #[FIX]: Added FIXED_STATS to the Phase 1 call
+        best_p1, _ = run_optimization_phase(
+            "Phase 1: Coarse Search", STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, 
+            step_1, ITERATIONS_PER_DIST, pool, FIXED_STATS
+        )
         
         # Setup bounds for Phase 2 based on Phase 1 winner
         bounds_p2 = {}
-        for stat in STATS_TO_OPTIMIZE:
-            val = best_p1[stat]
-            bounds_p2[stat] = (max(0, val - step_1), min(DYNAMIC_BUDGET, val + step_1))
+        if best_p1:
+            for stat in STATS_TO_OPTIMIZE:
+                val = best_p1[stat]
+                bounds_p2[stat] = (max(0, val - step_1), min(DYNAMIC_BUDGET, val + step_1))
             
         # PHASE 2: Fine Search (Jump by 3)
         step_2 = 3
-        best_p2, _ = run_optimization_phase("Phase 2: Fine Search", STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2)
+        best_p2, _ = run_optimization_phase(
+            "Phase 2: Fine Search", STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, 
+            step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2
+        )
         
         # Setup bounds for Phase 3 based on Phase 2 winner
         bounds_p3 = {}
@@ -179,7 +187,10 @@ if __name__ == "__main__":
 
         # PHASE 3: Exact Search (Jump by 1)
         step_3 = 1
-        best_p3, final_summary = run_optimization_phase("Phase 3: Exact 1-Point Search", STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, step_3, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3)
+        best_p3, final_summary = run_optimization_phase(
+            "Phase 3: Exact 1-Point Search", STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, 
+            step_3, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3
+        )
         
     elapsed = time.time() - start_time
     
@@ -188,11 +199,15 @@ if __name__ == "__main__":
     print("="*50)
     print(f"Total Computation Time: {elapsed:.2f} seconds")
     print("\nOPTIMAL STAT ALLOCATION:")
+    
+    # Safe fallback printing in case of edge cases where p3 didn't execute properly
+    final_best = best_p3 if best_p3 else best_p2
     for stat in STATS_TO_OPTIMIZE:
-        print(f" - {stat}: {best_p3[stat]}")
+        print(f" - {stat}: {final_best[stat]}")
     for k, v in FIXED_STATS.items():
         print(f" - {k}: {v} (Fixed)")
         
-    print(f"\nPROJECTED METRICS:")
-    print(f" - Average XP/Min:  {final_summary['avg_xp_min']:,.0f}")
-    print(f" - Average Floor:   {final_summary['avg_floor']:.1f}")
+    if final_summary:
+        print(f"\nPROJECTED METRICS:")
+        print(f" - Average XP/Min:  {final_summary['avg_xp_min']:,.0f}")
+        print(f" - Average Floor:   {final_summary['avg_floor']:.1f}")
