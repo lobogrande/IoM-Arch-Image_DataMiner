@@ -114,16 +114,27 @@ class CombatSimulator:
         # Using a fast local closure instead of a class method eliminates
         # function-call overhead and 'self.' lookups on every single hit.
         def roll_crit(is_enrage_active):
-            rand_val = random.random()
-            if rand_val < p_u_crit_ch: 
-                return p_u_crit_dmg, 'ultra'
-            if rand_val < p_s_crit_ch: 
-                return p_s_crit_dmg, 'super'
-            if rand_val < p_crit_ch:
-                # --- DIRECTLY SWAP TO THE ENRAGED PROPERTY ---
-                return p_enraged_crit_dmg if is_enrage_active else p_crit_dmg, 'crit'
-            return 1.0, 'normal'
-        
+            # 1. Roll for Base Crit
+            if random.random() < p_crit_ch:
+                base_c_dmg = p_enraged_crit_dmg if is_enrage_active else p_crit_dmg
+                
+                # 2. Roll for Super Crit (Nested)
+                if random.random() < p_s_crit_ch:
+                    
+                    # 3. Roll for Ultra Crit (Nested)
+                    if random.random() < p_u_crit_ch:
+                        # Ultra Crit: Compounds all 3 multipliers!
+                        return base_c_dmg * p_s_crit_dmg * p_u_crit_dmg, 'ultra'
+                    else:
+                        # Super Crit: Compounds 2 multipliers
+                        return base_c_dmg * p_s_crit_dmg, 'super'
+                else:
+                    # Standard Crit
+                    return base_c_dmg, 'crit'
+            else:
+                # Normal Hit
+                return 1.0, 'normal'
+                    
         # ======================================================================
         
         state = RunState(self.player)

@@ -207,41 +207,56 @@ st.set_page_config(page_title="AI Arch Optimizer", layout="wide", page_icon="⛏
 # SIDEBAR
 # ==========================================
 with st.sidebar:
+    # --- 1. GLOBAL SETTINGS (Moved to top!) ---
     st.header("⚙️ Global Settings")
-    p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", value=p.asc2_unlocked)
-    p.arch_level = st.number_input("Arch Level", min_value=1, value=int(p.arch_level), step=1)
-    p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, value=int(p.current_max_floor), step=1)
+    
+    # Initialize session state for global settings so they don't throw warnings
+    if "set_asc2" not in st.session_state: st.session_state["set_asc2"] = p.asc2_unlocked
+    if "set_arch" not in st.session_state: st.session_state["set_arch"] = int(p.arch_level)
+    if "set_floor" not in st.session_state: st.session_state["set_floor"] = int(p.current_max_floor)
+    if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
+    
+    # Render widgets with explicit keys
+    p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2")
+    p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
+    p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
     
     if p.asc2_unlocked:
-        p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, value=int(p.hades_idol_level), step=1)
+        p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
     else:
         p.hades_idol_level = 0
-    
+
     st.divider()
-    
+
+    # --- 2. IMPORT DATA ---
     st.header("📂 Import Data")
     uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
     
     if uploaded_file is not None:
-        temp_path = os.path.join(ROOT_DIR, "temp_upload.json")
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        load_state_from_json(p, temp_path)
-        os.remove(temp_path)
-        
-        # Flush existing widget keys so they resync to the new JSON file!
-        for k in list(st.session_state.keys()):
-            if k.startswith("upg_") or k.startswith("stat_") or k.startswith("ext_") or k.startswith("card_"):
-                del st.session_state[k]
-        st.success("Save file loaded!")
-    
+        # Prevent infinite reloading: Only process if it is a NEW file upload!
+        if 'last_uploaded_file' not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.file_id:
+            st.session_state.last_uploaded_file = uploaded_file.file_id
+            
+            temp_path = os.path.join(ROOT_DIR, "temp_upload.json")
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            load_state_from_json(p, temp_path)
+            os.remove(temp_path)
+            
+            # Flush ALL widget keys so they resync to the new JSON file!
+            for k in list(st.session_state.keys()):
+                if k.startswith(("upg_", "stat_", "ext_", "card_", "set_")):
+                    del st.session_state[k]
+                    
+            # Force a clean restart from Line 1 to sync the reordered sidebar
+            st.rerun() 
+            
     st.divider()
     
-    # --- EXPORT FUNCTIONALITY ---
+    # --- 3. EXPORT DATA ---
     st.header("💾 Export Data")
     st.write("Download your current UI configuration.")
     
-    # We write the current memory state to a temporary file, read it as a string, and pass it to Streamlit
     temp_export = os.path.join(ROOT_DIR, "temp_export.json")
     save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
     with open(temp_export, "r") as f:
@@ -254,7 +269,7 @@ with st.sidebar:
         data=export_json_str,
         file_name="player_state.json",
         mime="application/json",
-        width="stretch"
+        use_container_width=True
     )
 
 
@@ -548,13 +563,28 @@ with tab_calc_stats:
             st.write(f"**Max Stamina:** {p.max_sta:,.0f}")
             st.write(f"**Damage:** {p.damage:,.0f}")
             st.write(f"**Armor Pen:** {p.armor_pen:,.0f}")
+            
             st.divider()
-            st.write(f"**Crit Chance:** {p.crit_chance*100:,.2f}%")
-            st.write(f"**Crit Dmg:** {p.crit_dmg_mult:,.2f}x")
-            st.write(f"**Super Crit Chance:** {p.super_crit_chance*100:,.2f}%")
-            st.write(f"**Super Crit Dmg:** {p.super_crit_dmg_mult:,.2f}x")
-            st.write(f"**Ultra Crit Chance:** {p.ultra_crit_chance*100:,.2f}%")
-            st.write(f"**Ultra Crit Dmg:** {p.ultra_crit_dmg_mult:,.2f}x")
+            
+            # --- TRUE NESTED PROBABILITIES & COMPOUND MULTIPLIERS ---
+            true_reg = 1.0 - p.crit_chance
+            true_crit = p.crit_chance * (1.0 - p.super_crit_chance)
+            true_scrit = p.crit_chance * p.super_crit_chance * (1.0 - p.ultra_crit_chance)
+            true_ucrit = p.crit_chance * p.super_crit_chance * p.ultra_crit_chance
+            
+            comp_crit = p.crit_dmg_mult
+            comp_scrit = p.crit_dmg_mult * p.super_crit_dmg_mult
+            comp_ucrit = p.crit_dmg_mult * p.super_crit_dmg_mult * p.ultra_crit_dmg_mult
+            
+            st.markdown("#### 🎯 True Hit Breakdown")
+            st.write(f"*- Regular:* {true_reg*100:,.2f}%")
+            st.write(f"*- Crit:* {true_crit*100:,.2f}% *(Mult: {comp_crit:,.2f}x)*")
+            st.write(f"*- Super Crit:* {true_scrit*100:,.2f}% *(Mult: {comp_scrit:,.2f}x)*")
+            st.write(f"*- Ultra Crit:* {true_ucrit*100:,.2f}% *(Mult: {comp_ucrit:,.2f}x)*")
+            
+            st.divider()
+            st.markdown("<small>*Raw Stats (Before Nesting)*</small>", unsafe_allow_html=True)
+            st.write(f"<small>Base Crit: {p.crit_chance*100:.2f}% | sCrit: {p.super_crit_chance*100:.2f}% | uCrit: {p.ultra_crit_chance*100:.2f}%</small>", unsafe_allow_html=True)
 
     with col_calc_2:
         with st.container(border=True):
