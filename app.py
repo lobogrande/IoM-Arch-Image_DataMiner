@@ -2,8 +2,8 @@
 # Script: app.py
 # Layer 5: Streamlit Web UI
 # Description: Features perfect CSS Flexbox centering for Text and Images using
-#              a custom Base64 HTML injection engine. Includes 4x7 Ore Card grid,
-#              dynamic Base Stat rendering, and JSON Save/Export functionality.
+#              a custom Base64 HTML injection engine. Includes global Stat Point 
+#              budget tracking and auto-clamping.
 # ==============================================================================
 
 import streamlit as st
@@ -23,7 +23,7 @@ from PIL import Image
 
 # --- BASE STATS ---
 # Width of the stat icons
-UI_STAT_IMG_WIDTH = 60
+UI_STAT_IMG_WIDTH = 250
 
 # --- INTERNAL UPGRADES ---
 # The layout ratio for the single-column feed:[Left_Spacer, Center_Feed, Right_Spacer]
@@ -52,7 +52,7 @@ UI_EXT_CARD_CORE_Y_OFFSET = -4
 # Width of the generated cards in the 4x7 grid
 UI_ORE_CARD_WIDTH = 100
 # Y-Offset specifically for Ore Card cores
-UI_ORE_CARD_Y_OFFSET = -8
+UI_ORE_CARD_Y_OFFSET = -4
 # ==============================================================================
 # ==============================================================================
 
@@ -63,11 +63,12 @@ if SIM_DIR not in sys.path:
     sys.path.append(SIM_DIR)
 
 from core.player import Player
-from tools.verify_player import load_state_from_json, save_state_to_json # <--- Added save_state import
+from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
 
 # --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
+    """Standard clamping for independent limits (e.g. Upgrade Levels)."""
     val = st.session_state[key]
     if val > max_val:
         st.session_state[key] = int(max_val)
@@ -76,7 +77,38 @@ def enforce_caps(key, min_val, max_val, item_name):
         st.session_state[key] = int(min_val)
         st.toast(f"⚠️ **{item_name}** below limit. Clamped to Min ({min_val}).")
 
+def enforce_stat_caps(widget_key, stat_key, min_val, max_val, item_name):
+    """Specialized clamping for Base Stats that also checks the Global Point Budget."""
+    val = st.session_state[widget_key]
+    
+    # 1. Check individual cap
+    if val > max_val:
+        val = int(max_val)
+        st.toast(f"⚠️ **{item_name}** exceeds limit. Clamped to Max ({max_val}).")
+    elif val < min_val:
+        val = int(min_val)
+        st.toast(f"⚠️ **{item_name}** below limit. Clamped to Min ({min_val}).")
+        
+    # 2. Check the Global Stat Budget (Arch Level + Upgrade 12)
+    total_allowed = int(st.session_state.player.arch_level) + int(st.session_state.player.upgrade_levels.get(12, 0))
+    
+    other_sum = 0
+    for s in st.session_state.player.base_stats.keys():
+        if s != stat_key:
+            # We must use session_state to grab the LIVE widget values in case multiple changed
+            current = st.session_state.get(f"stat_{s}", st.session_state.player.base_stats.get(s, 0))
+            other_sum += int(current)
+            
+    if val + other_sum > total_allowed:
+        max_possible = max(0, total_allowed - other_sum)
+        if val > max_possible:
+            val = max_possible
+            st.toast(f"⚠️ Not enough Stat Points! Clamped **{item_name}** to {val}.")
+            
+    st.session_state[widget_key] = val
+
 def update_external_group(group_id, rows):
+    """Callback to sync a UI widget value to all corresponding engine rows."""
     val = st.session_state[group_id]
     for r in rows:
         st.session_state.player.set_external_level(r, int(val))
@@ -133,6 +165,7 @@ def composite_card(bg_path, core_path, y_offset):
         return None
 
 def find_external_image(upg_id):
+    """Uses glob to find images with prefixes like '4_hestia.png'."""
     pattern = os.path.join(ROOT_DIR, "assets", "upgrades", "external", f"{upg_id}_*.png")
     matches = glob.glob(pattern)
     if matches:
@@ -176,7 +209,7 @@ with st.sidebar:
     
     # We write the current memory state to a temporary file, read it as a string, and pass it to Streamlit
     temp_export = os.path.join(ROOT_DIR, "temp_export.json")
-    save_state_to_json(p, temp_export, readable_keys=True)
+    save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
     with open(temp_export, "r") as f:
         export_json_str = f.read()
     if os.path.exists(temp_export):
@@ -196,12 +229,18 @@ with st.sidebar:
     p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", value=p.asc2_unlocked)
     p.arch_level = st.number_input("Arch Level", min_value=1, value=int(p.arch_level), step=1)
     p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, value=int(p.current_max_floor), step=1)
+    
+    if p.asc2_unlocked:
+        p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, value=int(p.hades_idol_level), step=1)
+    else:
+        p.hades_idol_level = 0
 
 # ==========================================
 # MAIN WINDOW: Tabs
 # ==========================================
 st.title("⛏️ AI Arch Mining Optimizer")
 
+# Calculate dynamic Base Stat caps (Base + Upgrade #45)
 cap_inc = int(p.u('H45'))
 STAT_CAPS = {
     'Str': 50 + cap_inc, 'Agi': 50 + cap_inc,
@@ -213,9 +252,31 @@ tab_stats, tab_upgrades, tab_cards, tab_optimizer = st.tabs([
     "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🚀 Run Optimizer"
 ])
 
+# --- TAB 1: BASE STATS ---
 with tab_stats:
-    st.subheader("Base Stat Allocation")
     
+    # --- GLOBAL STAT BUDGET TRACKER ---
+    total_allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
+    current_allocated = sum(int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0))) for s in p.base_stats.keys())
+    remaining = total_allowed - current_allocated
+    
+    col_title, col_tracker = st.columns([2, 1])
+    with col_title:
+        st.subheader("Base Stat Allocation")
+    with col_tracker:
+        # A sleek Streamlit metric box to track points
+        st.metric(
+            label="Unallocated Points", 
+            value=remaining, 
+            delta=f"{current_allocated} / {total_allowed} Used",
+            delta_color="off"
+        )
+        
+    if remaining < 0:
+        st.error(f"⚠️ You have over-allocated stats by {abs(remaining)} points! Please lower them before running the optimizer.")
+    
+    st.divider()
+
     def render_stat(label, stat_key):
         max_val = int(STAT_CAPS[stat_key])
         current_val = int(p.base_stats.get(stat_key, 0))
@@ -239,8 +300,8 @@ with tab_stats:
             # Number Input
             st.number_input(
                 f"{label} (Max: {max_val})",
-                key=widget_key, step=1, on_change=enforce_caps,
-                args=(widget_key, 0, max_val, label),
+                key=widget_key, step=1, on_change=enforce_stat_caps,
+                args=(widget_key, stat_key, 0, max_val, label),
                 label_visibility="collapsed"
             )
         p.base_stats[stat_key] = st.session_state[widget_key]
@@ -262,11 +323,14 @@ with tab_stats:
             # Silently keep Corruption at 0 without a spoiler message
             p.base_stats['Corr'] = 0
 
+# --- TAB 2: UPGRADES ---
 with tab_upgrades:
     sub_internal, sub_external = st.tabs(["Internal Upgrades", "External Upgrades"])
     
     with sub_internal:
         asc2_locked_rows =[17, 19, 34, 46, 52, 55]
+        
+        # 1. Pre-filter active upgrades
         active_upgrades =[]
         for upg_id, upg_data in p.UPGRADE_DEF.items():
             if not p.asc2_unlocked and upg_id in asc2_locked_rows:
