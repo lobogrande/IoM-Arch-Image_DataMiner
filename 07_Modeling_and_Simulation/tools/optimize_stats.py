@@ -1,9 +1,9 @@
 # ==============================================================================
 # Script: tools/optimize_stats.py
-# Layer 4: Monte Carlo Optimizer (Zoom-In Multi-Phase Search)
-# Description: Dynamically reads total stat budget from player_state.json. 
-#              Uses a 3-phase zooming grid search to find the mathematically 
-#              perfect exact 1-point stat distribution for max XP/Min.
+# Layer 4: Monte Carlo Optimizer (Zoom-In Multi-Phase Search w/ Caps)
+# Description: Dynamically reads total stat budget and upgrade levels from JSON. 
+#              Applies rigorous stat caps (Base + Upgrade 45). Uses a 3-phase 
+#              zooming grid search to find the mathematically perfect stat distribution.
 # ==============================================================================
 
 import os
@@ -22,13 +22,21 @@ from tools.verify_player import load_state_from_json
 JSON_PATH = os.path.join(BASE_DIR, "tools", "player_state.json")
 
 # Which stats do we want the optimizer to play with? 
-STATS_TO_OPTIMIZE =['Str', 'Agi', 'Luck', 'Div'] 
+STATS_TO_OPTIMIZE = ['Str', 'Agi', 'Luck', 'Div'] 
+
+# Base caps before any upgrades
+BASE_STAT_CAPS = {
+    'Str': 50,
+    'Agi': 50,
+    'Per': 25,
+    'Int': 25,
+    'Luck': 25,
+    'Div': 10,
+    'Corr': 10
+}
 
 def worker_simulate(payload):
-    """
-    Top-level worker function. 
-    Payload contains: {'stats': dict_of_stats, 'fixed_stats': dict_of_fixed_stats}
-    """
+    """Top-level worker function to execute CombatSimulator safely in parallel."""
     random.seed(os.urandom(4)) # Prevent RNG lock
     
     p = Player()
@@ -62,7 +70,7 @@ def worker_simulate(payload):
 def generate_distributions(stats_list, total_budget, step, bounds=None):
     """
     Recursively generates all valid stat combinations summing to total_budget.
-    Respects min/max bounds if provided (used for Zoom-In phases).
+    Respects strict min/max caps dictated by the bounds argument.
     """
     distributions =[]
     
@@ -103,7 +111,7 @@ def run_optimization_phase(phase_name, stats_list, budget, step, iterations, poo
     
     if not dists:
         print(f"[{phase_name}] No valid combinations found with current bounds. Falling back...")
-        return None
+        return None, None
         
     print(f"\n--- {phase_name} ---")
     print(f"Step Size: {step} | Testing {len(dists)} unique builds | Runs per build: {iterations}")
@@ -113,7 +121,6 @@ def run_optimization_phase(phase_name, stats_list, budget, step, iterations, poo
     best_summary = None
     
     for i, dist in enumerate(dists):
-        # Package payload for workers
         tasks =[{'stats': dist, 'fixed_stats': fixed_stats} for _ in range(iterations)]
         results = pool.map(worker_simulate, tasks)
         
@@ -134,18 +141,30 @@ def run_optimization_phase(phase_name, stats_list, budget, step, iterations, poo
     return best_dist, best_summary
 
 if __name__ == "__main__":
-    print("=== AI Arch Monte Carlo Optimizer (Zoom-In Search) ===")
+    print("=== AI Arch Monte Carlo Optimizer (Zoom-In Search w/ Caps) ===")
     
-    # 1. Dynamically read budget from JSON
+    # 1. Dynamically read budget and state from JSON
     temp_player = Player()
     load_state_from_json(temp_player, JSON_PATH)
     
     DYNAMIC_BUDGET = int(sum(temp_player.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
     FIXED_STATS = {k: v for k, v in temp_player.base_stats.items() if k not in STATS_TO_OPTIMIZE}
     
+    # 2. Calculate Strict Caps based on Base Caps + Upgrade #45
+    cap_increase = int(temp_player.u('H45'))
+    EFFECTIVE_CAPS = {stat: BASE_STAT_CAPS[stat] + cap_increase for stat in STATS_TO_OPTIMIZE}
+    
+    max_possible_points = sum(EFFECTIVE_CAPS[s] for s in STATS_TO_OPTIMIZE)
+    
     print(f"Target Stats to Optimize: {STATS_TO_OPTIMIZE}")
     print(f"Dynamic Budget Available: {DYNAMIC_BUDGET} points")
+    print(f"Cap Increases Unlocked:   +{cap_increase}")
+    print(f"Strict Stat Caps:         {EFFECTIVE_CAPS}")
     print(f"Fixed Stats (Ignored):    {FIXED_STATS}\n")
+    
+    if DYNAMIC_BUDGET > max_possible_points:
+        print(f"ERROR: Budget ({DYNAMIC_BUDGET}) exceeds the sum of stat caps ({max_possible_points}).")
+        sys.exit(1)
     
     ITERATIONS_PER_DIST = 100
     CPU_CORES = max(1, mp.cpu_count() - 1)
@@ -155,18 +174,18 @@ if __name__ == "__main__":
     with mp.Pool(CPU_CORES) as pool:
         # PHASE 1: Coarse Search (Jump by 15)
         step_1 = 15
-        #[FIX]: Added FIXED_STATS to the Phase 1 call
+        bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
         best_p1, _ = run_optimization_phase(
             "Phase 1: Coarse Search", STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, 
-            step_1, ITERATIONS_PER_DIST, pool, FIXED_STATS
+            step_1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p1
         )
         
-        # Setup bounds for Phase 2 based on Phase 1 winner
+        # Setup bounds for Phase 2 based on Phase 1 winner (Clamp to Effective Caps)
         bounds_p2 = {}
         if best_p1:
             for stat in STATS_TO_OPTIMIZE:
                 val = best_p1[stat]
-                bounds_p2[stat] = (max(0, val - step_1), min(DYNAMIC_BUDGET, val + step_1))
+                bounds_p2[stat] = (max(0, val - step_1), min(EFFECTIVE_CAPS[stat], val + step_1))
             
         # PHASE 2: Fine Search (Jump by 3)
         step_2 = 3
@@ -175,12 +194,12 @@ if __name__ == "__main__":
             step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2
         )
         
-        # Setup bounds for Phase 3 based on Phase 2 winner
+        # Setup bounds for Phase 3 based on Phase 2 winner (Clamp to Effective Caps)
         bounds_p3 = {}
         if best_p2:
             for stat in STATS_TO_OPTIMIZE:
                 val = best_p2[stat]
-                bounds_p3[stat] = (max(0, val - step_2), min(DYNAMIC_BUDGET, val + step_2))
+                bounds_p3[stat] = (max(0, val - step_2), min(EFFECTIVE_CAPS[stat], val + step_2))
         else:
             bounds_p3 = bounds_p2 # Fallback
             best_p2 = best_p1
@@ -200,10 +219,9 @@ if __name__ == "__main__":
     print(f"Total Computation Time: {elapsed:.2f} seconds")
     print("\nOPTIMAL STAT ALLOCATION:")
     
-    # Safe fallback printing in case of edge cases where p3 didn't execute properly
     final_best = best_p3 if best_p3 else best_p2
     for stat in STATS_TO_OPTIMIZE:
-        print(f" - {stat}: {final_best[stat]}")
+        print(f" - {stat}: {final_best[stat]} (Cap: {EFFECTIVE_CAPS[stat]})")
     for k, v in FIXED_STATS.items():
         print(f" - {k}: {v} (Fixed)")
         
