@@ -10,8 +10,15 @@ import json
 import os
 import sys
 
+# --- BULLETPROOF PATHING ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(BASE_DIR)
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+
+# Add the parent directory so it can find project_config.py
+ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
 from core.player import Player
 import project_config as cfg # <--- Added for External UI Groups
