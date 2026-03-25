@@ -785,7 +785,7 @@ with tab_optimizer:
             "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
         }
         
-        depth_choice_raw = st.radio(
+        depth_choice = st.radio(
             "Select Search Depth", 
             options=list(depth_labels.keys()), 
             format_func=lambda x: depth_labels[x],
@@ -794,7 +794,7 @@ with tab_optimizer:
         )
         
         # Derive the exact steps that will be used based on the choice
-        step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice_raw]
+        step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
         step_2 = max(2, step_1 // 3)
         step_3 = 1
         
@@ -808,7 +808,7 @@ with tab_optimizer:
         """
         
         if st.session_state.eta_profiles:
-            prof_key = next(k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice_raw))
+            prof_key = next(k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice))
             prof_data = st.session_state.eta_profiles[prof_key]
             
             # Append the ETA inside the dynamic box
