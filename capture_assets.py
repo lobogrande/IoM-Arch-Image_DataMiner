@@ -2,7 +2,7 @@
 # Script: capture_assets.py
 # Description: A safe screen snipping tool that uses a transparent Tkinter 
 #              overlay to prevent QuickTime/iPhone mirroring from registering 
-#              drag events. Perfectly aligns coordinates using root mapping.
+#              drag events. Red-box artifact fixed via mainloop deferral.
 # ==============================================================================
 
 import os
@@ -17,6 +17,7 @@ class SnipOverlay:
         self.root = root
         self.filename = filename
         self.filepath = os.path.join(ASSETS_DIR, filename)
+        self.capture_coords = None  # Store coordinates to capture AFTER window closes
         
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
         
@@ -49,45 +50,40 @@ class SnipOverlay:
         self.canvas.bind("<Button-3>", self.on_cancel)
 
     def on_click(self, event):
-        # Window coordinates (for drawing the red box on the canvas)
         self.start_x = event.x
         self.start_y = event.y
-        
-        # Absolute monitor coordinates (for the actual screenshot)
         self.start_x_root = event.x_root
         self.start_y_root = event.y_root
         
         self.rect = self.canvas.create_rectangle(
             self.start_x, self.start_y, self.start_x, self.start_y, 
-            outline='red', width=3
+            outline='red', width=2
         )
 
     def on_drag(self, event):
         if self.rect:
-            # Update the red box drawing using window coordinates
             self.canvas.coords(self.rect, self.start_x, self.start_y, event.x, event.y)
 
     def on_release(self, event):
-        # Grab the absolute monitor coordinates of where you let go
         end_x_root, end_y_root = event.x_root, event.y_root
         
-        self.root.destroy()
-        
-        # Calculate width/height using absolute coordinates
         x = min(self.start_x_root, end_x_root)
         y = min(self.start_y_root, end_y_root)
         w = abs(end_x_root - self.start_x_root)
         h = abs(end_y_root - self.start_y_root)
         
         if w > 10 and h > 10:
-            time.sleep(0.3) # Wait for the gray shield to vanish
-            # Use native Mac capture. It inherently understands Retina scaling!
-            os.system(f"screencapture -x -R {x},{y},{w},{h} '{self.filepath}'")
-            print(f"✅ Saved perfectly aligned image to: {self.filepath}")
+            # Save the coordinates to capture later
+            self.capture_coords = (x, y, w, h)
         else:
             print(">> Box too small. Capture cancelled.")
+            
+        # Shut down the UI completely
+        self.root.quit()
+        self.root.destroy()
 
     def on_cancel(self, event):
+        self.root.quit()
         self.root.destroy()
         print(">> Capture cancelled.")
 
@@ -114,7 +110,16 @@ def main():
         root = tk.Tk()
         app = SnipOverlay(root, filename)
         os.system('''/usr/bin/osascript -e 'tell app "Finder" to set frontmost of process "Python" to true' ''')
-        root.mainloop()
+        
+        # This blocks until app.root.quit() is called
+        root.mainloop() 
+        
+        # Now the UI is 100% gone. If we have coordinates, take the pristine screenshot!
+        if app.capture_coords:
+            x, y, w, h = app.capture_coords
+            time.sleep(0.2) # Give macOS a split second to clear the desktop buffer
+            os.system(f"screencapture -x -R {x},{y},{w},{h} '{app.filepath}'")
+            print(f"✅ Saved perfectly aligned image to: {app.filepath}")
 
 if __name__ == "__main__":
     main()
