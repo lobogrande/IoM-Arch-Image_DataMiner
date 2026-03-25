@@ -3,6 +3,7 @@
 # Description: A safe screen snipping tool. Features a 10ms polling loop to 
 #              guarantee the floating box is always visible, and uses absolute 
 #              global mouse tracking to perfectly bypass macOS Menu Bar offsets.
+#              (Fixed: Tkinter after-loop ghost callback crash).
 # ==============================================================================
 
 import os
@@ -18,7 +19,9 @@ class SnipOverlay:
         self.filename = filename
         self.filepath = os.path.join(ASSETS_DIR, filename)
         self.capture_coords = None  
-        self.preset_size = preset_size # Tuple: (width, height)
+        self.preset_size = preset_size 
+        self.is_running = True     # <--- Flag to safely kill the 10ms loop
+        self.loop_id = None        # <--- Store the loop ID so we can cancel it
         
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
         
@@ -35,7 +38,6 @@ class SnipOverlay:
         self.canvas = tk.Canvas(self.root, bg="gray", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         
-        # Force Tkinter to calculate window offsets (Menu Bar shift)
         self.root.update_idletasks()
         
         self.start_abs_x = None
@@ -43,12 +45,10 @@ class SnipOverlay:
         self.rect = None
         
         if self.preset_size:
-            # PRESET MODE: Create box and start 10ms polling loop
             self.rect = self.canvas.create_rectangle(0, 0, 0, 0, outline='red', width=2)
             self.update_floating_box()
             self.canvas.bind("<ButtonPress-1>", self.on_preset_click)
         else:
-            # FREEHAND MODE: Standard click and drag
             self.canvas.bind("<ButtonPress-1>", self.on_freehand_click)
             self.canvas.bind("<B1-Motion>", self.on_freehand_drag)
             self.canvas.bind("<ButtonRelease-1>", self.on_freehand_release)
@@ -57,28 +57,36 @@ class SnipOverlay:
         self.canvas.bind("<Button-2>", self.on_cancel)
         self.canvas.bind("<Button-3>", self.on_cancel)
 
+    def _shutdown(self):
+        """Safely shuts down the Tkinter UI and kills the polling loop."""
+        self.is_running = False
+        if self.loop_id:
+            self.root.after_cancel(self.loop_id)
+        self.root.quit()
+        self.root.destroy()
+
     # --- PRESET MODE LOGIC ---
     def update_floating_box(self):
         """10ms loop: Guarantees the box smoothly follows the cursor."""
+        if not self.is_running:
+            return  # Stop the loop if the window is closing
+            
         if self.preset_size and self.rect:
             w, h = self.preset_size
             
-            # 1. Get absolute monitor coordinates
             abs_x = self.root.winfo_pointerx()
             abs_y = self.root.winfo_pointery()
             
-            # 2. Subtract Tkinter's window offset so the Canvas draws it in the right visual spot
             cx = abs_x - self.root.winfo_rootx()
             cy = abs_y - self.root.winfo_rooty()
             
             self.canvas.coords(self.rect, cx - w//2, cy - h//2, cx + w//2, cy + h//2)
             
-            # Rerun this function in 10 milliseconds
-            self.root.after(10, self.update_floating_box)
+            # Save the loop ID so we can cancel it later
+            self.loop_id = self.root.after(10, self.update_floating_box)
 
     def on_preset_click(self, event):
         w, h = self.preset_size
-        # Use raw absolute monitor coordinates for the actual screenshot
         abs_x = self.root.winfo_pointerx()
         abs_y = self.root.winfo_pointery()
         
@@ -86,8 +94,7 @@ class SnipOverlay:
         y = max(0, int(abs_y - h//2))
         
         self.capture_coords = (x, y, int(w), int(h))
-        self.root.quit()
-        self.root.destroy()
+        self._shutdown()
 
     # --- FREEHAND MODE LOGIC ---
     def on_freehand_click(self, event):
@@ -125,12 +132,10 @@ class SnipOverlay:
         else:
             print(">> Box too small. Capture cancelled.")
             
-        self.root.quit()
-        self.root.destroy()
+        self._shutdown()
 
     def on_cancel(self, event):
-        self.root.quit()
-        self.root.destroy()
+        self._shutdown()
         print(">> Capture cancelled.")
 
 def main():
