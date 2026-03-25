@@ -891,7 +891,10 @@ with tab_optimizer:
                     # Phase 3: Exact Micro-Grid
                     bounds_p3 = bounds_p2
                     if best_p2:
-                        bounds_p3 = {s: (max(0, best_p2[s] - step_2), min(EFFECTIVE_CAPS[s], best_p2[s] + step_2)) for s in STATS_TO_OPTIMIZE}
+                        # Cap the Phase 3 radius to a max of 2 points.
+                        # This prevents "Fast Mode" from exploding into 160k simulations!
+                        p3_radius = min(2, step_2) 
+                        bounds_p3 = {s: (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius)) for s in STATS_TO_OPTIMIZE}
                     
                     best_p3, final_summary = run_optimization_phase(
                         "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
