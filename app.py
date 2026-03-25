@@ -789,7 +789,7 @@ with tab_optimizer:
             "Select Search Depth", 
             options=list(depth_labels.keys()), 
             format_func=lambda x: depth_labels[x],
-            horizontal=True, 
+            horizontal=False, 
             label_visibility="collapsed"
         )
         
