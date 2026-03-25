@@ -736,7 +736,8 @@ with tab_optimizer:
     col_bench, col_prof = st.columns([1, 2])
     with col_bench:
         st.write("#### 1. Hardware Benchmark")
-        if st.button("⏱️ Benchmark CPU", use_container_width=True):
+        st.write("*(Optional: Runs automatically when you start the optimizer if skipped)*")
+        if st.button("⏱️ Preview ETA / Benchmark", use_container_width=True):
             with st.spinner("Running micro-benchmark..."):
                 # Construct baseline payload
                 STATS_TO_OPTIMIZE = ['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
@@ -770,7 +771,7 @@ with tab_optimizer:
             st.info(f"**Est. Time:** {prof_data['time_label']} | **Search Space:** ~{prof_data['builds']:,.0f} builds tested")
             step_size = prof_data['step']
         else:
-            st.warning("Run benchmark to see time estimates.")
+            st.warning("Run benchmark or click Run Optimizer to see time estimates.")
             step_size = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
 
     st.divider()
@@ -778,7 +779,30 @@ with tab_optimizer:
     # --- MONTE CARLO EXECUTION LOOP ---
     if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
         st.write("---")
-        with st.spinner(f"Running {depth_choice} Optimization... (Check python terminal for live grid progress)"):
+        
+        # AUTO-BENCHMARK FAILSAFE
+        if st.session_state.sims_per_sec == 0:
+            with st.spinner("⏱️ First-time setup: Benchmarking your CPU..."):
+                STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+                payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}}
+                CPU_CORES = max(1, mp.cpu_count() - 1)
+                with mp.Pool(CPU_CORES) as pool:
+                    spd = benchmark_hardware(payload, pool)
+                    st.session_state.sims_per_sec = spd
+                    budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                    cap_increase = int(p.u('H45'))
+                    caps = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
+                    st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
+
+        # Print ETA to screen before starting the heavy load
+        prof_key = next((k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice)), None)
+        if prof_key:
+            prof_data = st.session_state.eta_profiles[prof_key]
+            step_size = prof_data['step']
+            st.info(f"⏱️ **Running {depth_choice} Search:** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
+
+        with st.spinner(f"Engine Running..."):
             start_time = time.time()
             
             # 1. Prepare Engine Data
@@ -795,13 +819,20 @@ with tab_optimizer:
             
             best_p3, final_summary = None, None
             
+            # --- LIVE UI PROGRESS BAR BRIDGE ---
+            ui_prog_bar = st.progress(0, text="Booting up engine cores...")
+            def st_progress_callback(phase_name, r_idx, r_total, task_idx, task_total):
+                pct = min(100, max(0, int((task_idx / task_total) * 100)))
+                ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims completed)")
+            
             # 2. Trigger Parallel Worker Pool
             with mp.Pool(CPU_CORES) as pool:
                 # Phase 1: Coarse Grid
                 bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
                 best_p1, _ = run_optimization_phase(
                     "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
-                    DYNAMIC_BUDGET, step_size, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p1
+                    DYNAMIC_BUDGET, step_size, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p1,
+                    progress_callback=st_progress_callback
                 )
                 
                 if best_p1:
@@ -810,7 +841,8 @@ with tab_optimizer:
                     step_2 = max(2, step_size // 3)
                     best_p2, _ = run_optimization_phase(
                         "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
-                        DYNAMIC_BUDGET, step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2
+                        DYNAMIC_BUDGET, step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2,
+                        progress_callback=st_progress_callback
                     )
                     
                     # Phase 3: Exact Micro-Grid
@@ -820,9 +852,11 @@ with tab_optimizer:
                     
                     best_p3, final_summary = run_optimization_phase(
                         "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
-                        DYNAMIC_BUDGET, 1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3
+                        DYNAMIC_BUDGET, 1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3,
+                        progress_callback=st_progress_callback
                     )
             
+            ui_prog_bar.empty() # Remove the progress bar cleanly when done!
             elapsed = time.time() - start_time
             
             # --- 3. UI RESULTS TELEMETRY ---
