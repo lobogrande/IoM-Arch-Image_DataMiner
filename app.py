@@ -2,7 +2,8 @@
 # Script: app.py
 # Layer 5: Streamlit Web UI
 # Description: Features perfect CSS Flexbox centering for Text and Images using
-#              a custom Base64 HTML injection engine. Includes 4x7 Ore Card grid.
+#              a custom Base64 HTML injection engine. Includes 4x7 Ore Card grid
+#              and dynamic Base Stat image rendering.
 # ==============================================================================
 
 import streamlit as st
@@ -20,10 +21,14 @@ from PIL import Image
 # Adjust these numbers, hit Save, and watch your browser instantly update!
 # ==============================================================================
 
+# --- BASE STATS ---
+# Width of the stat icons
+UI_STAT_IMG_WIDTH = 60
+
 # --- INTERNAL UPGRADES ---
 # The layout ratio for the single-column feed:[Left_Spacer, Center_Feed, Right_Spacer]
 # To shrink the center box: Increase the outer numbers (e.g.,[2, 2, 2] or [1, 1, 1])
-# To widen the center box: Increase the middle number (e.g., [1, 3, 1])
+# To widen the center box: Increase the middle number (e.g.,[1, 3, 1])
 UI_INT_COL_RATIO = [1, 1, 1]  
 
 # --- EXTERNAL UPGRADES ---
@@ -47,7 +52,7 @@ UI_EXT_CARD_CORE_Y_OFFSET = -4
 # Width of the generated cards in the 4x7 grid
 UI_ORE_CARD_WIDTH = 100
 # Y-Offset specifically for Ore Card cores
-UI_ORE_CARD_Y_OFFSET = -4
+UI_ORE_CARD_Y_OFFSET = -8
 # ==============================================================================
 # ==============================================================================
 
@@ -198,12 +203,25 @@ with tab_stats:
         
         if widget_key not in st.session_state:
             st.session_state[widget_key] = safe_val
-        
-        st.number_input(
-            f"{label} (Max: {max_val})",
-            key=widget_key, step=1, on_change=enforce_caps,
-            args=(widget_key, 0, max_val, label)
-        )
+            
+        with st.container(border=True):
+            # Centered Title
+            st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{label}</b><br><small>(Max: {max_val})</small></div>", unsafe_allow_html=True)
+            
+            # Centered Image
+            img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_key.lower()}.png")
+            if os.path.exists(img_path):
+                render_centered_image(img_path, UI_STAT_IMG_WIDTH)
+            else:
+                st.markdown("<div style='text-align: center; color: gray;'><br><small>(Icon Missing)</small><br><br></div>", unsafe_allow_html=True)
+            
+            # Number Input
+            st.number_input(
+                f"{label} (Max: {max_val})",
+                key=widget_key, step=1, on_change=enforce_caps,
+                args=(widget_key, 0, max_val, label),
+                label_visibility="collapsed"
+            )
         p.base_stats[stat_key] = st.session_state[widget_key]
 
     col1, col2, col3, col4 = st.columns(4)
@@ -220,8 +238,8 @@ with tab_stats:
         if p.asc2_unlocked:
             render_stat("Corruption", 'Corr')
         else:
+            # Silently keep Corruption at 0 without a spoiler message
             p.base_stats['Corr'] = 0
-            st.info("Corruption is locked until Ascension 2.")
 
 with tab_upgrades:
     sub_internal, sub_external = st.tabs(["Internal Upgrades", "External Upgrades"])
@@ -403,7 +421,6 @@ with tab_cards:
                             on_change=update_card_level, args=(widget_key, card_id),
                             label_visibility="collapsed"
                         )
-
 
 with tab_optimizer:
     st.subheader("Target Optimization")
