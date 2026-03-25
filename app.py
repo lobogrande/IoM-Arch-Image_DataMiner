@@ -47,7 +47,7 @@ UI_EXT_CARD_CORE_Y_OFFSET = -4
 # Width of the generated cards in the 4x7 grid
 UI_ORE_CARD_WIDTH = 100
 # Y-Offset specifically for Ore Card cores
-UI_ORE_CARD_Y_OFFSET = -8
+UI_ORE_CARD_Y_OFFSET = -4
 # ==============================================================================
 # ==============================================================================
 
