@@ -17,16 +17,29 @@ from PIL import Image
 
 # ==============================================================================
 # 🎨 UI TWEAK PANEL 🎨
+# Adjust these numbers, hit Save, and watch your browser instantly update!
 # ==============================================================================
+
+# --- INTERNAL UPGRADES ---
+# The layout ratio for the single-column feed: [Left_Spacer, Center_Feed, Right_Spacer]
+# To shrink the center box: Increase the outer numbers (e.g., [2, 2, 2] or [1, 1, 1])
+# To widen the center box: Increase the middle number (e.g., [1, 3, 1])
 UI_INT_COL_RATIO = [1, 1, 1]  
 
+# --- EXTERNAL UPGRADES ---
+# How many columns to display in the external upgrades grid?
+# Higher number = narrower boxes. (Try 5 or 6 if the boxes feel too wide!)
 UI_EXT_GRID_COLS = 5
-UI_EXT_IMG_STD     = 100  
-UI_EXT_IMG_CARD    = 80   
-UI_EXT_SKILL_ICON  = 50   
-UI_EXT_SKILL_TEXT  = 160  
+
+# Image Pixel Widths for External Upgrades
+UI_EXT_IMG_STD     = 100  # Size of standard icons (Hestia, Geoduck, Dino)
+UI_EXT_IMG_CARD    = 80   # Size of the composited Card
+UI_EXT_SKILL_ICON  = 50   # Size of the Skill Icon (files ending in _1.png)
+UI_EXT_SKILL_TEXT  = 160  # Size of the Skill Description (files ending in _2.png)
+
 # ==============================================================================
 
+# --- PATH RESOLUTION ---
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 SIM_DIR = os.path.join(ROOT_DIR, "07_Modeling_and_Simulation")
 if SIM_DIR not in sys.path:
@@ -187,6 +200,7 @@ with tab_upgrades:
                 continue
             active_upgrades.append((upg_id, upg_data))
             
+        # UI TWEAK: Uses the ratio from the top of the file
         spacer_left, center_col, spacer_right = st.columns(UI_INT_COL_RATIO)
         
         with center_col:
@@ -219,6 +233,7 @@ with tab_upgrades:
                     p.set_upgrade_level(upg_id, st.session_state[widget_key])
 
     with sub_external:
+        # UI TWEAK: Uses the column count from the top of the file
         cols_ext = st.columns(UI_EXT_GRID_COLS)
         
         for idx, group in enumerate(cfg.EXTERNAL_UI_GROUPS):
@@ -241,6 +256,7 @@ with tab_upgrades:
                         for img_name in group.get("imgs",[]):
                             img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", img_name)
                             if os.path.exists(img_path):
+                                # Differentiate between icon and text images
                                 if "_1.png" in img_name:
                                     render_centered_image(img_path, UI_EXT_SKILL_ICON)
                                 else:
