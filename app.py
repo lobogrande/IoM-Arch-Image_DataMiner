@@ -2,7 +2,7 @@
 # Script: app.py
 # Layer 5: Streamlit Web UI
 # Description: Features perfect CSS Flexbox centering for Text and Images using
-#              a custom Base64 HTML injection engine.
+#              a custom Base64 HTML injection engine. Includes 4x7 Ore Card grid.
 # ==============================================================================
 
 import streamlit as st
@@ -21,8 +21,8 @@ from PIL import Image
 # ==============================================================================
 
 # --- INTERNAL UPGRADES ---
-# The layout ratio for the single-column feed: [Left_Spacer, Center_Feed, Right_Spacer]
-# To shrink the center box: Increase the outer numbers (e.g., [2, 2, 2] or [1, 1, 1])
+# The layout ratio for the single-column feed:[Left_Spacer, Center_Feed, Right_Spacer]
+# To shrink the center box: Increase the outer numbers (e.g.,[2, 2, 2] or [1, 1, 1])
 # To widen the center box: Increase the middle number (e.g., [1, 3, 1])
 UI_INT_COL_RATIO = [1, 1, 1]  
 
@@ -34,14 +34,20 @@ UI_INT_COL_RATIO = [1, 1, 1]
 UI_EXT_COL_RATIO =[1, 2, 2, 2, 1]
 
 # Image Pixel Widths for External Upgrades
-UI_EXT_IMG_STD     = 100  # Size of standard icons (Hestia, Geoduck, Dino)
+UI_EXT_IMG_STD     = 120  # Size of standard icons (Hestia, Geoduck, Dino)
 UI_EXT_IMG_CARD    = 80   # Size of the composited Card
 UI_EXT_SKILL_ICON  = 50   # Size of the Skill Icon (files ending in _1.png)
-UI_EXT_SKILL_TEXT  = 160  # Size of the Skill Description (files ending in _2.png)
+UI_EXT_SKILL_TEXT  = 250  # Size of the Skill Description (files ending in _2.png)
 
 # Card Core Alignment
 # Negative numbers move the core image UP. Positive numbers move it DOWN.
 UI_EXT_CARD_CORE_Y_OFFSET = -4 
+
+# --- ORE CARDS ---
+# Width of the generated cards in the 4x7 grid
+UI_ORE_CARD_WIDTH = 100
+# Y-Offset specifically for Ore Card cores
+UI_ORE_CARD_Y_OFFSET = -8
 # ==============================================================================
 # ==============================================================================
 
@@ -55,7 +61,7 @@ from core.player import Player
 from tools.verify_player import load_state_from_json
 import project_config as cfg
 
-# --- AUTO-CLAMPING CALLBACK ---
+# --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
     val = st.session_state[key]
     if val > max_val:
@@ -70,36 +76,50 @@ def update_external_group(group_id, rows):
     for r in rows:
         st.session_state.player.set_external_level(r, int(val))
 
-# --- IMAGE CENTERING & COMPOSITING HELPERS ---
-def render_centered_image(img_source, width):
+def update_card_level(widget_key, card_id):
+    """Callback to sync a UI widget value directly to the Player's card inventory."""
+    val = st.session_state[widget_key]
+    st.session_state.player.set_card_level(card_id, int(val))
+
+# --- IMAGE CENTERING & SCALING HELPERS ---
+def render_centered_image(img_source, target_width):
     """
-    Bypasses Streamlit's left-alignment by converting the image to Base64 and centering it via HTML.
-    Uses strict CSS width and 'pixelated' rendering to keep upscaled game art razor sharp!
+    Physically resizes the image using PIL Nearest Neighbor for razor-sharp 
+    retro pixels, completely bypassing Streamlit CSS rendering bugs.
     """
+    # 1. Load image into PIL
     if isinstance(img_source, str):
-        with open(img_source, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode()
+        img = Image.open(img_source).convert("RGBA")
     else:
-        buffered = BytesIO()
-        img_source.save(buffered, format="PNG")
-        encoded = base64.b64encode(buffered.getvalue()).decode()
+        img = img_source
         
+    # 2. Scale it physically in memory
+    w_percent = (target_width / float(img.width))
+    target_height = int((float(img.height) * float(w_percent)))
+    img_resized = img.resize((target_width, target_height), Image.NEAREST)
+    
+    # 3. Convert to Base64
+    buffered = BytesIO()
+    img_resized.save(buffered, format="PNG")
+    encoded = base64.b64encode(buffered.getvalue()).decode()
+        
+    # 4. Inject into centered HTML
     html = f"""
     <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-        <img src="data:image/png;base64,{encoded}" style="width: {width}px; min-width: {width}px; height: auto; image-rendering: pixelated; image-rendering: crisp-edges;">
+        <img src="data:image/png;base64,{encoded}">
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
 
-def composite_card(bg_path):
-    core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "20_Misc_Arch_Ability_face.png")
+def composite_card(bg_path, core_path, y_offset):
+    """Dynamically overlays ANY core asset onto a dynamic background."""
     try:
         bg = Image.open(bg_path).convert("RGBA")
         fg = Image.open(core_path).convert("RGBA")
         
         offset_x = (bg.width - fg.width) // 2
-        # Apply the user's custom offset to shift the core up or down
-        offset_y = ((bg.height - fg.height) // 2) + UI_EXT_CARD_CORE_Y_OFFSET
+        # Apply the custom offset to shift the core up or down into the frame
+        offset_y = ((bg.height - fg.height) // 2) + y_offset
         
         composite = bg.copy()
         composite.paste(fg, (offset_x, offset_y), mask=fg)
@@ -122,6 +142,7 @@ if 'player' not in st.session_state:
 p = st.session_state.player
 st.set_page_config(page_title="AI Arch Optimizer", layout="wide", page_icon="⛏️")
 
+
 # ==========================================
 # SIDEBAR
 # ==========================================
@@ -136,8 +157,10 @@ with st.sidebar:
         load_state_from_json(p, temp_path)
         os.remove(temp_path)
         
+        # Flush existing widget keys so they resync to the new JSON file!
         for k in list(st.session_state.keys()):
-            if k.startswith("upg_") or k.startswith("stat_") or k.startswith("ext_"):
+            # Included 'card_' in the flush check so the 4x7 grid updates instantly on upload
+            if k.startswith("upg_") or k.startswith("stat_") or k.startswith("ext_") or k.startswith("card_"):
                 del st.session_state[k]
         st.success("Save file loaded!")
     
@@ -159,8 +182,9 @@ STAT_CAPS = {
     'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
 }
 
+# --- RENAMED TAB ---
 tab_stats, tab_upgrades, tab_cards, tab_optimizer = st.tabs([
-    "📊 Base Stats", "⬆️ Upgrades", "🃏 Cards", "🚀 Run Optimizer"
+    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🚀 Run Optimizer"
 ])
 
 with tab_stats:
@@ -231,8 +255,7 @@ with tab_upgrades:
                     st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{name}</b><br><small>(Max: {max_lvl})</small></div>", unsafe_allow_html=True)
                     
                     if os.path.exists(img_path):
-                        # Internal upgrades can still use container width since they are in a heavily constrained column, 
-                        # but you can swap this for render_centered_image(img_path, 200) if you prefer!
+                        # Internal upgrades can still use container width since they are in a heavily constrained column
                         st.image(img_path, use_container_width=True)
                     
                     st.number_input(
@@ -284,7 +307,10 @@ with tab_upgrades:
                         tier = st.session_state[widget_key]
                         if tier > 0:
                             bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{tier}.png")
-                            comp_img = composite_card(bg_path)
+                            # Passed the explicit core path and offset here
+                            core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "20_Misc_Arch_Ability_face.png")
+                            comp_img = composite_card(bg_path, core_path, UI_EXT_CARD_CORE_Y_OFFSET)
+                            
                             if comp_img:
                                 render_centered_image(comp_img, UI_EXT_IMG_CARD)
                             else:
@@ -324,9 +350,60 @@ with tab_upgrades:
                             label_visibility="collapsed"
                         )
 
+# --- TAB 3: ORE CARDS ---
 with tab_cards:
-    st.subheader("Card Collection")
-    st.write("Card UI coming soon...")
+    st.subheader("Ore Card Collection")
+    
+    ore_types =['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
+    
+    # Loop over the 4 Tiers (Rows)
+    for tier_num in range(1, 5):
+        # Create exactly 7 columns for the 7 Ore types
+        cols_cards = st.columns(7)
+        
+        for col_idx, o_type in enumerate(ore_types):
+            card_id = f"{o_type}{tier_num}"
+            widget_key = f"card_{card_id}"
+            
+            current_lvl = int(p.cards.get(card_id, 0))
+            if widget_key not in st.session_state:
+                st.session_state[widget_key] = current_lvl
+                
+            with cols_cards[col_idx]:
+                with st.container(border=True):
+                    # Title
+                    st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{card_id.capitalize()}</b></div>", unsafe_allow_html=True)
+                    
+                    user_tier = st.session_state[widget_key]
+                    
+                    # --- DYNAMIC CARD COMPOSITING ---
+                    if user_tier > 0:
+                        bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{user_tier}.png")
+                        core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
+                        
+                        comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_Y_OFFSET)
+                        if comp_img:
+                            render_centered_image(comp_img, UI_ORE_CARD_WIDTH)
+                        else:
+                            st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div><br>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div style='text-align: center; color: gray;'><br><small>(Not Unlocked)</small><br><br></div>", unsafe_allow_html=True)
+                        
+                    st.divider()
+                    
+                    # --- ASC2 LOCK LOGIC ---
+                    is_locked = (tier_num == 4 and not p.asc2_unlocked)
+                    
+                    if is_locked:
+                        st.markdown("<div style='text-align: center; color: #ff4b4b;'><small>Locked (Asc2)</small></div>", unsafe_allow_html=True)
+                    else:
+                        st.number_input(
+                            f"Lvl##{card_id}", min_value=0, max_value=4,
+                            key=widget_key, step=1,
+                            on_change=update_card_level, args=(widget_key, card_id),
+                            label_visibility="collapsed"
+                        )
+
 
 with tab_optimizer:
     st.subheader("Target Optimization")
