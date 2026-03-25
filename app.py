@@ -72,20 +72,21 @@ def update_external_group(group_id, rows):
 
 # --- IMAGE CENTERING & COMPOSITING HELPERS ---
 def render_centered_image(img_source, width):
-    """Bypasses Streamlit's left-alignment by converting the image to Base64 and centering it via HTML."""
+    """
+    Bypasses Streamlit's left-alignment by converting the image to Base64 and centering it via HTML.
+    Uses strict CSS width and 'pixelated' rendering to keep upscaled game art razor sharp!
+    """
     if isinstance(img_source, str):
-        # It's a file path
         with open(img_source, "rb") as f:
             encoded = base64.b64encode(f.read()).decode()
     else:
-        # It's a PIL Image object (from our card compositing)
         buffered = BytesIO()
         img_source.save(buffered, format="PNG")
         encoded = base64.b64encode(buffered.getvalue()).decode()
         
     html = f"""
     <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-        <img src="data:image/png;base64,{encoded}" width="{width}px">
+        <img src="data:image/png;base64,{encoded}" style="width: {width}px; min-width: {width}px; height: auto; image-rendering: pixelated; image-rendering: crisp-edges;">
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
