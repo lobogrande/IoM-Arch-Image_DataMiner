@@ -36,6 +36,7 @@ class RunState:
         self.total_xp = 0.0
         self.total_frags = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0}
         self.ores_mined = 0
+        self.specific_ores_mined = {} # <-- ADD THIS LINE
         self.highest_floor = 1
         
         # --- TELEMETRY DATA ---
@@ -91,7 +92,9 @@ class CombatSimulator:
             state.speed_pool += ore.modifiers.get('speed_gain', 0.0)
             
         state.ores_mined += 1
-
+        ore_id = ore.ore_id
+        state.specific_ores_mined[ore_id] = state.specific_ores_mined.get(ore_id, 0) + 1
+        
     def run_simulation(self):
         state = RunState(self.player)
         skills = SkillManager(self.player)
