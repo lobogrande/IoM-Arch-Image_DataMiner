@@ -1,8 +1,8 @@
 # ==============================================================================
 # Script: capture_assets.py
 # Description: A safe screen snipping tool that uses a transparent Tkinter 
-#              overlay to prevent QuickTime/iPhone mirroring from registering 
-#              drag events. Red-box artifact fixed via mainloop deferral.
+#              overlay. Features a "Floating Preset Mode" to perfectly 
+#              standardize crop sizes for uniform UI assets.
 # ==============================================================================
 
 import os
@@ -13,15 +13,15 @@ ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 ASSETS_DIR = os.path.join(ROOT_DIR, 'assets')
 
 class SnipOverlay:
-    def __init__(self, root, filename):
+    def __init__(self, root, filename, preset_size=None):
         self.root = root
         self.filename = filename
         self.filepath = os.path.join(ASSETS_DIR, filename)
-        self.capture_coords = None  # Store coordinates to capture AFTER window closes
+        self.capture_coords = None  
+        self.preset_size = preset_size # Tuple: (width, height)
         
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
         
-        # Borderless window to prevent Mac from moving us to a new desktop
         self.root.overrideredirect(True)
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
@@ -41,14 +41,46 @@ class SnipOverlay:
         self.start_y_root = None
         self.rect = None
         
-        self.canvas.bind("<ButtonPress-1>", self.on_click)
-        self.canvas.bind("<B1-Motion>", self.on_drag)
-        self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        # --- BINDINGS BASED ON MODE ---
+        if self.preset_size:
+            # Preset Mode: Floating box that captures on a single click
+            self.canvas.bind("<Motion>", self.on_hover)
+            self.canvas.bind("<ButtonPress-1>", self.on_preset_click)
+        else:
+            # Freehand Mode: Click and drag to define a new box
+            self.canvas.bind("<ButtonPress-1>", self.on_click)
+            self.canvas.bind("<B1-Motion>", self.on_drag)
+            self.canvas.bind("<ButtonRelease-1>", self.on_release)
         
         self.root.bind("<Escape>", self.on_cancel)
         self.canvas.bind("<Button-2>", self.on_cancel)
         self.canvas.bind("<Button-3>", self.on_cancel)
 
+    # --- PRESET MODE LOGIC ---
+    def on_hover(self, event):
+        """Moves the standardized red box to follow the cursor."""
+        w, h = self.preset_size
+        x1, y1 = event.x - w//2, event.y - h//2
+        x2, y2 = event.x + w//2, event.y + h//2
+        
+        if self.rect:
+            self.canvas.coords(self.rect, x1, y1, x2, y2)
+        else:
+            self.rect = self.canvas.create_rectangle(
+                x1, y1, x2, y2, outline='red', width=2
+            )
+
+    def on_preset_click(self, event):
+        """Locks the box and captures instantly."""
+        w, h = self.preset_size
+        x1_root = event.x_root - w//2
+        y1_root = event.y_root - h//2
+        
+        self.capture_coords = (x1_root, y1_root, w, h)
+        self.root.quit()
+        self.root.destroy()
+
+    # --- FREEHAND MODE LOGIC ---
     def on_click(self, event):
         self.start_x = event.x
         self.start_y = event.y
@@ -73,12 +105,10 @@ class SnipOverlay:
         h = abs(end_y_root - self.start_y_root)
         
         if w > 10 and h > 10:
-            # Save the coordinates to capture later
             self.capture_coords = (x, y, w, h)
         else:
             print(">> Box too small. Capture cancelled.")
             
-        # Shut down the UI completely
         self.root.quit()
         self.root.destroy()
 
@@ -87,37 +117,58 @@ class SnipOverlay:
         self.root.destroy()
         print(">> Capture cancelled.")
 
+
 def main():
-    print("=== AI Arch Safe Asset Capturer ===")
+    print("=== AI Arch Asset Capturer (Standardized Dimensions) ===")
     print("1. Type your filename (e.g. 'stats/str') and press Enter.")
-    print("2. Your screen will dim. Click and drag a red box over the target.")
-    print("3. Release to capture. (Right-Click or ESC to cancel).\n")
+    print("2. The script will remember your box size for the next image!")
+    print("3. To draw a NEW size, prefix your filename with 'n ' (e.g. 'n upgrades/3').\n")
+    
+    last_size = None
     
     while True:
         print("-" * 50)
-        filename = input(">> Enter filename (or 'q' to quit): ").strip()
         
-        if filename.lower() == 'q':
+        if last_size:
+            prompt = f">> Enter filename (Standard Box: {last_size[0]}x{last_size[1]}). Type 'n [name]' to redraw:\n>> "
+        else:
+            prompt = ">> Enter filename (or 'q' to quit):\n>> "
+            
+        raw_input = input(prompt).strip()
+        
+        if raw_input.lower() == 'q':
             print("Exiting tool. Happy UI building!")
             break
             
-        if not filename:
+        if not raw_input:
             continue
+            
+        # Check if user wants to force a new freehand draw
+        force_new = False
+        if raw_input.lower().startswith('n '):
+            force_new = True
+            filename = raw_input[2:].strip()
+        else:
+            filename = raw_input
             
         if not filename.endswith('.png'):
             filename += '.png'
             
+        use_size = None if force_new else last_size
+            
         root = tk.Tk()
-        app = SnipOverlay(root, filename)
+        app = SnipOverlay(root, filename, preset_size=use_size)
         os.system('''/usr/bin/osascript -e 'tell app "Finder" to set frontmost of process "Python" to true' ''')
         
-        # This blocks until app.root.quit() is called
         root.mainloop() 
         
-        # Now the UI is 100% gone. If we have coordinates, take the pristine screenshot!
         if app.capture_coords:
             x, y, w, h = app.capture_coords
-            time.sleep(0.2) # Give macOS a split second to clear the desktop buffer
+            
+            # Save these dimensions for the next run!
+            last_size = (w, h)
+            
+            time.sleep(0.2) 
             os.system(f"screencapture -x -R {x},{y},{w},{h} '{app.filepath}'")
             print(f"✅ Saved perfectly aligned image to: {app.filepath}")
 
