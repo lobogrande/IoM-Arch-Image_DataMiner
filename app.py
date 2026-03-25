@@ -248,8 +248,8 @@ STAT_CAPS = {
     'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
 }
 
-tab_stats, tab_upgrades, tab_cards, tab_optimizer = st.tabs([
-    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🚀 Run Optimizer"
+tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_optimizer = st.tabs([
+    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🧮 Calculated Stats", "🚀 Run Optimizer"
 ])
 
 # --- TAB 1: BASE STATS ---
@@ -424,6 +424,10 @@ with tab_upgrades:
                     st.divider()
 
                     # --- WIDGET LOGIC ---
+                    # Inject custom subtext for Geoduck
+                    if group['id'] == 'geoduck':
+                        st.markdown("<div style='text-align: center; color: gray; margin-top: -10px; margin-bottom: 10px;'><small>Enter Number of Mythic Chests Opened</small></div>", unsafe_allow_html=True)
+
                     if ui_type in["number", "pet"]:
                         max_val = group.get("max", 999)
                         min_val = -1 if ui_type == "pet" else 0
@@ -507,6 +511,64 @@ with tab_cards:
                             label_visibility="collapsed"
                         )
 
+# --- TAB 4: CALCULATED STATS ---
+with tab_calc_stats:
+    st.subheader("Calculated Player Stats")
+    st.write("This is the exact mathematical output derived from your Base Stats, Upgrades, and Cards being fed into the Engine.")
+    
+    col_calc_1, col_calc_2, col_calc_3 = st.columns(3)
+    
+    with col_calc_1:
+        with st.container(border=True):
+            st.markdown("#### ⚔️ Combat & Crits")
+            st.write(f"**Max Stamina:** {p.max_sta:,.0f}")
+            st.write(f"**Damage:** {p.damage:,.0f}")
+            st.write(f"**Armor Pen:** {p.armor_pen:,.0f}")
+            st.divider()
+            st.write(f"**Crit Chance:** {p.crit_chance*100:,.2f}%")
+            st.write(f"**Crit Dmg:** {p.crit_dmg_mult:,.2f}x")
+            st.write(f"**Super Crit Chance:** {p.super_crit_chance*100:,.2f}%")
+            st.write(f"**Super Crit Dmg:** {p.super_crit_dmg_mult:,.2f}x")
+            st.write(f"**Ultra Crit Chance:** {p.ultra_crit_chance*100:,.2f}%")
+            st.write(f"**Ultra Crit Dmg:** {p.ultra_crit_dmg_mult:,.2f}x")
+
+    with col_calc_2:
+        with st.container(border=True):
+            st.markdown("#### 💰 Economy & Modifiers")
+            st.write(f"**EXP Gain Multiplier:** {p.exp_gain_mult:,.2f}x")
+            st.write(f"**Frag/Loot Multiplier:** {p.frag_loot_gain_mult:,.2f}x")
+            st.divider()
+            st.write(f"**EXP Mod Chance:** {p.exp_mod_chance*100:,.2f}% *(Mod Multi: {p.exp_mod_gain:,.2f}x)*")
+            st.write(f"**Loot Mod Chance:** {p.loot_mod_chance*100:,.2f}% *(Mod Multi: {p.loot_mod_gain:,.2f}x)*")
+            st.write(f"**Stamina Mod Chance:** {p.stamina_mod_chance*100:,.2f}% *(Mod Gain: +{p.stamina_mod_gain:,.0f} Stamina)*")
+            st.write(f"**Speed Mod Chance:** {p.speed_mod_chance*100:,.2f}% *(Mod Gain: +{p.speed_mod_gain:,.0f} 2x spd atks)*")
+            st.divider()
+            st.write(f"**Crosshair Auto-Tap Chance:** {p.crosshair_auto_tap*100:,.2f}%")
+            st.write(f"**Gold Crosshair Chance:** {p.gold_crosshair_chance*100:,.2f}% *(Mult: {p.gold_crosshair_mult:,.2f}x)*")
+
+    with col_calc_3:
+        with st.container(border=True):
+            st.markdown("#### ⚡ Abilities")
+            st.write(f"**Instacharge Chance:** {p.ability_insta_charge*100:,.2f}%")
+            st.divider()
+            st.write(f"**Enrage:** {p.enrage_charges:,.0f} charges *(CD: {p.enrage_cooldown:,.1f}s)*")
+            st.write(f"*- Dmg Bonus:* +{p.enrage_bonus_dmg*100:,.0f}%")
+            st.write(f"*- Crit Bonus:* +{p.enrage_bonus_crit_dmg*100:,.0f}%")
+            st.divider()
+            st.write(f"**Flurry:** {p.flurry_duration:,.0f}s *(CD: {p.flurry_cooldown:,.1f}s)*")
+            st.write(f"*- Stamina Gain:* {p.flurry_sta_on_cast:,.0f}")
+            st.write(f"*- +100% Atk Speed")
+            st.divider()
+            st.write(f"**Quake:** {p.quake_attacks:,.0f} atks *(CD: {p.quake_cooldown:,.1f}s)*")
+            st.write(f"*- Splash Dmg:* {p.quake_dmg_to_all*100:,.0f}%")
+        
+        # Conditionally render the endgame variables!
+        if p.asc2_unlocked:
+            with st.container(border=True):
+                st.markdown("#### 🌌 Ascension 2")
+                st.write(f"**Gleaming Chance:** {p.gleaming_floor_chance*100:,.2f}%")
+                st.write(f"**Gleaming Multiplier:** {p.gleaming_floor_multi:,.2f}x")
+                st.write(f"**Infernal Multiplier:** {p.infernal_multiplier:,.4f}x")
 
 with tab_optimizer:
     st.subheader("Target Optimization")
