@@ -1,8 +1,8 @@
 # ==============================================================================
 # Script: app.py
 # Layer 5: Streamlit Web UI
-# Description: Internal upgrades are now presented in a single centered vertical 
-#              feed to perfectly mimic the in-game UI scrolling experience.
+# Description: Features a dedicated UI Tweak Panel so the user can rapidly
+#              adjust image sizes, box widths, and layout ratios via hot-reload.
 # ==============================================================================
 
 import streamlit as st
@@ -13,6 +13,31 @@ import math
 import glob
 from PIL import Image
 
+# ==============================================================================
+# 🎨 UI TWEAK PANEL 🎨
+# Adjust these numbers, hit Save, and watch your browser instantly update!
+# ==============================================================================
+
+# --- INTERNAL UPGRADES ---
+# The layout ratio for the single-column feed: [Left_Spacer, Center_Feed, Right_Spacer]
+# To shrink the center box: Increase the outer numbers (e.g., [2, 2, 2] or [1, 1, 1])
+# To widen the center box: Increase the middle number (e.g., [1, 3, 1])
+UI_INT_COL_RATIO = [1, 1, 1]  
+
+# --- EXTERNAL UPGRADES ---
+# How many columns to display in the external upgrades grid?
+# Higher number = narrower boxes. (Try 5 or 6 if the boxes feel too wide!)
+UI_EXT_GRID_COLS = 5
+
+# Image Pixel Widths for External Upgrades
+UI_EXT_IMG_STD     = 100  # Size of standard icons (Hestia, Geoduck, Dino)
+UI_EXT_IMG_CARD    = 80   # Size of the composited Card
+UI_EXT_SKILL_ICON  = 50   # Size of the Skill Icon (files ending in _1.png)
+UI_EXT_SKILL_TEXT  = 160  # Size of the Skill Description (files ending in _2.png)
+
+# ==============================================================================
+
+# --- PATH RESOLUTION ---
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 SIM_DIR = os.path.join(ROOT_DIR, "07_Modeling_and_Simulation")
 if SIM_DIR not in sys.path:
@@ -33,13 +58,11 @@ def enforce_caps(key, min_val, max_val, item_name):
         st.toast(f"⚠️ **{item_name}** below limit. Clamped to Min ({min_val}).")
 
 def update_external_group(group_id, rows):
-    """Callback to sync a UI widget value to all corresponding engine rows."""
     val = st.session_state[group_id]
     for r in rows:
         st.session_state.player.set_external_level(r, int(val))
 
 def composite_card(bg_path):
-    """Overlays the hardcoded core asset onto a dynamic background."""
     core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "20_Misc_Arch_Ability_face.png")
     try:
         bg = Image.open(bg_path).convert("RGBA")
@@ -52,9 +75,7 @@ def composite_card(bg_path):
     except Exception as e:
         return None
 
-# --- ASSET HELPERS ---
 def find_external_image(upg_id):
-    """Uses glob to find images with prefixes like '4_hestia.png'."""
     pattern = os.path.join(ROOT_DIR, "assets", "upgrades", "external", f"{upg_id}_*.png")
     matches = glob.glob(pattern)
     if matches:
@@ -110,7 +131,6 @@ tab_stats, tab_upgrades, tab_cards, tab_optimizer = st.tabs([
     "📊 Base Stats", "⬆️ Upgrades", "🃏 Cards", "🚀 Run Optimizer"
 ])
 
-# --- TAB 1: BASE STATS ---
 with tab_stats:
     st.subheader("Base Stat Allocation")
     
@@ -147,22 +167,19 @@ with tab_stats:
             p.base_stats['Corr'] = 0
             st.info("Corruption is locked until Ascension 2.")
 
-# --- TAB 2: UPGRADES ---
 with tab_upgrades:
     sub_internal, sub_external = st.tabs(["Internal Upgrades", "External Upgrades"])
     
     with sub_internal:
         asc2_locked_rows =[17, 19, 34, 46, 52, 55]
-        
-        # 1. Pre-filter active upgrades
         active_upgrades =[]
         for upg_id, upg_data in p.UPGRADE_DEF.items():
             if not p.asc2_unlocked and upg_id in asc2_locked_rows:
                 continue
             active_upgrades.append((upg_id, upg_data))
             
-        # 2. Use a centered column to mimic a mobile phone UI / feed view
-        spacer_left, center_col, spacer_right = st.columns([1, 2, 1])
+        # UI TWEAK: Uses the ratio from the top of the file
+        spacer_left, center_col, spacer_right = st.columns(UI_INT_COL_RATIO)
         
         with center_col:
             for i, (upg_id, upg_data) in enumerate(active_upgrades):
@@ -191,7 +208,8 @@ with tab_upgrades:
                     p.set_upgrade_level(upg_id, st.session_state[widget_key])
 
     with sub_external:
-        cols_ext = st.columns(4)
+        # UI TWEAK: Uses the column count from the top of the file
+        cols_ext = st.columns(UI_EXT_GRID_COLS)
         
         for idx, group in enumerate(cfg.EXTERNAL_UI_GROUPS):
             widget_key = f"ext_{group['id']}"
@@ -199,30 +217,34 @@ with tab_upgrades:
             rows = group['rows']
             
             current_val = int(p.external_levels.get(rows[0], 0))
-            
             if widget_key not in st.session_state:
                 st.session_state[widget_key] = current_val
 
-            with cols_ext[idx % 4]:
+            with cols_ext[idx % UI_EXT_GRID_COLS]:
                 with st.container(border=True):
                     st.markdown(f"**{group['name']}**")
                     
+                    # --- ASSET LOADING WITH TWEAKABLE SIZES ---
                     if ui_type == "skill":
                         for img_name in group.get("imgs",[]):
                             img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", img_name)
                             if os.path.exists(img_path):
-                                st.image(img_path, width=150)
+                                # Differentiate between icon and text images
+                                if "_1.png" in img_name:
+                                    st.image(img_path, width=UI_EXT_SKILL_ICON)
+                                else:
+                                    st.image(img_path, width=UI_EXT_SKILL_TEXT)
                     elif "img" in group and group["img"]:
                         img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", group["img"])
                         if os.path.exists(img_path):
-                            st.image(img_path, width=150)
+                            st.image(img_path, width=UI_EXT_IMG_STD)
                     elif ui_type == "card":
                         tier = st.session_state[widget_key]
                         if tier > 0:
                             bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{tier}.png")
                             comp_img = composite_card(bg_path)
                             if comp_img:
-                                st.image(comp_img, width=80)
+                                st.image(comp_img, width=UI_EXT_IMG_CARD)
                             else:
                                 st.caption("(Card Assets Missing)")
                         else:
@@ -230,7 +252,7 @@ with tab_upgrades:
 
                     st.divider()
 
-                    if ui_type in["number", "pet"]:
+                    if ui_type in ["number", "pet"]:
                         max_val = group.get("max", 999)
                         min_val = -1 if ui_type == "pet" else 0
                         
@@ -238,39 +260,31 @@ with tab_upgrades:
                             st.caption("Status: Not Owned")
                             
                         st.number_input(
-                            f"Level##{group['id']}", 
-                            min_value=min_val, max_value=max_val,
-                            key=widget_key, step=1,
-                            on_change=update_external_group, args=(widget_key, rows),
+                            f"Level##{group['id']}", min_value=min_val, max_value=max_val,
+                            key=widget_key, step=1, on_change=update_external_group, args=(widget_key, rows),
                             label_visibility="collapsed"
                         )
                     
                     elif ui_type in ["skill", "bundle"]:
                         is_checked = bool(st.session_state[widget_key])
-                        
                         def toggle_bool(k=widget_key, r=rows):
                             val = 1 if st.session_state[k] else 0
                             for row_id in r:
                                 p.set_external_level(row_id, val)
-                                
                         st.checkbox("Unlocked", value=is_checked, key=widget_key, on_change=toggle_bool)
                         
                     elif ui_type == "card":
                         max_val = group.get("max", 4)
                         st.number_input(
-                            f"Tier##{group['id']}", 
-                            min_value=0, max_value=max_val,
-                            key=widget_key, step=1,
-                            on_change=update_external_group, args=(widget_key, rows),
+                            f"Tier##{group['id']}", min_value=0, max_value=max_val,
+                            key=widget_key, step=1, on_change=update_external_group, args=(widget_key, rows),
                             label_visibility="collapsed"
                         )
 
-# --- TAB 3: CARDS ---
 with tab_cards:
     st.subheader("Card Collection")
     st.write("Card UI coming soon...")
 
-# --- TAB 4: OPTIMIZER ---
 with tab_optimizer:
     st.subheader("Target Optimization")
     st.write("Optimizer hooks coming soon...")
