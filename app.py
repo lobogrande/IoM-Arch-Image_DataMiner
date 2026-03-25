@@ -1,8 +1,8 @@
 # ==============================================================================
 # Script: app.py
 # Layer 5: Streamlit Web UI
-# Description: Implements Logical Groupings for external upgrades (Pets, Skills)
-#              and dynamic PIL Card Compositing.
+# Description: Features nested sub-tabs for upgrades, strict integer/boundary
+#              enforcement, and tightly scaled UI images.
 # ==============================================================================
 
 import streamlit as st
@@ -49,6 +49,17 @@ def composite_card(bg_path):
         return composite
     except Exception as e:
         return None
+
+# --- ASSET HELPERS ---
+def find_external_image(upg_id):
+    """Uses glob to find images with prefixes like '4_hestia.png'."""
+    import glob
+    pattern = os.path.join(ROOT_DIR, "assets", "upgrades", "external", f"{upg_id}_*.png")
+    matches = glob.glob(pattern)
+    if matches:
+        return matches[0]
+    exact = os.path.join(ROOT_DIR, "assets", "upgrades", "external", f"{upg_id}.png")
+    return exact if os.path.exists(exact) else None
 
 # --- SESSION STATE INITIALIZATION ---
 if 'player' not in st.session_state:
@@ -137,121 +148,119 @@ with tab_stats:
 
 # --- TAB 2: UPGRADES ---
 with tab_upgrades:
-    st.subheader("Internal Upgrades")
-    asc2_locked_rows =[17, 19, 34, 46, 52, 55]
-    cols_int = st.columns(3)
     
-    for idx, (upg_id, upg_data) in enumerate(p.UPGRADE_DEF.items()):
-        if not p.asc2_unlocked and upg_id in asc2_locked_rows:
-            continue
-            
-        name = upg_data[0]
-        max_lvl = int(cfg.INTERNAL_UPGRADE_CAPS.get(upg_id, 99))
-        current_lvl = int(p.upgrade_levels.get(upg_id, 0))
-        safe_val = min(max(current_lvl, 0), max_lvl)
-        widget_key = f"upg_{upg_id}"
-        
-        if widget_key not in st.session_state:
-            st.session_state[widget_key] = safe_val
-            
-        with cols_int[idx % 3]:
-            img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "internal", f"{upg_id}.png")
-            with st.container(border=True):
-                if os.path.exists(img_path):
-                    st.image(img_path, use_container_width=True)
-                
-                st.markdown(f"**[{upg_id}] {name}** (Max: {max_lvl})")
-                st.number_input(
-                    f"Level##int_{upg_id}", key=widget_key, step=1, 
-                    on_change=enforce_caps, args=(widget_key, 0, max_lvl, name),
-                    label_visibility="collapsed"
-                )
-                p.set_upgrade_level(upg_id, st.session_state[widget_key])
-
-    st.divider()
-    st.subheader("External Upgrades")
-    cols_ext = st.columns(3)
+    # NESTED TABS for clean navigation
+    sub_internal, sub_external = st.tabs(["Internal Upgrades", "External Upgrades"])
     
-    for idx, group in enumerate(cfg.EXTERNAL_UI_GROUPS):
-        widget_key = f"ext_{group['id']}"
-        ui_type = group['ui_type']
-        rows = group['rows']
+    with sub_internal:
+        asc2_locked_rows =[17, 19, 34, 46, 52, 55]
+        cols_int = st.columns(3)
         
-        # Grab the current value from the first row in the group
-        current_val = int(p.external_levels.get(rows[0], 0))
-        
-        # Initialize session state (Pets can be -1)
-        if widget_key not in st.session_state:
-            st.session_state[widget_key] = current_val
-
-        with cols_ext[idx % 3]:
-            with st.container(border=True):
+        for idx, (upg_id, upg_data) in enumerate(p.UPGRADE_DEF.items()):
+            if not p.asc2_unlocked and upg_id in asc2_locked_rows:
+                continue
                 
-                # --- ASSET LOADING ---
-                if ui_type == "skill":
-                    for img_name in group.get("imgs",[]):
-                        img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", img_name)
-                        if os.path.exists(img_path):
-                            st.image(img_path, use_container_width=True)
-                elif "img" in group and group["img"]:
-                    img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", group["img"])
+            name = upg_data[0]
+            max_lvl = int(cfg.INTERNAL_UPGRADE_CAPS.get(upg_id, 99))
+            current_lvl = int(p.upgrade_levels.get(upg_id, 0))
+            safe_val = min(max(current_lvl, 0), max_lvl)
+            widget_key = f"upg_{upg_id}"
+            
+            if widget_key not in st.session_state:
+                st.session_state[widget_key] = safe_val
+                
+            with cols_int[idx % 3]:
+                img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "internal", f"{upg_id}.png")
+                with st.container(border=True):
                     if os.path.exists(img_path):
                         st.image(img_path, use_container_width=True)
-                elif ui_type == "card":
-                    tier = st.session_state[widget_key]
-                    if tier > 0:
-                        bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{tier}.png")
-                        comp_img = composite_card(bg_path)
-                        if comp_img:
-                            st.image(comp_img, width=80)
+                    
+                    st.markdown(f"**[{upg_id}] {name}** (Max: {max_lvl})")
+                    st.number_input(
+                        f"Level##int_{upg_id}", key=widget_key, step=1, 
+                        on_change=enforce_caps, args=(widget_key, 0, max_lvl, name),
+                        label_visibility="collapsed"
+                    )
+                    p.set_upgrade_level(upg_id, st.session_state[widget_key])
+
+    with sub_external:
+        cols_ext = st.columns(4) # 4 columns makes them even tighter
+        
+        for idx, group in enumerate(cfg.EXTERNAL_UI_GROUPS):
+            widget_key = f"ext_{group['id']}"
+            ui_type = group['ui_type']
+            rows = group['rows']
+            
+            current_val = int(p.external_levels.get(rows[0], 0))
+            
+            if widget_key not in st.session_state:
+                st.session_state[widget_key] = current_val
+
+            with cols_ext[idx % 4]:
+                with st.container(border=True):
+                    
+                    # Move title to top for uniform alignment
+                    st.markdown(f"**{group['name']}**")
+                    
+                    # --- ASSET LOADING WITH FIXED WIDTHS ---
+                    if ui_type == "skill":
+                        for img_name in group.get("imgs",[]):
+                            img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", img_name)
+                            if os.path.exists(img_path):
+                                st.image(img_path, width=150) # Strict size constraint
+                    elif "img" in group and group["img"]:
+                        img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", group["img"])
+                        if os.path.exists(img_path):
+                            st.image(img_path, width=150) # Strict size constraint
+                    elif ui_type == "card":
+                        tier = st.session_state[widget_key]
+                        if tier > 0:
+                            bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{tier}.png")
+                            comp_img = composite_card(bg_path)
+                            if comp_img:
+                                st.image(comp_img, width=80) # Strict size constraint
+                            else:
+                                st.caption("(Card Assets Missing)")
                         else:
-                            st.caption("(Card Assets Missing)")
-                    else:
-                        st.caption("(Card Not Unlocked)")
+                            st.caption("(Card Not Unlocked)")
 
-                st.markdown(f"**{group['name']}**")
+                    st.divider()
 
-                # --- WIDGET LOGIC ---
-                if ui_type in ["number", "pet"]:
-                    max_val = group.get("max", 999)
-                    min_val = -1 if ui_type == "pet" else 0
-                    
-                    if ui_type == "pet" and st.session_state[widget_key] == -1:
-                        st.caption("Status: Not Owned")
+                    # --- WIDGET LOGIC ---
+                    if ui_type in ["number", "pet"]:
+                        max_val = group.get("max", 999)
+                        min_val = -1 if ui_type == "pet" else 0
                         
-                    st.number_input(
-                        f"Level##{group['id']}", 
-                        min_value=min_val, max_value=max_val,
-                        key=widget_key, step=1,
-                        on_change=update_external_group, args=(widget_key, rows),
-                        label_visibility="collapsed"
-                    )
-                
-                elif ui_type in ["skill", "bundle"]:
-                    # Convert integer 1/0 to Boolean True/False for the checkbox
-                    is_checked = bool(st.session_state[widget_key])
-                    
-                    def toggle_bool(k=widget_key, r=rows):
-                        val = 1 if st.session_state[k] else 0
-                        for row_id in r:
-                            p.set_external_level(row_id, val)
+                        if ui_type == "pet" and st.session_state[widget_key] == -1:
+                            st.caption("Status: Not Owned")
                             
-                    st.checkbox(
-                        "Unlocked", 
-                        value=is_checked, 
-                        key=widget_key, 
-                        on_change=toggle_bool
-                    )
+                        st.number_input(
+                            f"Level##{group['id']}", 
+                            min_value=min_val, max_value=max_val,
+                            key=widget_key, step=1,
+                            on_change=update_external_group, args=(widget_key, rows),
+                            label_visibility="collapsed"
+                        )
                     
-                elif ui_type == "card":
-                    max_val = group.get("max", 4)
-                    st.number_input(
-                        f"Tier##{group['id']}", 
-                        min_value=0, max_value=max_val,
-                        key=widget_key, step=1,
-                        on_change=update_external_group, args=(widget_key, rows),
-                        label_visibility="collapsed"
-                    )
+                    elif ui_type in ["skill", "bundle"]:
+                        is_checked = bool(st.session_state[widget_key])
+                        
+                        def toggle_bool(k=widget_key, r=rows):
+                            val = 1 if st.session_state[k] else 0
+                            for row_id in r:
+                                p.set_external_level(row_id, val)
+                                
+                        st.checkbox("Unlocked", value=is_checked, key=widget_key, on_change=toggle_bool)
+                        
+                    elif ui_type == "card":
+                        max_val = group.get("max", 4)
+                        st.number_input(
+                            f"Tier##{group['id']}", 
+                            min_value=0, max_value=max_val,
+                            key=widget_key, step=1,
+                            on_change=update_external_group, args=(widget_key, rows),
+                            label_visibility="collapsed"
+                        )
 
 # --- TAB 3: CARDS ---
 with tab_cards:
