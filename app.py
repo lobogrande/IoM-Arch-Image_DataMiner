@@ -74,6 +74,7 @@ import project_config as cfg
 # --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
     """Standard clamping for independent limits (e.g. Upgrade Levels)."""
+    if key not in st.session_state: return 
     val = st.session_state[key]
     if val > max_val:
         st.session_state[key] = int(max_val)
@@ -84,6 +85,7 @@ def enforce_caps(key, min_val, max_val, item_name):
 
 def enforce_stat_caps(widget_key, stat_key, min_val, max_val, item_name):
     """Specialized clamping for Base Stats that also checks the Global Point Budget."""
+    if widget_key not in st.session_state: return 
     val = st.session_state[widget_key]
     
     # 1. Check individual cap
@@ -114,12 +116,14 @@ def enforce_stat_caps(widget_key, stat_key, min_val, max_val, item_name):
 
 def update_external_group(group_id, rows):
     """Callback to sync a UI widget value to all corresponding engine rows."""
+    if group_id not in st.session_state: return
     val = st.session_state[group_id]
     for r in rows:
         st.session_state.player.set_external_level(r, int(val))
 
 def update_card_level(widget_key, card_id):
     """Callback to sync a UI widget value directly to the Player's card inventory."""
+    if widget_key not in st.session_state: return
     val = st.session_state[widget_key]
     st.session_state.player.set_card_level(card_id, int(val))
 
@@ -203,6 +207,18 @@ st.set_page_config(page_title="AI Arch Optimizer", layout="wide", page_icon="⛏
 # SIDEBAR
 # ==========================================
 with st.sidebar:
+    st.header("⚙️ Global Settings")
+    p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", value=p.asc2_unlocked)
+    p.arch_level = st.number_input("Arch Level", min_value=1, value=int(p.arch_level), step=1)
+    p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, value=int(p.current_max_floor), step=1)
+    
+    if p.asc2_unlocked:
+        p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, value=int(p.hades_idol_level), step=1)
+    else:
+        p.hades_idol_level = 0
+    
+    st.divider()
+    
     st.header("📂 Import Data")
     uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
     
@@ -238,20 +254,9 @@ with st.sidebar:
         data=export_json_str,
         file_name="player_state.json",
         mime="application/json",
-        use_container_width=True
+        width="stretch"
     )
-    
-    st.divider()
-    
-    st.header("⚙️ Global Settings")
-    p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", value=p.asc2_unlocked)
-    p.arch_level = st.number_input("Arch Level", min_value=1, value=int(p.arch_level), step=1)
-    p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, value=int(p.current_max_floor), step=1)
-    
-    if p.asc2_unlocked:
-        p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, value=int(p.hades_idol_level), step=1)
-    else:
-        p.hades_idol_level = 0
+
 
 # ==========================================
 # MAIN WINDOW: Tabs
@@ -377,7 +382,7 @@ with tab_upgrades:
                     
                     if os.path.exists(img_path):
                         # Internal upgrades can still use container width since they are in a heavily constrained column
-                        st.image(img_path, use_container_width=True)
+                        st.image(img_path, width="stretch")
                     
                     st.number_input(
                         f"Level##int_{upg_id}", key=widget_key, step=1, 
@@ -572,7 +577,9 @@ with tab_calc_stats:
             st.divider()
             st.write(f"**Enrage:** {p.enrage_charges:,.0f} charges *(CD: {p.enrage_cooldown:,.1f}s)*")
             st.write(f"*- Dmg Bonus:* +{p.enrage_bonus_dmg*100:,.0f}%")
+            st.write(f"*- Enraged Dmg:* {p.enraged_damage:,.0f}")
             st.write(f"*- Crit Bonus:* +{p.enrage_bonus_crit_dmg*100:,.0f}%")
+            st.write(f"*- Enraged Crit Dmg:* {p.enraged_crit_dmg_mult:,.2f}x")
             st.divider()
             st.write(f"**Flurry:** {p.flurry_duration:,.0f}s *(CD: {p.flurry_cooldown:,.1f}s)*")
             st.write(f"*- Stamina Gain:* {p.flurry_sta_on_cast:,.0f}")
@@ -653,6 +660,6 @@ with tab_ore_stats:
                 "Icon": st.column_config.ImageColumn("Icon", help="Ore Icon"),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             height=600 # Makes the table nice and tall so you don't have to scroll constantly
         )

@@ -96,18 +96,20 @@ class CombatSimulator:
         p_speed_mod_atk_rate = self.player.speed_mod_attack_rate
         p_flurry_bonus_atk_spd = self.player.flurry_bonus_atk_spd
         p_damage = self.player.damage
+        p_enraged_damage = self.player.enraged_damage
         p_armor_pen = self.player.armor_pen
-        p_enrage_bonus_dmg = self.player.enrage_bonus_dmg
         p_quake_dmg_to_all = self.player.quake_dmg_to_all
         
-        # Crit Cache
+# Crit Cache
         p_u_crit_ch = self.player.ultra_crit_chance
         p_u_crit_dmg = self.player.ultra_crit_dmg_mult
         p_s_crit_ch = self.player.super_crit_chance
         p_s_crit_dmg = self.player.super_crit_dmg_mult
         p_crit_ch = self.player.crit_chance
         p_crit_dmg = self.player.crit_dmg_mult
-        p_enrage_bonus_crit_dmg = self.player.enrage_bonus_crit_dmg
+        
+        # --- ADDED ENRAGED CRIT CACHE AND REMOVED THE ADDITIVE BONUS ---
+        p_enraged_crit_dmg = self.player.enraged_crit_dmg_mult
 
         # Using a fast local closure instead of a class method eliminates
         # function-call overhead and 'self.' lookups on every single hit.
@@ -118,10 +120,10 @@ class CombatSimulator:
             if rand_val < p_s_crit_ch: 
                 return p_s_crit_dmg, 'super'
             if rand_val < p_crit_ch:
-                bonus = p_enrage_bonus_crit_dmg if is_enrage_active else 0.0
-                return p_crit_dmg + bonus, 'crit'
+                # --- DIRECTLY SWAP TO THE ENRAGED PROPERTY ---
+                return p_enraged_crit_dmg if is_enrage_active else p_crit_dmg, 'crit'
             return 1.0, 'normal'
-
+        
         # ======================================================================
         
         state = RunState(self.player)
@@ -167,20 +169,20 @@ class CombatSimulator:
                     crit_mult, crit_type = roll_crit(is_enrage)
                     state.hit_counts[crit_type] += 1
                     
-                    base_dmg = p_damage
-                    if is_enrage: 
-                        base_dmg *= (1.0 + p_enrage_bonus_dmg)
+                    # 1. Base damage applies Enrage Additive Math instantly
+                    base_dmg = p_enraged_damage if is_enrage else p_damage
                         
-                    # Safely calculate effective armor (can't go below 0)
+                    # 2. Subtract Effective Armor (Accounting for Armor Pen)
                     eff_armor = max(0, target_ore.armor - p_armor_pen)
                     
+                    # 3. Factor in Crit Multipliers, bounded by a minimum of 1 damage
                     actual_dmg = max(1.0, base_dmg - eff_armor) * crit_mult
                     target_ore.hp -= actual_dmg
                     state.stamina -= STAMINA_COST_PER_HIT
                     
                     # Quake AOE Proc
                     if skills.consume_attack():
-                        q_base = p_damage * p_quake_dmg_to_all
+                        q_base = base_dmg * p_quake_dmg_to_all # <--- Quake now properly inherits Enrage Damage too!
                         for bg_idx in PATH_ORDER[i+1:]:
                             bg_ore = floor.grid[bg_idx]
                             if bg_ore is not None and bg_ore.hp > 0:
