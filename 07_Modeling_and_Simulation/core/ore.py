@@ -1,6 +1,6 @@
 # ==============================================================================
 # Script: core/ore.py
-# Version: 1.0.0 (Modular Architecture)
+# Version: 1.0.1 (Modular Architecture)
 # Description: Generates a distinct Ore object containing the final calculated 
 #              HP, Armor, XP, and Loot yields based on the floor tier scaling 
 #              and the player's card multipliers.
@@ -10,7 +10,17 @@ import sys
 import os
 import math
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# --- BULLETPROOF PATHING ---
+# 1. Add the 07_Modeling_and_Simulation directory to path
+SIM_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if SIM_DIR not in sys.path:
+    sys.path.append(SIM_DIR)
+
+# 2. Add the Project Root directory to path (for project_config.py)
+ROOT_DIR = os.path.abspath(os.path.join(SIM_DIR, '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
 import project_config as cfg
 
 class Ore:

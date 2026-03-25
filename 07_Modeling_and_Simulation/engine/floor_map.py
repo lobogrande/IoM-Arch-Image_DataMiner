@@ -1,7 +1,6 @@
-
 # ==============================================================================
 # Script: engine/floor_map.py
-# Version: 1.0.0 (Modular Architecture)
+# Version: 1.0.1 (Modular Architecture)
 # Description: Generates the 24-slot environment. Handles the Gaussian spawn 
 #              math, instantiates Ore objects, and rolls RNG for Gleaming 
 #              Floors and individual Ore Modifiers.
@@ -13,14 +12,19 @@ import json
 import random
 import pandas as pd
 
-# Dynamically add the parent directory to Python's path so we can import core modules
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(BASE_DIR)
+# --- BULLETPROOF PATHING ---
+SIM_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if SIM_DIR not in sys.path:
+    sys.path.append(SIM_DIR)
+
+ROOT_DIR = os.path.abspath(os.path.join(SIM_DIR, '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
 from core.ore import Ore
 
-SPAWN_RATES_FILE = os.path.join(BASE_DIR, "simulator_spawn_rates.csv")
-DROP_TABLES_FILE = os.path.join(BASE_DIR, "simulator_drop_tables.json")
+SPAWN_RATES_FILE = os.path.join(SIM_DIR, "simulator_spawn_rates.csv")
+DROP_TABLES_FILE = os.path.join(SIM_DIR, "simulator_drop_tables.json")
 
 
 class Floor:

@@ -1,6 +1,6 @@
 # ==============================================================================
 # Script: engine/combat_loop.py
-# Version: 1.0.1 (Modular Architecture)
+# Version: 1.0.2 (Modular Architecture)
 # Description: The core simulation engine. Executes a run floor-by-floor using 
 #              micro-tick hit-by-hit combat to perfectly simulate skill timers, 
 #              speed attack pools, Quake splash damage, and exact crit rolls.
@@ -11,8 +11,14 @@ import sys
 import random
 import math
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(BASE_DIR)
+# --- BULLETPROOF PATHING ---
+SIM_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if SIM_DIR not in sys.path:
+    sys.path.append(SIM_DIR)
+
+ROOT_DIR = os.path.abspath(os.path.join(SIM_DIR, '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
 from core.player import Player
 from core.skills import SkillManager
@@ -65,7 +71,6 @@ class CombatSimulator:
             if skill_manager.is_enrage_active:
                 base_crit += self.player.enrage_bonus_crit_dmg
             return base_crit
-            
         return 1.0
 
     def _process_kill_rewards(self, ore, floor_obj, state: RunState):
@@ -105,14 +110,11 @@ class CombatSimulator:
             
             # Walk the Serpentine Path
             for i, slot_idx in enumerate(PATH_ORDER):
-                if state.stamina <= 0:
-                    break
+                if state.stamina <= 0: break
                     
                 target_ore = floor.grid[slot_idx]
-                if target_ore is None or target_ore.hp <= 0:
-                    continue # Empty slot or killed early by Quake splash
+                if target_ore is None or target_ore.hp <= 0: continue
                     
-                # Pay the entry cost to approach this ore (Now 0.0)
                 state.stamina -= STAMINA_COST_PER_ORE
                 
                 # --- HIT-BY-HIT MICRO-TICK LOOP ---
@@ -121,7 +123,7 @@ class CombatSimulator:
                     flurry_mult = 1.0 + self.player.flurry_bonus_atk_spd if skills.is_flurry_active else 1.0
                     
                     if state.speed_pool > 0:
-                        current_atk_spd = self.player.atk_spd * target_ore.modifiers.get('speed_atk_rate', 1.0) * flurry_mult
+                        current_atk_spd = self.player.atk_spd * self.player.speed_mod_attack_rate * flurry_mult
                         state.speed_pool -= 1
                     else:
                         current_atk_spd = self.player.atk_spd * flurry_mult
@@ -139,10 +141,8 @@ class CombatSimulator:
                         
                     # 3. Calculate Damage for this hit
                     crit_mult = self._roll_crit_multiplier(skills)
-                    
                     base_dmg = self.player.damage
-                    if skills.is_enrage_active:
-                        base_dmg *= (1.0 + self.player.enrage_bonus_dmg)
+                    if skills.is_enrage_active: base_dmg *= (1.0 + self.player.enrage_bonus_dmg)
                         
                     actual_dmg = max(1.0, base_dmg - target_ore.armor) * crit_mult
                     target_ore.hp -= actual_dmg
@@ -150,19 +150,13 @@ class CombatSimulator:
                     # Pay hit stamina cost (1.0 per swing)
                     state.stamina -= STAMINA_COST_PER_HIT
                     
-                    # 4. Trigger Skills (Quake Splash)
-                    quake_triggered = skills.consume_attack()
-                    if quake_triggered:
-                        # Find all alive ores in the remaining path
+                    if skills.consume_attack():
                         for bg_idx in PATH_ORDER[i+1:]:
                             bg_ore = floor.grid[bg_idx]
                             if bg_ore is not None and bg_ore.hp > 0:
                                 q_crit = self._roll_crit_multiplier(skills)
-                                # Quake does 20% of base damage minus armor, scaled by crit
                                 q_dmg = max(1.0, (self.player.damage * self.player.quake_dmg_to_all) - bg_ore.armor) * q_crit
                                 bg_ore.hp -= q_dmg
-                                
-                                # If Quake kills an ore in the background, harvest it instantly!
                                 if bg_ore.hp <= 0:
                                     self._process_kill_rewards(bg_ore, floor, state)
                                     
@@ -188,9 +182,7 @@ if __name__ == "__main__":
     from tools.verify_player import load_state_from_json
     
     p = Player()
-    
-    # Try to load the user's spreadsheet stats
-    json_path = os.path.join(BASE_DIR, "tools", "player_state.json")
+    json_path = os.path.join(SIM_DIR, "tools", "player_state.json")
     if os.path.exists(json_path):
         load_state_from_json(p, json_path)
         print(f"Loaded Player JSON State successfully. Starting Max Stamina: {p.max_sta}")
