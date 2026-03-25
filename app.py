@@ -13,6 +13,9 @@ import sys
 import math
 import glob
 import base64
+import time
+import multiprocessing as mp
+import plotly.express as px
 from io import BytesIO
 from PIL import Image
 import pandas as pd
@@ -70,6 +73,7 @@ from core.player import Player
 from core.ore import Ore
 from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
+from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_eta_profiles
 
 # --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
@@ -693,3 +697,182 @@ with tab_ore_stats:
             width="stretch",
             height=600 # Makes the table nice and tall so you don't have to scroll constantly
         )
+
+# --- TAB 6: RUN OPTIMIZER ---
+with tab_optimizer:
+    st.header("🚀 Monte Carlo Stat Optimizer")
+    st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution. Ensure your total allocated points do not exceed your budget before running.")
+
+    # --- GOAL SELECTION ---
+    col_goal, col_target = st.columns(2)
+    with col_goal:
+        opt_goal = st.selectbox(
+            "Optimization Target",["Max Floor Push", "Max EXP Yield", "Fragment Farming", "Card/Ore Farming"]
+        )
+    
+    with col_target:
+        target_metric = "highest_floor" # Default fallback
+        if opt_goal == "Fragment Farming":
+            frag_tier = st.selectbox(
+                "Fragment Tier",[0, 1, 2, 3, 4, 5, 6], 
+                format_func=lambda x: {0:"Dirt", 1:"Common", 2:"Rare", 3:"Epic", 4:"Legendary", 5:"Mythic", 6:"Divine"}.get(x)
+            )
+            target_metric = f"frag_{frag_tier}_per_min"
+        elif opt_goal == "Card/Ore Farming":
+            ore_target = st.text_input("Target Ore ID (e.g., com1, myth3)", value="myth3").lower()
+            target_metric = f"ore_{ore_target}_per_min"
+        elif opt_goal == "Max EXP Yield":
+            target_metric = "xp_per_min"
+        else:
+            target_metric = "highest_floor"
+
+    st.divider()
+
+    # --- HARDWARE BENCHMARKING & ETA ---
+    if "sims_per_sec" not in st.session_state:
+        st.session_state.sims_per_sec = 0
+        st.session_state.eta_profiles = {}
+
+    col_bench, col_prof = st.columns([1, 2])
+    with col_bench:
+        st.write("#### 1. Hardware Benchmark")
+        if st.button("⏱️ Benchmark CPU", use_container_width=True):
+            with st.spinner("Running micro-benchmark..."):
+                # Construct baseline payload
+                STATS_TO_OPTIMIZE = ['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+                
+                payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}}
+                CPU_CORES = max(1, mp.cpu_count() - 1)
+                
+                with mp.Pool(CPU_CORES) as pool:
+                    spd = benchmark_hardware(payload, pool)
+                    st.session_state.sims_per_sec = spd
+                    
+                    # Calculate profiles
+                    budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                    cap_increase = int(p.u('H45'))
+                    caps = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
+                    
+                    st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
+        
+        if st.session_state.sims_per_sec > 0:
+            st.success(f"⚡ {st.session_state.sims_per_sec:,.0f} sims/sec")
+
+    with col_prof:
+        st.write("#### 2. Optimization Depth")
+        depth_choice = st.radio("Select Depth",["Fast", "Standard", "Deep"], horizontal=True, label_visibility="collapsed")
+        
+        if st.session_state.eta_profiles:
+            # Match the chosen key with the dictionary profile key
+            prof_key = next(k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice))
+            prof_data = st.session_state.eta_profiles[prof_key]
+            st.info(f"**Est. Time:** {prof_data['time_label']} | **Search Space:** ~{prof_data['builds']:,.0f} builds tested")
+            step_size = prof_data['step']
+        else:
+            st.warning("Run benchmark to see time estimates.")
+            step_size = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
+
+    st.divider()
+
+    # --- MONTE CARLO EXECUTION LOOP ---
+    if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
+        st.write("---")
+        with st.spinner(f"Running {depth_choice} Optimization... (Check python terminal for live grid progress)"):
+            start_time = time.time()
+            
+            # 1. Prepare Engine Data
+            STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+            if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+            
+            DYNAMIC_BUDGET = int(sum(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE))
+            FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}
+            cap_increase = int(p.u('H45'))
+            EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
+            
+            CPU_CORES = max(1, mp.cpu_count() - 1)
+            ITERATIONS_PER_DIST = 100
+            
+            best_p3, final_summary = None, None
+            
+            # 2. Trigger Parallel Worker Pool
+            with mp.Pool(CPU_CORES) as pool:
+                # Phase 1: Coarse Grid
+                bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
+                best_p1, _ = run_optimization_phase(
+                    "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
+                    DYNAMIC_BUDGET, step_size, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p1
+                )
+                
+                if best_p1:
+                    # Phase 2: Fine Grid
+                    bounds_p2 = {s: (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size)) for s in STATS_TO_OPTIMIZE}
+                    step_2 = max(2, step_size // 3)
+                    best_p2, _ = run_optimization_phase(
+                        "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
+                        DYNAMIC_BUDGET, step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2
+                    )
+                    
+                    # Phase 3: Exact Micro-Grid
+                    bounds_p3 = bounds_p2
+                    if best_p2:
+                        bounds_p3 = {s: (max(0, best_p2[s] - step_2), min(EFFECTIVE_CAPS[s], best_p2[s] + step_2)) for s in STATS_TO_OPTIMIZE}
+                    
+                    best_p3, final_summary = run_optimization_phase(
+                        "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
+                        DYNAMIC_BUDGET, 1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3
+                    )
+            
+            elapsed = time.time() - start_time
+            
+            # --- 3. UI RESULTS TELEMETRY ---
+            if best_p3 and final_summary:
+                st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
+                
+                res_col1, res_col2 = st.columns([1.5, 1])
+                
+                with res_col1:
+                    with st.container(border=True):
+                        st.markdown("#### 🏆 Optimal Stat Build")
+                        # Beautiful Interactive Plotly Bar Chart
+                        df_stats = pd.DataFrame({
+                            "Stat": list(best_p3.keys()), 
+                            "Points": list(best_p3.values())
+                        })
+                        fig = px.bar(
+                            df_stats, x="Stat", y="Points", text="Points", 
+                            color="Stat", color_discrete_sequence=px.colors.qualitative.Pastel
+                        )
+                        fig.update_traces(textposition='outside')
+                        fig.update_layout(showlegend=False, margin=dict(l=20, r=20, t=20, b=20), height=300)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Auto-Apply UX Injection
+                        if st.button("✨ Apply Build to UI", use_container_width=True):
+                            for k, v in best_p3.items():
+                                st.session_state[f"stat_{k}"] = int(v)
+                                p.base_stats[k] = int(v)
+                            st.rerun()
+
+                with res_col2:
+                    with st.container(border=True):
+                        st.markdown("#### 📈 Projected Return")
+                        val = final_summary[target_metric]
+                        
+                        if target_metric == "highest_floor":
+                            st.metric("Max Floor Reached", f"{val:,.1f}")
+                        else:
+                            rate_sec = val / 60.0
+                            rate_1k = rate_sec * 1000.0
+                            
+                            # Clean up UI string for Target Ore mapping
+                            if "frag" in target_metric: metric_str = "Fragments"
+                            elif "ore" in target_metric: metric_str = "Kills"
+                            else: metric_str = "EXP"
+
+                            st.metric(f"Real-Time ({metric_str})", f"{val:,.2f} / min")
+                            st.divider()
+                            st.metric("Banked Time", f"{rate_sec:,.2f} / Arch Sec")
+                            st.metric("Banked Time (1k)", f"{rate_1k:,.1f} / 1k Arch Sec")
+            else:
+                st.error("Optimization failed. Could not generate valid builds for this stat distribution/budget.")
