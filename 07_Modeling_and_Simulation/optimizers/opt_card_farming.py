@@ -1,8 +1,8 @@
 # ==============================================================================
-# Script: tools/opt_exp_rate.py
-# Layer 4: Specific Optimizer (Exp Rate)
-# Description: Uses parallel_worker.py to find the exact stat allocation that
-#              maximizes XP per Minute. Dynamically handles asc2 unlocks.
+# Script: optimizers/opt_card_farming.py
+# Layer 4: Specific Optimizer (Card/Ore Farming)
+# Description: Optimizes stat distribution to maximize kills of a SPECIFIC ore 
+#              type/tier. Displays output in Banked Arch Seconds.
 # ==============================================================================
 
 import os
@@ -15,31 +15,29 @@ sys.path.append(BASE_DIR)
 
 from core.player import Player
 from tools.verify_player import load_state_from_json
-from tools.parallel_worker import run_optimization_phase, JSON_PATH
+from optimizers.parallel_worker import run_optimization_phase, JSON_PATH
 from project_config import BASE_STAT_CAPS
 
+# ==========================================
+TARGET_ORE = "myth3"
+TARGET_METRIC = f"ore_{TARGET_ORE}_per_min"
+# ==========================================
+
 if __name__ == "__main__":
-    print("=== AI Arch Optimizer: Maximum Exp/Hr ===")
+    print(f"=== AI Arch Optimizer: Card Farming ({TARGET_ORE}) ===")
     
-    # 1. Load Player State
     p = Player()
     load_state_from_json(p, JSON_PATH)
     
-    # 2. Determine Available Stats
-    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+    STATS_TO_OPTIMIZE = ['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
     if p.asc2_unlocked:
         STATS_TO_OPTIMIZE.append('Corr')
         
     DYNAMIC_BUDGET = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
     FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}
     
-    # 3. Calculate Strict Caps
     cap_increase = int(p.u('H45'))
     EFFECTIVE_CAPS = {stat: BASE_STAT_CAPS[stat] + cap_increase for stat in STATS_TO_OPTIMIZE}
-    
-    print(f"Stats in Pool: {STATS_TO_OPTIMIZE}")
-    print(f"Total Budget:  {DYNAMIC_BUDGET} points")
-    print(f"Effective Caps: {EFFECTIVE_CAPS}\n")
 
     ITERATIONS_PER_DIST = 100
     CPU_CORES = max(1, mp.cpu_count() - 1)
@@ -47,16 +45,13 @@ if __name__ == "__main__":
     start_time = time.time()
     
     with mp.Pool(CPU_CORES) as pool:
-        # Phase 1: Step size of 10. With 6 stats and ~95 points, this tests ~2,002 combinations.
-        # This is fine-grained enough to avoid local maxima, but fast enough to finish in seconds.
         step_1 = 10
         bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
         best_p1, _ = run_optimization_phase(
-            "Phase 1 (Coarse)", 'xp_per_min', STATS_TO_OPTIMIZE, 
+            "Phase 1 (Coarse)", TARGET_METRIC, STATS_TO_OPTIMIZE, 
             DYNAMIC_BUDGET, step_1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p1
         )
         
-        # Phase 2: Narrow to ±10 around Phase 1 winner, step size 3
         bounds_p2 = {}
         for stat in STATS_TO_OPTIMIZE:
             val = best_p1[stat]
@@ -64,11 +59,10 @@ if __name__ == "__main__":
             
         step_2 = 3
         best_p2, _ = run_optimization_phase(
-            "Phase 2 (Fine)", 'xp_per_min', STATS_TO_OPTIMIZE, 
+            "Phase 2 (Fine)", TARGET_METRIC, STATS_TO_OPTIMIZE, 
             DYNAMIC_BUDGET, step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2
         )
         
-        # Phase 3: Exact 1-Point Optimization
         bounds_p3 = {}
         if best_p2:
             for stat in STATS_TO_OPTIMIZE:
@@ -78,10 +72,26 @@ if __name__ == "__main__":
             bounds_p3 = bounds_p2
 
         best_p3, final_summary = run_optimization_phase(
-            "Phase 3 (Exact)", 'xp_per_min', STATS_TO_OPTIMIZE, 
+            "Phase 3 (Exact)", TARGET_METRIC, STATS_TO_OPTIMIZE, 
             DYNAMIC_BUDGET, 1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3
         )
         
     elapsed = time.time() - start_time
-    print(f"\nOptimization Complete in {elapsed:.2f} seconds.")
-    print("Optimal Build:", best_p3)
+    
+    # --- UX: Banked Time Conversions ---
+    rate_per_min = final_summary[TARGET_METRIC]
+    rate_per_sec = rate_per_min / 60.0
+    rate_per_1k_secs = rate_per_sec * 1000.0
+    
+    print("\n" + "="*50)
+    print(f"Optimization Complete in {elapsed:.2f} seconds.")
+    print(f"Best Stat Build to Farm {TARGET_ORE}:")
+    for stat in STATS_TO_OPTIMIZE:
+        print(f"  {stat}: {best_p3[stat]}")
+    for k, v in FIXED_STATS.items():
+        print(f"  {k}: {v} (Fixed)")
+        
+    print(f"\n[ RATE PROJECTIONS ]")
+    print(f" - Real-Time:   {rate_per_min:,.2f} {TARGET_ORE} kills / Minute")
+    print(f" - Banked Time: {rate_per_1k_secs:,.1f} {TARGET_ORE} kills / 1k Arch Seconds")
+    print("="*50)
