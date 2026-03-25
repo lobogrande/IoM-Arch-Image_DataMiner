@@ -39,6 +39,10 @@ UI_EXT_IMG_CARD    = 80   # Size of the composited Card
 UI_EXT_SKILL_ICON  = 50   # Size of the Skill Icon (files ending in _1.png)
 UI_EXT_SKILL_TEXT  = 160  # Size of the Skill Description (files ending in _2.png)
 
+# Card Core Alignment
+# Negative numbers move the core image UP. Positive numbers move it DOWN.
+UI_EXT_CARD_CORE_Y_OFFSET = -4 
+# ==============================================================================
 # ==============================================================================
 
 # --- PATH RESOLUTION ---
@@ -91,8 +95,11 @@ def composite_card(bg_path):
     try:
         bg = Image.open(bg_path).convert("RGBA")
         fg = Image.open(core_path).convert("RGBA")
+        
         offset_x = (bg.width - fg.width) // 2
-        offset_y = (bg.height - fg.height) // 2
+        # Apply the user's custom offset to shift the core up or down
+        offset_y = ((bg.height - fg.height) // 2) + UI_EXT_CARD_CORE_Y_OFFSET
+        
         composite = bg.copy()
         composite.paste(fg, (offset_x, offset_y), mask=fg)
         return composite
