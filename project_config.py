@@ -215,3 +215,19 @@ INTERNAL_UPGRADE_CAPS = {
     46: 30, 47: 1,  48: 5,  49: 5,  50: 25, 51: 5,  52: 10, 53: 40, 
     54: 50, 55: 10
 }
+
+# ==============================================================================
+# EXTERNAL UPGRADE UI GROUPS
+# Maps unified UI controls (like a single checkbox) to multiple engine rows.
+# ==============================================================================
+EXTERNAL_UI_GROUPS =[
+    {"id": "hestia", "name": "Hestia Idol", "rows": [4], "ui_type": "number", "max": 9999, "img": "4_hestia.png"},
+    {"id": "axolotl", "name": "Axolotl Skin", "rows": [5], "ui_type": "pet", "max": 11, "img": "5_axolotl.png"},
+    {"id": "dino", "name": "Dino Skin", "rows":[6, 7], "ui_type": "pet", "max": 11, "img": "6_7_dino.png"},
+    {"id": "geoduck", "name": "Geoduck Tribute", "rows": [8], "ui_type": "number", "max": 9999, "img": "8_geoduck.png"},
+    {"id": "avada", "name": "Avada Keda- Skill", "rows": [9, 10, 11], "ui_type": "skill", "imgs":["9_11_avada-keda_1.png", "9_11_avada-keda_2.png"]},
+    {"id": "block", "name": "Block Bonker Skill", "rows":[12, 13, 14], "ui_type": "skill", "imgs":["12_14_block-bonker_1.png", "12_14_block-bonker_2.png"]},
+    {"id": "arch_bundle", "name": "Archaeology Bundle", "rows": [15], "ui_type": "bundle"},
+    {"id": "asc_bundle", "name": "Ascension Bundle", "rows": [16, 17, 18, 19], "ui_type": "bundle"},
+    {"id": "arch_card", "name": "Arch Ability Card", "rows":[20], "ui_type": "card", "max": 4}
+]

@@ -14,11 +14,13 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(BASE_DIR)
 
 from core.player import Player
+import project_config as cfg # <--- Added for External UI Groups
 
 def load_state_from_json(player: Player, filepath: str):
     """
     Loads JSON data into the Player object. 
-    Supports legacy integer keys ("3") and hybrid keys ("3 - Gem Stamina").
+    Supports legacy integer keys ("3"), hybrid keys ("3 - Gem Stamina"),
+    and unified logical groups for external upgrades.
     """
     if not os.path.exists(filepath):
         print(f"[Warning] Save file not found at {filepath}. Generating baseline template...")
@@ -60,10 +62,22 @@ def load_state_from_json(player: Player, filepath: str):
 
     # 4. Load External Upgrades
     if 'external_upgrades' in data:
+        reverse_external = {val[1]: key for key, val in player.EXTERNAL_DEF.items()}
+        
         for k, v in data['external_upgrades'].items():
+            # --- Check if it is a unified Logical Group first ---
+            matched_group = next((g for g in cfg.EXTERNAL_UI_GROUPS if g["name"] == k), None)
+            if matched_group:
+                for r in matched_group["rows"]:
+                    player.set_external_level(r, v)
+                continue
+                
+            # --- Fallback to legacy single-row logic ---
             upgrade_id = parse_key(k)
             if upgrade_id is not None:
                 player.set_external_level(upgrade_id, v)
+            elif k in reverse_external:
+                player.set_external_level(reverse_external[k], v)
 
     # 5. Load Cards
     if 'cards' in data:
@@ -102,12 +116,11 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
             data["internal_upgrades"][str(k)] = v
 
     # Populate External Upgrades
-    for k, v in player.external_levels.items():
-        if readable_keys and k in player.EXTERNAL_DEF:
-            name = f"{player.EXTERNAL_DEF[k][0]} ({player.EXTERNAL_DEF[k][1]})"
-            data["external_upgrades"][f"{k} - {name}"] = v
-        else:
-            data["external_upgrades"][str(k)] = v
+    for group in cfg.EXTERNAL_UI_GROUPS:
+        # We grab the value of the first row in the group, 
+        # since all rows in a group share the same level.
+        representative_val = player.external_levels.get(group["rows"][0], 0)
+        data["external_upgrades"][group["name"]] = representative_val
 
     # Ensure directory exists
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
