@@ -865,7 +865,7 @@ with tab_optimizer:
             EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
             
             CPU_CORES = max(1, mp.cpu_count() - 1)
-            ITERATIONS_PER_DIST = 100
+            ITER_P1, ITER_P2, ITER_P3 = 40, 70, 100
             
             best_p3, final_summary = None, None
             
@@ -883,7 +883,7 @@ with tab_optimizer:
                 bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
                 best_p1, summary_p1 = run_optimization_phase(
                     "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
-                    DYNAMIC_BUDGET, step_size, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p1,
+                    DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
                     progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
                 )
                 

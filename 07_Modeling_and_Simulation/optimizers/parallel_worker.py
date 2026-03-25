@@ -174,8 +174,8 @@ def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     elapsed = time.time() - start_time
     return test_iterations / elapsed if elapsed > 0 else 1
 
-def get_eta_profiles(stats_list, budget, caps, sims_per_second, iterations_per_build=100):
-    """Calculates exact bounding box permutations to guarantee accurate ETAs."""
+def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=40, iter_p2=70, iter_p3=100):
+    """Calculates exact bounding box permutations with Progressive Iteration Scaling."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
@@ -190,20 +190,22 @@ def get_eta_profiles(stats_list, budget, caps, sims_per_second, iterations_per_b
         
         # 1. Exact Phase 1 Builds
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
+        p1_sims = p1_builds * iter_p1 * 0.25
         
-        # 2. Exact Phase 2 Builds (Using bounding box relative offsets)
+        # 2. Exact Phase 2 Builds 
         mock_bounds_p2 = {s: (-step_1, step_1) for s in stats_list}
         p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2))
+        p2_sims = p2_builds * iter_p2 * 0.25
         
         # 3. Exact Phase 3 Builds
         mock_bounds_p3 = {s: (-p3_radius, p3_radius) for s in stats_list}
         p3_builds = len(generate_distributions(stats_list, 0, 1, mock_bounds_p3))
+        p3_sims = p3_builds * iter_p3 * 0.25
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
+        total_simulations = p1_sims + p2_sims + p3_sims
         
-        # Successive halving executes roughly 25% of the total possible simulations
-        total_simulations = (total_estimated_builds * iterations_per_build) * 0.25
-        estimated_seconds = total_simulations / sims_per_second
+        estimated_seconds = total_simulations / max(1, sims_per_second)
         
         if estimated_seconds < 60:
             time_str = f"~{int(estimated_seconds)} seconds"
