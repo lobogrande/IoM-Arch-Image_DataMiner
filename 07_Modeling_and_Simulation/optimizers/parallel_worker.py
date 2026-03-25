@@ -85,7 +85,7 @@ def generate_distributions(stats_list, total_budget, step, bounds=None):
     backtrack(0, 0, {})
     return distributions
 
-def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None, progress_callback=None):
+def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None, progress_callback=None, global_start_time=None, time_limit_seconds=None):
     """
     Runs a grid search phase using Successive Halving with live progress tracking.
     """
@@ -107,14 +107,16 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         r1 = max(1, int(iterations * 0.15))
         r2 = max(1, int(iterations * 0.35))
         r3 = iterations - r1 - r2
-        rounds =[
-            (r1, 0.20),
-            (r2, 0.10),
-            (r3, 1.0)
-        ]
+        rounds =[ (r1, 0.20), (r2, 0.10), (r3, 1.0) ]
 
     for round_idx, (run_count, keep_ratio) in enumerate(rounds):
         if len(active_keys) == 0: break
+        
+        # --- GRACEFUL TIMEOUT CHECK ---
+        if global_start_time and time_limit_seconds:
+            if time.time() - global_start_time >= time_limit_seconds:
+                print(f"\n[TIMEOUT] Max time limit reached. Halting {phase_name} early!")
+                break
         
         if len(rounds) > 1:
             print(f"  -> Round {round_idx+1}: Testing {len(active_keys)} builds ({run_count} runs each)...")
@@ -126,14 +128,11 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         results =[]
         for i, r in enumerate(pool.imap(worker_simulate, tasks, chunksize=chunk_size)):
             results.append(r)
-            
             if i % max(1, total_tasks // 20) == 0 or i == total_tasks - 1:
                 sys.stdout.write(f"\r      Progress: {i+1}/{total_tasks} simulations completed")
                 sys.stdout.flush()
-                # --- NEW STREAMLIT BRIDGE ---
                 if progress_callback:
                     progress_callback(phase_name, round_idx + 1, len(rounds), i + 1, total_tasks)
-                
         sys.stdout.write("\n")
         
         for i, k in enumerate(active_keys):
@@ -142,7 +141,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
             tracker[k]['sum_floor'] += sum(r.get('highest_floor', 0.0) for r in chunk)
             tracker[k]['runs'] += run_count
             
-        active_keys.sort(key=lambda k: tracker[k]['sum_target'] / tracker[k]['runs'], reverse=True)
+        active_keys.sort(key=lambda k: tracker[k]['sum_target'] / max(1, tracker[k]['runs']), reverse=True)
         
         if round_idx < len(rounds) - 1:
             keep_count = max(3, int(len(active_keys) * keep_ratio))
@@ -150,18 +149,21 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
 
     best_key = active_keys[0]
     best_data = tracker[best_key]
-    
     best_dist = best_data['dist']
+    runs_completed = best_data['runs'] if best_data['runs'] > 0 else 1
+    
     best_summary = {
-        target_metric: best_data['sum_target'] / best_data['runs'],
-        "avg_floor": best_data['sum_floor'] / best_data['runs']
+        target_metric: best_data['sum_target'] / runs_completed,
+        "avg_floor": best_data['sum_floor'] / runs_completed
     }
 
     if best_summary[target_metric] > 0:
         print(f"[{phase_name} Winner] {best_dist} -> {best_summary[target_metric]:,.2f} {target_metric}")
-    else:
-        print(f"[{phase_name}] Target metric '{target_metric}' not found.")
     
+    # If a timeout happened before ANY runs completed, return None so it skips to the UI
+    if best_data['runs'] == 0:
+        return None, None
+        
     return best_dist, best_summary
 
 def benchmark_hardware(baseline_payload, pool, test_iterations=200):
@@ -173,7 +175,7 @@ def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     return test_iterations / elapsed if elapsed > 0 else 1
 
 def get_eta_profiles(stats_list, budget, caps, sims_per_second, iterations_per_build=100):
-    """Calculates completion ETAs based on the hardware benchmark and halving logic."""
+    """Calculates exact bounding box permutations to guarantee accurate ETAs."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
@@ -182,9 +184,24 @@ def get_eta_profiles(stats_list, budget, caps, sims_per_second, iterations_per_b
     bounds = {s: (0, caps[s]) for s in stats_list}
     
     for name, data in profiles.items():
-        p1_builds = len(generate_distributions(stats_list, budget, data["step"], bounds))
-        total_estimated_builds = p1_builds + 300 
+        step_1 = data["step"]
+        step_2 = max(2, step_1 // 3)
+        p3_radius = min(2, step_2)
         
+        # 1. Exact Phase 1 Builds
+        p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
+        
+        # 2. Exact Phase 2 Builds (Using bounding box relative offsets)
+        mock_bounds_p2 = {s: (-step_1, step_1) for s in stats_list}
+        p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2))
+        
+        # 3. Exact Phase 3 Builds
+        mock_bounds_p3 = {s: (-p3_radius, p3_radius) for s in stats_list}
+        p3_builds = len(generate_distributions(stats_list, 0, 1, mock_bounds_p3))
+        
+        total_estimated_builds = p1_builds + p2_builds + p3_builds
+        
+        # Successive halving executes roughly 25% of the total possible simulations
         total_simulations = (total_estimated_builds * iterations_per_build) * 0.25
         estimated_seconds = total_simulations / sims_per_second
         

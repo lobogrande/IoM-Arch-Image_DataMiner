@@ -792,6 +792,13 @@ with tab_optimizer:
             horizontal=False, 
             label_visibility="collapsed"
         )
+
+        st.divider()
+        st.write("#### 3. Execution Time Limit")
+        time_limit_mins = st.slider(
+            "Safely abort and return best build if time exceeds:", 
+            min_value=1, max_value=30, value=5, step=1, format="%d mins"
+        )
         
         # Derive the exact steps that will be used based on the choice
         step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
@@ -869,45 +876,51 @@ with tab_optimizer:
                 ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims completed)")
             
             # 2. Trigger Parallel Worker Pool
+            time_limit_secs = time_limit_mins * 60
+            
             with mp.Pool(CPU_CORES) as pool:
                 # Phase 1: Coarse Grid
                 bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
-                best_p1, _ = run_optimization_phase(
+                best_p1, summary_p1 = run_optimization_phase(
                     "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
                     DYNAMIC_BUDGET, step_size, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p1,
-                    progress_callback=st_progress_callback
+                    progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
                 )
                 
-                if best_p1:
+                best_p2, summary_p2 = None, None
+                if best_p1 and (time.time() - start_time) < time_limit_secs:
                     # Phase 2: Fine Grid
                     bounds_p2 = {s: (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size)) for s in STATS_TO_OPTIMIZE}
                     step_2 = max(2, step_size // 3)
-                    best_p2, _ = run_optimization_phase(
+                    best_p2, summary_p2 = run_optimization_phase(
                         "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
                         DYNAMIC_BUDGET, step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2,
-                        progress_callback=st_progress_callback
+                        progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
                     )
                     
+                if best_p2 and (time.time() - start_time) < time_limit_secs:
                     # Phase 3: Exact Micro-Grid
-                    bounds_p3 = bounds_p2
-                    if best_p2:
-                        # Cap the Phase 3 radius to a max of 2 points.
-                        # This prevents "Fast Mode" from exploding into 160k simulations!
-                        p3_radius = min(2, step_2) 
-                        bounds_p3 = {s: (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius)) for s in STATS_TO_OPTIMIZE}
-                    
+                    p3_radius = min(2, step_2) 
+                    bounds_p3 = {s: (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius)) for s in STATS_TO_OPTIMIZE}
                     best_p3, final_summary = run_optimization_phase(
                         "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
                         DYNAMIC_BUDGET, 1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3,
-                        progress_callback=st_progress_callback
+                        progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
                     )
             
-            ui_prog_bar.empty() # Remove the progress bar cleanly when done!
+            # --- CASCADE RESULTS (If it aborted early, grab the best it found) ---
+            best_final = best_p3 or best_p2 or best_p1
+            final_summary_out = final_summary or summary_p2 or summary_p1
+            
+            ui_prog_bar.empty()
             elapsed = time.time() - start_time
             
             # --- 3. UI RESULTS TELEMETRY ---
-            if best_p3 and final_summary:
-                st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
+            if best_final and final_summary_out:
+                if elapsed >= time_limit_secs:
+                    st.warning(f"⚠️ **Time Limit Reached!** Optimization safely aborted early at {elapsed:.1f} seconds. Showing the best build found so far.")
+                else:
+                    st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
                 
                 res_col1, res_col2 = st.columns([1.5, 1])
                 
@@ -916,8 +929,8 @@ with tab_optimizer:
                         st.markdown("#### 🏆 Optimal Stat Build")
                         # Beautiful Interactive Plotly Bar Chart
                         df_stats = pd.DataFrame({
-                            "Stat": list(best_p3.keys()), 
-                            "Points": list(best_p3.values())
+                            "Stat": list(best_final.keys()), 
+                            "Points": list(best_final.values())
                         })
                         fig = px.bar(
                             df_stats, x="Stat", y="Points", text="Points", 
@@ -929,7 +942,7 @@ with tab_optimizer:
                         
                         # Auto-Apply UX Injection
                         if st.button("✨ Apply Build to UI", use_container_width=True):
-                            for k, v in best_p3.items():
+                            for k, v in best_final.items():
                                 st.session_state[f"stat_{k}"] = int(v)
                                 p.base_stats[k] = int(v)
                             st.rerun()
@@ -937,7 +950,7 @@ with tab_optimizer:
                 with res_col2:
                     with st.container(border=True):
                         st.markdown("#### 📈 Projected Return")
-                        val = final_summary[target_metric]
+                        val = final_summary_out[target_metric]
                         
                         if target_metric == "highest_floor":
                             st.metric("Max Floor Reached", f"{val:,.1f}")
@@ -945,7 +958,6 @@ with tab_optimizer:
                             rate_sec = val / 60.0
                             rate_1k = rate_sec * 1000.0
                             
-                            # Clean up UI string for Target Ore mapping
                             if "frag" in target_metric: metric_str = "Fragments"
                             elif "ore" in target_metric: metric_str = "Kills"
                             else: metric_str = "EXP"
@@ -955,4 +967,4 @@ with tab_optimizer:
                             st.metric("Banked Time", f"{rate_sec:,.2f} / Arch Sec")
                             st.metric("Banked Time (1k)", f"{rate_1k:,.1f} / 1k Arch Sec")
             else:
-                st.error("Optimization failed. Could not generate valid builds for this stat distribution/budget.")
+                st.error("Optimization failed or aborted before a single build could be tested.")
