@@ -27,9 +27,11 @@ from PIL import Image
 UI_INT_COL_RATIO = [1, 1, 1]  
 
 # --- EXTERNAL UPGRADES ---
-# How many columns to display in the external upgrades grid?
-# Higher number = narrower boxes. (Try 5 or 6 if the boxes feel too wide!)
-UI_EXT_GRID_COLS = 5
+# The layout ratio:[Left_Spacer, Content_Cols..., Right_Spacer]
+# To get 3 centered columns with buffers:[1, 2, 2, 2, 1]
+# To get 4 centered columns with buffers:[1, 2, 2, 2, 2, 1]
+# The script always leaves the first and last array values completely empty!
+UI_EXT_COL_RATIO =[1, 2, 2, 2, 1]
 
 # Image Pixel Widths for External Upgrades
 UI_EXT_IMG_STD     = 100  # Size of standard icons (Hestia, Geoduck, Dino)
@@ -233,8 +235,12 @@ with tab_upgrades:
                     p.set_upgrade_level(upg_id, st.session_state[widget_key])
 
     with sub_external:
-        # UI TWEAK: Uses the column count from the top of the file
-        cols_ext = st.columns(UI_EXT_GRID_COLS)
+        # UI TWEAK: Create the full array of columns
+        cols_all = st.columns(UI_EXT_COL_RATIO)
+        
+        # Slice off the first and last columns to act as empty buffers
+        active_cols = cols_all[1:-1]
+        num_active = len(active_cols)
         
         for idx, group in enumerate(cfg.EXTERNAL_UI_GROUPS):
             widget_key = f"ext_{group['id']}"
@@ -245,7 +251,8 @@ with tab_upgrades:
             if widget_key not in st.session_state:
                 st.session_state[widget_key] = current_val
 
-            with cols_ext[idx % UI_EXT_GRID_COLS]:
+            # Distribute items only into the active middle columns
+            with active_cols[idx % num_active]:
                 with st.container(border=True):
                     
                     # Centered Title for External Upgrades
