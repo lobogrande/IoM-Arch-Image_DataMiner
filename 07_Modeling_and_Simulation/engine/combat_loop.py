@@ -1,9 +1,9 @@
 # ==============================================================================
 # Script: engine/combat_loop.py
-# Version: 1.0.2 (Modular Architecture)
+# Version: 1.1.0 (Modular Architecture)
 # Description: The core simulation engine. Executes a run floor-by-floor using 
-#              micro-tick hit-by-hit combat to perfectly simulate skill timers, 
-#              speed attack pools, Quake splash damage, and exact crit rolls.
+#              micro-tick hit-by-hit combat. Now features embedded telemetry 
+#              tracking for diagnostic visualization and hit-type analysis.
 # ==============================================================================
 
 import os
@@ -11,24 +11,16 @@ import sys
 import random
 import math
 
-# --- BULLETPROOF PATHING ---
-SIM_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if SIM_DIR not in sys.path:
-    sys.path.append(SIM_DIR)
-
-ROOT_DIR = os.path.abspath(os.path.join(SIM_DIR, '..'))
-if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(BASE_DIR)
 
 from core.player import Player
 from core.skills import SkillManager
 from engine.floor_map import FloorGenerator
 
-# --- COMBAT CONFIGURATION ---
-STAMINA_COST_PER_ORE = 0.0   # No cost to approach an ore
-STAMINA_COST_PER_HIT = 1.0   # 1 Stamina drained per pickaxe swing
+STAMINA_COST_PER_ORE = 0.0
+STAMINA_COST_PER_HIT = 1.0
 
-# The exact 24-slot indices traversed in Serpentine Order
 PATH_ORDER =[
     0, 1, 2, 3, 4, 5, 
     11, 10, 9, 8, 7, 6, 
@@ -37,17 +29,30 @@ PATH_ORDER =[
 ]
 
 class RunState:
-    """Tracks the live 'bank accounts' and lifetime stats of a single simulation run."""
     def __init__(self, player):
         self.stamina = player.max_sta
         self.speed_pool = 0
-        
-        # Lifetime Analytics
         self.total_time = 0.0
         self.total_xp = 0.0
         self.total_frags = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0}
         self.ores_mined = 0
         self.highest_floor = 1
+        
+        # --- TELEMETRY DATA ---
+        self.hit_counts = {'normal': 0, 'crit': 0, 'super': 0, 'ultra': 0}
+        self.history = {
+            'floor': [],
+            'time': [],
+            'stamina':[],
+            'speed_pool':[]
+        }
+
+    def record_telemetry(self):
+        """Snapshots the current state into the history arrays."""
+        self.history['floor'].append(self.highest_floor)
+        self.history['time'].append(self.total_time)
+        self.history['stamina'].append(self.stamina)
+        self.history['speed_pool'].append(self.speed_pool)
 
 class CombatSimulator:
     def __init__(self, player: Player):
@@ -55,60 +60,50 @@ class CombatSimulator:
         self.generator = FloorGenerator()
         
     def _roll_crit_multiplier(self, skill_manager):
-        """Rolls sequentially for the highest tier of crit, returning the multiplier."""
-        # Roll Ultra
-        if random.random() < self.player.ultra_crit_chance:
-            return self.player.ultra_crit_dmg_mult
+        """Rolls sequentially for highest crit tier. Returns (multiplier, hit_type_string)."""
+        if random.random() < self.player.ultra_crit_chance: 
+            return self.player.ultra_crit_dmg_mult, 'ultra'
             
-        # Roll Super
-        if random.random() < self.player.super_crit_chance:
-            return self.player.super_crit_dmg_mult
+        if random.random() < self.player.super_crit_chance: 
+            return self.player.super_crit_dmg_mult, 'super'
             
-        # Roll Standard
         if random.random() < self.player.crit_chance:
             base_crit = self.player.crit_dmg_mult
-            # Add Enrage Crit Bonus if active
-            if skill_manager.is_enrage_active:
+            if skill_manager.is_enrage_active: 
                 base_crit += self.player.enrage_bonus_crit_dmg
-            return base_crit
-        return 1.0
+            return base_crit, 'crit'
+            
+        return 1.0, 'normal'
 
     def _process_kill_rewards(self, ore, floor_obj, state: RunState):
-        """Calculates and deposits XP, Loot, Stamina, and Speed Buffs upon ore death."""
-        # 1. XP
         xp_yield = ore.xp * ore.modifiers.get('exp_multi', 1.0) * floor_obj.gleaming_multi
         state.total_xp += xp_yield
         
-        # 2. Loot (Fragments)
         loot_yield = ore.frag_amt * ore.modifiers.get('loot_multi', 1.0) * floor_obj.gleaming_multi
         if ore.frag_type in state.total_frags:
             state.total_frags[ore.frag_type] += loot_yield
             
-        # 3. Stamina Recovery
         sta_gain = ore.modifiers.get('stamina_gain', 0.0)
         if sta_gain > 0:
             state.stamina = min(self.player.max_sta, state.stamina + sta_gain)
             
-        # 4. Speed Pool Top-up
         if ore.modifiers.get('speed_active', False):
             state.speed_pool += ore.modifiers.get('speed_gain', 0.0)
             
         state.ores_mined += 1
 
     def run_simulation(self):
-        """Executes the combat loop across floors until stamina is exhausted."""
         state = RunState(self.player)
         skills = SkillManager(self.player)
         current_floor_id = 1
         
         print("\n[ SIMULATION STARTED ]")
+        state.record_telemetry() # Record starting state
         
         while state.stamina > 0:
-            # Generate the environment
             floor = self.generator.generate_floor(current_floor_id, self.player)
             state.highest_floor = current_floor_id
             
-            # Walk the Serpentine Path
             for i, slot_idx in enumerate(PATH_ORDER):
                 if state.stamina <= 0: break
                     
@@ -117,9 +112,7 @@ class CombatSimulator:
                     
                 state.stamina -= STAMINA_COST_PER_ORE
                 
-                # --- HIT-BY-HIT MICRO-TICK LOOP ---
                 while target_ore.hp > 0 and state.stamina > 0:
-                    # 1. Determine Attack Speed for this single hit
                     flurry_mult = 1.0 + self.player.flurry_bonus_atk_spd if skills.is_flurry_active else 1.0
                     
                     if state.speed_pool > 0:
@@ -128,43 +121,41 @@ class CombatSimulator:
                     else:
                         current_atk_spd = self.player.atk_spd * flurry_mult
                         
-                    # Calculate how much time this 1 swing took
                     time_passed = 1.0 / current_atk_spd
                     state.total_time += time_passed
                     
-                    # 2. Advance time and skill timers
                     events = skills.tick(time_passed)
-                    
-                    # Flurry restores stamina instantly upon auto-cast
                     if events["stamina_restored"] > 0:
                         state.stamina = min(self.player.max_sta, state.stamina + events["stamina_restored"])
                         
-                    # 3. Calculate Damage for this hit
-                    crit_mult = self._roll_crit_multiplier(skills)
+                    crit_mult, crit_type = self._roll_crit_multiplier(skills)
+                    state.hit_counts[crit_type] += 1  # Record telemetry
+                    
                     base_dmg = self.player.damage
                     if skills.is_enrage_active: base_dmg *= (1.0 + self.player.enrage_bonus_dmg)
                         
                     actual_dmg = max(1.0, base_dmg - target_ore.armor) * crit_mult
                     target_ore.hp -= actual_dmg
-                    
-                    # Pay hit stamina cost (1.0 per swing)
                     state.stamina -= STAMINA_COST_PER_HIT
                     
                     if skills.consume_attack():
                         for bg_idx in PATH_ORDER[i+1:]:
                             bg_ore = floor.grid[bg_idx]
                             if bg_ore is not None and bg_ore.hp > 0:
-                                q_crit = self._roll_crit_multiplier(skills)
+                                q_crit, q_type = self._roll_crit_multiplier(skills)
+                                state.hit_counts[q_type] += 1 # Record splash telemetry
+                                
                                 q_dmg = max(1.0, (self.player.damage * self.player.quake_dmg_to_all) - bg_ore.armor) * q_crit
                                 bg_ore.hp -= q_dmg
                                 if bg_ore.hp <= 0:
                                     self._process_kill_rewards(bg_ore, floor, state)
                                     
-                # Target Ore is dead. Harvest it!
                 if target_ore.hp <= 0:
                     self._process_kill_rewards(target_ore, floor, state)
+                
+                # Record state after every slot processed for high-res graphing
+                state.record_telemetry()
                     
-            # Floor Complete!
             current_floor_id += 1
             
         print(f"[ SIMULATION FINISHED ]")
@@ -175,19 +166,15 @@ class CombatSimulator:
         
         return state
 
-# ==============================================================================
-# QUICK VERIFICATION TEST
-# ==============================================================================
 if __name__ == "__main__":
     from tools.verify_player import load_state_from_json
     
     p = Player()
-    json_path = os.path.join(SIM_DIR, "tools", "player_state.json")
+    json_path = os.path.join(BASE_DIR, "tools", "player_state.json")
     if os.path.exists(json_path):
         load_state_from_json(p, json_path)
-        print(f"Loaded Player JSON State successfully. Starting Max Stamina: {p.max_sta}")
     else:
-        print(f"Warning: {json_path} not found. Running with baseline Level 0 stats.")
+        print(f"Warning: {json_path} not found. Running with baseline stats.")
         
     sim = CombatSimulator(p)
     result_state = sim.run_simulation()
