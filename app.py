@@ -15,6 +15,7 @@ import glob
 import base64
 from io import BytesIO
 from PIL import Image
+import pandas as pd
 
 # ==============================================================================
 # 🎨 UI TWEAK PANEL 🎨
@@ -53,6 +54,9 @@ UI_EXT_CARD_CORE_Y_OFFSET = -4
 UI_ORE_CARD_WIDTH = 100
 # Y-Offset specifically for Ore Card cores
 UI_ORE_CARD_Y_OFFSET = -4
+
+# Width of the ore icons inside the Ore Stats DataFrame table
+UI_ORE_TABLE_IMG_WIDTH = 40
 # ==============================================================================
 # ==============================================================================
 
@@ -63,6 +67,7 @@ if SIM_DIR not in sys.path:
     sys.path.append(SIM_DIR)
 
 from core.player import Player
+from core.ore import Ore
 from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
 
@@ -173,6 +178,19 @@ def find_external_image(upg_id):
     exact = os.path.join(ROOT_DIR, "assets", "upgrades", "external", f"{upg_id}.png")
     return exact if os.path.exists(exact) else None
 
+def get_scaled_image_uri(filepath, target_width):
+    """Scales an image using NEAREST and returns a Base64 URI for Streamlit DataFrames."""
+    if os.path.exists(filepath):
+        img = Image.open(filepath).convert("RGBA")
+        w_percent = (target_width / float(img.width))
+        target_height = int((float(img.height) * float(w_percent)))
+        img_resized = img.resize((target_width, target_height), Image.NEAREST)
+        buffered = BytesIO()
+        img_resized.save(buffered, format="PNG")
+        encoded = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/png;base64,{encoded}"
+    return None
+
 # --- SESSION STATE INITIALIZATION ---
 if 'player' not in st.session_state:
     st.session_state.player = Player()
@@ -248,8 +266,8 @@ STAT_CAPS = {
     'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
 }
 
-tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_optimizer = st.tabs([
-    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🧮 Calculated Stats", "🚀 Run Optimizer"
+tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_ore_stats, tab_optimizer = st.tabs([
+    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🧮 Calculated Stats", "🪨 Ore Stats", "🚀 Run Optimizer"
 ])
 
 # --- TAB 1: BASE STATS ---
@@ -510,6 +528,7 @@ with tab_cards:
                             on_change=update_card_level, args=(widget_key, card_id),
                             label_visibility="collapsed"
                         )
+                        p.set_card_level(card_id, st.session_state[widget_key])
 
 # --- TAB 4: CALCULATED STATS ---
 with tab_calc_stats:
@@ -570,6 +589,70 @@ with tab_calc_stats:
                 st.write(f"**Gleaming Multiplier:** {p.gleaming_floor_multi:,.2f}x")
                 st.write(f"**Infernal Multiplier:** {p.infernal_multiplier:,.4f}x")
 
-with tab_optimizer:
-    st.subheader("Target Optimization")
-    st.write("Optimizer hooks coming soon...")
+# --- TAB 5: ORE STATS ---
+with tab_ore_stats:
+    st.subheader("Ore Compendium")
+    
+    col_ore_toggle, col_ore_floor = st.columns([1, 1])
+    with col_ore_toggle:
+        show_modified = st.toggle("Show Modified Stats (Applies player multipliers, cards, and floor scaling)")
+    
+    target_floor = 1
+    if show_modified:
+        with col_ore_floor:
+            target_floor = st.number_input("Calculate scaling for Floor Level:", min_value=1, value=int(p.current_max_floor), step=1)
+            
+    st.divider()
+
+    FRAG_NAMES = {0: "Dirt", 1: "Common", 2: "Rare", 3: "Epic", 4: "Legendary", 5: "Mythic", 6: "Divinity"}
+    table_data =[]
+    
+    for ore_id, base in cfg.ORE_BASE_STATS.items():
+        # Hide Tier 4 ores if Asc2 is not unlocked
+        if not p.asc2_unlocked and ore_id.endswith('4'):
+            continue
+            
+        img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{ore_id}.png")
+        img_uri = get_scaled_image_uri(img_path, UI_ORE_TABLE_IMG_WIDTH)
+        frag_name = FRAG_NAMES.get(base.get('ft', 0), "Unknown")
+        
+        if show_modified:
+            # Feed it into the Layer 2 engine to get exact scaled math
+            ore_obj = Ore(ore_id, target_floor, p)
+            
+            # Apply Player Armor Penetration to the scaled armor!
+            eff_armor = max(0, ore_obj.armor - p.armor_pen)
+            
+            table_data.append({
+                "Icon": img_uri,
+                "Ore": ore_id.capitalize(),
+                "HP": f"{ore_obj.hp:,}",
+                "Eff. Armor": f"{eff_armor:,.0f} (Base: {ore_obj.armor:,})",
+                "XP Yield": f"{ore_obj.xp:,.2f}",
+                "Frag Yield": f"{ore_obj.frag_amt:,.3f}",
+                "Frag Type": frag_name
+            })
+        else:
+            # Just show the raw dictionary values
+            table_data.append({
+                "Icon": img_uri,
+                "Ore": ore_id.capitalize(),
+                "Base HP": f"{base['hp']:,}",
+                "Base Armor": f"{base['a']:,}",
+                "Base XP": f"{base['xp']:,.2f}",
+                "Base Frags": f"{base['fa']:,.3f}",
+                "Frag Type": frag_name
+            })
+            
+    # Render the interactive Streamlit dataframe
+    if table_data:
+        df = pd.DataFrame(table_data)
+        st.dataframe(
+            df,
+            column_config={
+                "Icon": st.column_config.ImageColumn("Icon", help="Ore Icon"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=600 # Makes the table nice and tall so you don't have to scroll constantly
+        )

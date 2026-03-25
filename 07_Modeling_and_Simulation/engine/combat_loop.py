@@ -96,6 +96,7 @@ class CombatSimulator:
         p_speed_mod_atk_rate = self.player.speed_mod_attack_rate
         p_flurry_bonus_atk_spd = self.player.flurry_bonus_atk_spd
         p_damage = self.player.damage
+        p_armor_pen = self.player.armor_pen
         p_enrage_bonus_dmg = self.player.enrage_bonus_dmg
         p_quake_dmg_to_all = self.player.quake_dmg_to_all
         
@@ -170,7 +171,10 @@ class CombatSimulator:
                     if is_enrage: 
                         base_dmg *= (1.0 + p_enrage_bonus_dmg)
                         
-                    actual_dmg = max(1.0, base_dmg - target_ore.armor) * crit_mult
+                    # Safely calculate effective armor (can't go below 0)
+                    eff_armor = max(0, target_ore.armor - p_armor_pen)
+                    
+                    actual_dmg = max(1.0, base_dmg - eff_armor) * crit_mult
                     target_ore.hp -= actual_dmg
                     state.stamina -= STAMINA_COST_PER_HIT
                     
@@ -183,7 +187,8 @@ class CombatSimulator:
                                 q_crit, q_type = roll_crit(is_enrage)
                                 state.hit_counts[q_type] += 1
                                 
-                                q_dmg = max(1.0, q_base - bg_ore.armor) * q_crit
+                                bg_eff_armor = max(0, bg_ore.armor - p_armor_pen)
+                                q_dmg = max(1.0, q_base - bg_eff_armor) * q_crit
                                 bg_ore.hp -= q_dmg
                                 if bg_ore.hp <= 0:
                                     self._process_kill_rewards(bg_ore, floor, state, p_max_sta)
