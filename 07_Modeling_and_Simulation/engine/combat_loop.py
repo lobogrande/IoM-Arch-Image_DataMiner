@@ -1,9 +1,9 @@
 # ==============================================================================
 # Script: engine/combat_loop.py
-# Version: 1.1.0 (Modular Architecture)
+# Version: 1.2.0 (Modular Architecture - High-Performance Cached Edition)
 # Description: The core simulation engine. Executes a run floor-by-floor using 
-#              micro-tick hit-by-hit combat. Now features embedded telemetry 
-#              tracking for diagnostic visualization and hit-type analysis.
+#              micro-tick hit-by-hit combat. Features extreme loop-hoisting to
+#              minimize @property accesses and maximize Monte Carlo throughput.
 # ==============================================================================
 
 import os
@@ -35,8 +35,9 @@ class RunState:
         self.total_time = 0.0
         self.total_xp = 0.0
         self.total_frags = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0}
+        
         self.ores_mined = 0
-        self.specific_ores_mined = {} # <-- ADD THIS LINE
+        self.specific_ores_mined = {} # <--- Specific tracking for Card Farming
         self.highest_floor = 1
         
         # --- TELEMETRY DATA ---
@@ -55,28 +56,14 @@ class RunState:
         self.history['stamina'].append(self.stamina)
         self.history['speed_pool'].append(self.speed_pool)
 
+
 class CombatSimulator:
     def __init__(self, player: Player):
         self.player = player
         self.generator = FloorGenerator()
-        
-    def _roll_crit_multiplier(self, skill_manager):
-        """Rolls sequentially for highest crit tier. Returns (multiplier, hit_type_string)."""
-        if random.random() < self.player.ultra_crit_chance: 
-            return self.player.ultra_crit_dmg_mult, 'ultra'
-            
-        if random.random() < self.player.super_crit_chance: 
-            return self.player.super_crit_dmg_mult, 'super'
-            
-        if random.random() < self.player.crit_chance:
-            base_crit = self.player.crit_dmg_mult
-            if skill_manager.is_enrage_active: 
-                base_crit += self.player.enrage_bonus_crit_dmg
-            return base_crit, 'crit'
-            
-        return 1.0, 'normal'
 
-    def _process_kill_rewards(self, ore, floor_obj, state: RunState):
+    def _process_kill_rewards(self, ore, floor_obj, state: RunState, p_max_sta):
+        """Processes loot, XP, and modifiers when an ore HP hits 0."""
         xp_yield = ore.xp * ore.modifiers.get('exp_multi', 1.0) * floor_obj.gleaming_multi
         state.total_xp += xp_yield
         
@@ -86,22 +73,62 @@ class CombatSimulator:
             
         sta_gain = ore.modifiers.get('stamina_gain', 0.0)
         if sta_gain > 0:
-            state.stamina = min(self.player.max_sta, state.stamina + sta_gain)
+            state.stamina = min(p_max_sta, state.stamina + sta_gain)
             
         if ore.modifiers.get('speed_active', False):
             state.speed_pool += ore.modifiers.get('speed_gain', 0.0)
             
         state.ores_mined += 1
+        
+        # Tracking specific ore tier/type kills
         ore_id = ore.ore_id
         state.specific_ores_mined[ore_id] = state.specific_ores_mined.get(ore_id, 0) + 1
-        
+
+
     def run_simulation(self):
+        # ======================================================================
+        # LOOP HOISTING (ATTRIBUTE CACHING)
+        # We cache static @property calculations into local variables once per 
+        # run to prevent billions of redundant dictionary lookups during the loop.
+        # ======================================================================
+        p_max_sta = self.player.max_sta
+        p_atk_spd = self.player.atk_spd
+        p_speed_mod_atk_rate = self.player.speed_mod_attack_rate
+        p_flurry_bonus_atk_spd = self.player.flurry_bonus_atk_spd
+        p_damage = self.player.damage
+        p_enrage_bonus_dmg = self.player.enrage_bonus_dmg
+        p_quake_dmg_to_all = self.player.quake_dmg_to_all
+        
+        # Crit Cache
+        p_u_crit_ch = self.player.ultra_crit_chance
+        p_u_crit_dmg = self.player.ultra_crit_dmg_mult
+        p_s_crit_ch = self.player.super_crit_chance
+        p_s_crit_dmg = self.player.super_crit_dmg_mult
+        p_crit_ch = self.player.crit_chance
+        p_crit_dmg = self.player.crit_dmg_mult
+        p_enrage_bonus_crit_dmg = self.player.enrage_bonus_crit_dmg
+
+        # Using a fast local closure instead of a class method eliminates
+        # function-call overhead and 'self.' lookups on every single hit.
+        def roll_crit(is_enrage_active):
+            rand_val = random.random()
+            if rand_val < p_u_crit_ch: 
+                return p_u_crit_dmg, 'ultra'
+            if rand_val < p_s_crit_ch: 
+                return p_s_crit_dmg, 'super'
+            if rand_val < p_crit_ch:
+                bonus = p_enrage_bonus_crit_dmg if is_enrage_active else 0.0
+                return p_crit_dmg + bonus, 'crit'
+            return 1.0, 'normal'
+
+        # ======================================================================
+        
         state = RunState(self.player)
         skills = SkillManager(self.player)
         current_floor_id = 1
         
         print("\n[ SIMULATION STARTED ]")
-        state.record_telemetry() # Record starting state
+        state.record_telemetry()
         
         while state.stamina > 0:
             floor = self.generator.generate_floor(current_floor_id, self.player)
@@ -115,48 +142,55 @@ class CombatSimulator:
                     
                 state.stamina -= STAMINA_COST_PER_ORE
                 
+                # --- MICRO-TICK COMBAT LOOP ---
                 while target_ore.hp > 0 and state.stamina > 0:
-                    flurry_mult = 1.0 + self.player.flurry_bonus_atk_spd if skills.is_flurry_active else 1.0
+                    
+                    is_flurry = skills.is_flurry_active
+                    is_enrage = skills.is_enrage_active
+                    
+                    flurry_mult = 1.0 + p_flurry_bonus_atk_spd if is_flurry else 1.0
                     
                     if state.speed_pool > 0:
-                        current_atk_spd = self.player.atk_spd * self.player.speed_mod_attack_rate * flurry_mult
+                        current_atk_spd = p_atk_spd * p_speed_mod_atk_rate * flurry_mult
                         state.speed_pool -= 1
                     else:
-                        current_atk_spd = self.player.atk_spd * flurry_mult
+                        current_atk_spd = p_atk_spd * flurry_mult
                         
                     time_passed = 1.0 / current_atk_spd
                     state.total_time += time_passed
                     
                     events = skills.tick(time_passed)
                     if events["stamina_restored"] > 0:
-                        state.stamina = min(self.player.max_sta, state.stamina + events["stamina_restored"])
+                        state.stamina = min(p_max_sta, state.stamina + events["stamina_restored"])
                         
-                    crit_mult, crit_type = self._roll_crit_multiplier(skills)
-                    state.hit_counts[crit_type] += 1  # Record telemetry
+                    crit_mult, crit_type = roll_crit(is_enrage)
+                    state.hit_counts[crit_type] += 1
                     
-                    base_dmg = self.player.damage
-                    if skills.is_enrage_active: base_dmg *= (1.0 + self.player.enrage_bonus_dmg)
+                    base_dmg = p_damage
+                    if is_enrage: 
+                        base_dmg *= (1.0 + p_enrage_bonus_dmg)
                         
                     actual_dmg = max(1.0, base_dmg - target_ore.armor) * crit_mult
                     target_ore.hp -= actual_dmg
                     state.stamina -= STAMINA_COST_PER_HIT
                     
+                    # Quake AOE Proc
                     if skills.consume_attack():
+                        q_base = p_damage * p_quake_dmg_to_all
                         for bg_idx in PATH_ORDER[i+1:]:
                             bg_ore = floor.grid[bg_idx]
                             if bg_ore is not None and bg_ore.hp > 0:
-                                q_crit, q_type = self._roll_crit_multiplier(skills)
-                                state.hit_counts[q_type] += 1 # Record splash telemetry
+                                q_crit, q_type = roll_crit(is_enrage)
+                                state.hit_counts[q_type] += 1
                                 
-                                q_dmg = max(1.0, (self.player.damage * self.player.quake_dmg_to_all) - bg_ore.armor) * q_crit
+                                q_dmg = max(1.0, q_base - bg_ore.armor) * q_crit
                                 bg_ore.hp -= q_dmg
                                 if bg_ore.hp <= 0:
-                                    self._process_kill_rewards(bg_ore, floor, state)
+                                    self._process_kill_rewards(bg_ore, floor, state, p_max_sta)
                                     
                 if target_ore.hp <= 0:
-                    self._process_kill_rewards(target_ore, floor, state)
+                    self._process_kill_rewards(target_ore, floor, state, p_max_sta)
                 
-                # Record state after every slot processed for high-res graphing
                 state.record_telemetry()
                     
             current_floor_id += 1
