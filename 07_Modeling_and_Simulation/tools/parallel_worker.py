@@ -1,8 +1,8 @@
 # ==============================================================================
 # Script: tools/parallel_worker.py
-# Layer 4: Multiprocessing Utility & Engine
-# Description: Houses the worker functions, grid search algorithm, and ETA 
-#              hardware benchmarking. Abstracted so different optimizers can share it.
+# Layer 4: Multiprocessing Utility & Engine (Successive Halving Edition)
+# Description: Houses the worker functions, grid search algorithm, Successive 
+#              Halving (Early Stopping) logic, and ETA hardware benchmarking.
 # ==============================================================================
 
 import os
@@ -27,35 +27,29 @@ def worker_simulate(payload):
     p = Player()
     load_state_from_json(p, JSON_PATH)
     
-    # Inject optimized stats
     for stat_name, val in payload['stats'].items():
         p.base_stats[stat_name] = val
         
-    # Inject locked/fixed stats
     for stat_name, val in payload['fixed_stats'].items():
         p.base_stats[stat_name] = val
         
     sim = CombatSimulator(p)
     
-    # Suppress output to keep terminal clean during multiprocessing
     sys.stdout = open(os.devnull, 'w')
     result = sim.run_simulation()
     sys.stdout = sys.__stdout__
     
     runtime_mins = result.total_time / 60.0 if result.total_time > 0 else 1.0
     
-    # 1. Base Metrics
     metrics = {
         "highest_floor": result.highest_floor,
         "xp_per_min": result.total_xp / runtime_mins,
         "ores_per_min": result.ores_mined / runtime_mins
     }
     
-    # 2. Fragment Tier Metrics
     for frag_tier, amt in result.total_frags.items():
         metrics[f"frag_{frag_tier}_per_min"] = amt / runtime_mins
         
-    # 3. Specific Ore Farming Metrics (Requires the telemetry update in combat_loop.py)
     if hasattr(result, 'specific_ores_mined'):
         for ore_id, count in result.specific_ores_mined.items():
             metrics[f"ore_{ore_id}_per_min"] = count / runtime_mins
@@ -92,38 +86,79 @@ def generate_distributions(stats_list, total_budget, step, bounds=None):
     return distributions
 
 def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None):
-    """Runs a grid search phase and sorts dynamically by the requested target_metric."""
+    """
+    Runs a grid search phase using Successive Halving.
+    Instead of simulating all iterations for bad builds, it culls the bottom % 
+    in stages, saving ~75% of processing time.
+    """
     dists = generate_distributions(stats_list, budget, step, bounds)
     if not dists: return None, None
         
-    print(f"\n[{phase_name}] Step: {step} | Builds to test: {len(dists)} | Runs/Build: {iterations}")
+    print(f"\n[{phase_name}] Step: {step} | Total Initial Builds: {len(dists)}")
     
-    best_dist = None
-    best_val = 0.0
-    best_summary = None
+    # Track state using immutable dictionary representations as keys
+    tracker = {}
+    for d in dists:
+        key = tuple(sorted(d.items()))
+        tracker[key] = {'dist': d, 'sum_target': 0.0, 'sum_floor': 0.0, 'runs': 0}
+        
+    active_keys = list(tracker.keys())
     
-    for i, dist in enumerate(dists):
-        tasks =[{'stats': dist, 'fixed_stats': fixed_stats} for _ in range(iterations)]
+    # If the pool of builds is tiny, skip halving and just brute force it
+    if len(dists) <= 20 or iterations <= 10:
+        rounds = [(iterations, 1.0)] 
+    else:
+        # Round 1: 15% of iterations. Keep Top 20%
+        # Round 2: 35% of iterations. Keep Top 10%
+        # Round 3: 50% of iterations. Keep 100% of survivors to find the absolute winner
+        r1 = max(1, int(iterations * 0.15))
+        r2 = max(1, int(iterations * 0.35))
+        r3 = iterations - r1 - r2
+        rounds =[
+            (r1, 0.20),
+            (r2, 0.10),
+            (r3, 1.0)
+        ]
+
+    for round_idx, (run_count, keep_ratio) in enumerate(rounds):
+        if len(active_keys) == 0: break
+        
+        if len(rounds) > 1:
+            print(f"  -> Round {round_idx+1}: Testing {len(active_keys)} builds ({run_count} runs each)...")
+            
+        # Build payload tasks for only the surviving builds
+        tasks = [{'stats': tracker[k]['dist'], 'fixed_stats': fixed_stats} for k in active_keys for _ in range(run_count)]
         results = pool.map(worker_simulate, tasks)
         
-        # Dynamically average whatever metric the optimizer script asked for
-        # Uses .get() with a fallback of 0.0 so the script doesn't crash if an ore wasn't encountered
-        avg_target = sum(r.get(target_metric, 0.0) for r in results) / iterations
-        avg_floor = sum(r['highest_floor'] for r in results) / iterations
-        
-        if i % max(1, len(dists)//10) == 0 or avg_target > best_val:
-            sys.stdout.write(f"\rProgress: {i+1}/{len(dists)} | Best {target_metric}: {best_val:,.2f}")
-            sys.stdout.flush()
+        # Aggregate results back into the tracker
+        for i, k in enumerate(active_keys):
+            chunk = results[i*run_count : (i+1)*run_count]
+            tracker[k]['sum_target'] += sum(r.get(target_metric, 0.0) for r in chunk)
+            tracker[k]['sum_floor'] += sum(r.get('highest_floor', 0.0) for r in chunk)
+            tracker[k]['runs'] += run_count
             
-        if avg_target > best_val:
-            best_val = avg_target
-            best_dist = dist
-            best_summary = {target_metric: avg_target, "avg_floor": avg_floor}
+        # Sort surviving keys by their current cumulative average
+        active_keys.sort(key=lambda k: tracker[k]['sum_target'] / tracker[k]['runs'], reverse=True)
+        
+        # Cull the herd for the next round
+        if round_idx < len(rounds) - 1:
+            keep_count = max(3, int(len(active_keys) * keep_ratio)) # Always keep at least 3
+            active_keys = active_keys[:keep_count]
 
-    if best_dist:
-        print(f"\n[{phase_name} Winner] {best_dist} -> {best_summary[target_metric]:,.2f} {target_metric}")
+    # After all rounds, the overall absolute winner is at index 0
+    best_key = active_keys[0]
+    best_data = tracker[best_key]
+    
+    best_dist = best_data['dist']
+    best_summary = {
+        target_metric: best_data['sum_target'] / best_data['runs'],
+        "avg_floor": best_data['sum_floor'] / best_data['runs']
+    }
+
+    if best_summary[target_metric] > 0:
+        print(f"[{phase_name} Winner] {best_dist} -> {best_summary[target_metric]:,.2f} {target_metric}")
     else:
-        print(f"\n[{phase_name}] Target metric '{target_metric}' not found during runs. Ensure your player can reach the target.")
+        print(f"[{phase_name}] Target metric '{target_metric}' not found. Ensure your player can reach the target.")
     
     return best_dist, best_summary
 
@@ -132,29 +167,26 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
 def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     """Runs a fast micro-benchmark to determine CPU processing speed."""
     tasks = [baseline_payload for _ in range(test_iterations)]
-    
     start_time = time.time()
     pool.map(worker_simulate, tasks)
     elapsed = time.time() - start_time
-    
-    sims_per_second = test_iterations / elapsed if elapsed > 0 else 1
-    return sims_per_second
+    return test_iterations / elapsed if elapsed > 0 else 1
 
 def get_eta_profiles(stats_list, budget, caps, sims_per_second, iterations_per_build=100):
-    """Calculates completion ETAs based on the hardware benchmark."""
+    """Calculates completion ETAs based on the hardware benchmark and halving logic."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
         "Deep (Step: 5)": {"step": 5}
     }
-    
     bounds = {s: (0, caps[s]) for s in stats_list}
     
     for name, data in profiles.items():
         p1_builds = len(generate_distributions(stats_list, budget, data["step"], bounds))
-        total_estimated_builds = p1_builds + 300 # Buffer for Phase 2 and 3
+        total_estimated_builds = p1_builds + 300 
         
-        total_simulations = total_estimated_builds * iterations_per_build
+        # Account for the ~75% reduction in total simulations due to Successive Halving
+        total_simulations = (total_estimated_builds * iterations_per_build) * 0.25
         estimated_seconds = total_simulations / sims_per_second
         
         if estimated_seconds < 60:
