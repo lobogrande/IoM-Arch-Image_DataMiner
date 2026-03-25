@@ -1,6 +1,6 @@
 # ==============================================================================
 # Script: tools/parallel_worker.py
-# Layer 4: Multiprocessing Utility & Engine (Successive Halving Edition)
+# Layer 4: Multiprocessing Utility & Engine (Successive Halving + Live Progress)
 # Description: Houses the worker functions, grid search algorithm, Successive 
 #              Halving (Early Stopping) logic, and ETA hardware benchmarking.
 # ==============================================================================
@@ -87,16 +87,13 @@ def generate_distributions(stats_list, total_budget, step, bounds=None):
 
 def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None):
     """
-    Runs a grid search phase using Successive Halving.
-    Instead of simulating all iterations for bad builds, it culls the bottom % 
-    in stages, saving ~75% of processing time.
+    Runs a grid search phase using Successive Halving with live progress tracking.
     """
     dists = generate_distributions(stats_list, budget, step, bounds)
     if not dists: return None, None
         
     print(f"\n[{phase_name}] Step: {step} | Total Initial Builds: {len(dists)}")
     
-    # Track state using immutable dictionary representations as keys
     tracker = {}
     for d in dists:
         key = tuple(sorted(d.items()))
@@ -104,13 +101,9 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         
     active_keys = list(tracker.keys())
     
-    # If the pool of builds is tiny, skip halving and just brute force it
     if len(dists) <= 20 or iterations <= 10:
         rounds = [(iterations, 1.0)] 
     else:
-        # Round 1: 15% of iterations. Keep Top 20%
-        # Round 2: 35% of iterations. Keep Top 10%
-        # Round 3: 50% of iterations. Keep 100% of survivors to find the absolute winner
         r1 = max(1, int(iterations * 0.15))
         r2 = max(1, int(iterations * 0.35))
         r3 = iterations - r1 - r2
@@ -126,26 +119,39 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         if len(rounds) > 1:
             print(f"  -> Round {round_idx+1}: Testing {len(active_keys)} builds ({run_count} runs each)...")
             
-        # Build payload tasks for only the surviving builds
+        # Build payload tasks
         tasks = [{'stats': tracker[k]['dist'], 'fixed_stats': fixed_stats} for k in active_keys for _ in range(run_count)]
-        results = pool.map(worker_simulate, tasks)
+        total_tasks = len(tasks)
         
-        # Aggregate results back into the tracker
+        # Determine efficient chunksize for multiprocessing IPC
+        chunk_size = max(1, total_tasks // 100)
+        
+        results =[]
+        # Use imap to yield results continuously, allowing us to update the terminal
+        for i, r in enumerate(pool.imap(worker_simulate, tasks, chunksize=chunk_size)):
+            results.append(r)
+            
+            # Print progress roughly 20 times (every 5%) to avoid terminal flicker/lag
+            if i % max(1, total_tasks // 20) == 0 or i == total_tasks - 1:
+                sys.stdout.write(f"\r      Progress: {i+1}/{total_tasks} simulations completed")
+                sys.stdout.flush()
+                
+        sys.stdout.write("\n") # Drop to a new line after the progress bar completes
+        
+        # Aggregate results
         for i, k in enumerate(active_keys):
             chunk = results[i*run_count : (i+1)*run_count]
             tracker[k]['sum_target'] += sum(r.get(target_metric, 0.0) for r in chunk)
             tracker[k]['sum_floor'] += sum(r.get('highest_floor', 0.0) for r in chunk)
             tracker[k]['runs'] += run_count
             
-        # Sort surviving keys by their current cumulative average
+        # Sort and cull
         active_keys.sort(key=lambda k: tracker[k]['sum_target'] / tracker[k]['runs'], reverse=True)
         
-        # Cull the herd for the next round
         if round_idx < len(rounds) - 1:
-            keep_count = max(3, int(len(active_keys) * keep_ratio)) # Always keep at least 3
+            keep_count = max(3, int(len(active_keys) * keep_ratio))
             active_keys = active_keys[:keep_count]
 
-    # After all rounds, the overall absolute winner is at index 0
     best_key = active_keys[0]
     best_data = tracker[best_key]
     
@@ -158,7 +164,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     if best_summary[target_metric] > 0:
         print(f"[{phase_name} Winner] {best_dist} -> {best_summary[target_metric]:,.2f} {target_metric}")
     else:
-        print(f"[{phase_name}] Target metric '{target_metric}' not found. Ensure your player can reach the target.")
+        print(f"[{phase_name}] Target metric '{target_metric}' not found.")
     
     return best_dist, best_summary
 
@@ -166,7 +172,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
 
 def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     """Runs a fast micro-benchmark to determine CPU processing speed."""
-    tasks = [baseline_payload for _ in range(test_iterations)]
+    tasks =[baseline_payload for _ in range(test_iterations)]
     start_time = time.time()
     pool.map(worker_simulate, tasks)
     elapsed = time.time() - start_time
@@ -185,7 +191,6 @@ def get_eta_profiles(stats_list, budget, caps, sims_per_second, iterations_per_b
         p1_builds = len(generate_distributions(stats_list, budget, data["step"], bounds))
         total_estimated_builds = p1_builds + 300 
         
-        # Account for the ~75% reduction in total simulations due to Successive Halving
         total_simulations = (total_estimated_builds * iterations_per_build) * 0.25
         estimated_seconds = total_simulations / sims_per_second
         
