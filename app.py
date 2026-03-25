@@ -23,7 +23,7 @@ from PIL import Image
 
 # --- BASE STATS ---
 # Width of the stat icons
-UI_STAT_IMG_WIDTH = 60
+UI_STAT_IMG_WIDTH = 220
 
 # --- INTERNAL UPGRADES ---
 # The layout ratio for the single-column feed:[Left_Spacer, Center_Feed, Right_Spacer]
