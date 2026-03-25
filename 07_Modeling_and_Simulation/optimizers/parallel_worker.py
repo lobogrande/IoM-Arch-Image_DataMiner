@@ -85,7 +85,7 @@ def generate_distributions(stats_list, total_budget, step, bounds=None):
     backtrack(0, 0, {})
     return distributions
 
-def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None):
+def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None, progress_callback=None):
     """
     Runs a grid search phase using Successive Halving with live progress tracking.
     """
@@ -130,6 +130,9 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
             if i % max(1, total_tasks // 20) == 0 or i == total_tasks - 1:
                 sys.stdout.write(f"\r      Progress: {i+1}/{total_tasks} simulations completed")
                 sys.stdout.flush()
+                # --- NEW STREAMLIT BRIDGE ---
+                if progress_callback:
+                    progress_callback(phase_name, round_idx + 1, len(rounds), i + 1, total_tasks)
                 
         sys.stdout.write("\n")
         

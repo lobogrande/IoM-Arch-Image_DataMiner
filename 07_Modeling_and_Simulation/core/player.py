@@ -236,6 +236,22 @@ class Player:
         return self._excel_round(val, 0)
 
     @property
+    def enraged_damage(self):
+        """Calculates Damage with Enrage treated as an ADDITIVE multiplier to the main pool."""
+        base_calc = self.u('F9') + self.u('F15') + self.u('F20') + self.u('F32') + self.u('F49') + self.inf('rare2')
+        stat_calc1 = self.stat('Str') * (1 + self.u('F25'))
+        stat_calc2 = self.stat('Div') * (2 + self.u('F34'))
+        mult1 = 1 + self.u('F51') + self.u('F36') + (self.stat('Str') * (0.01 + self.u('F47') + self.u('H25'))) + self.inf('div1')
+        mult2 = (0.06 + self.u('F52')) * self.stat('Corr')
+        
+        # Enrage Bonus (20% + F18) is added directly into the mult pool
+        enrage_mult = 0.2 + self.u('F18')
+        
+        floor_calc = 1 + (0.01 * min(100, self.current_max_floor))
+        val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2 + enrage_mult) * floor_calc
+        return self._excel_round(val, 0)
+    
+    @property
     def armor_pen(self):
         stat_calc = self.stat('Per') * (2 + self.u('H33'))
         base_ap = self.u('F10') + self.u('F17') + self.u('H36') + stat_calc + self.inf('leg3')
@@ -249,6 +265,11 @@ class Player:
     def crit_chance(self): return self.u('F13') + (0.02 * self.stat('Luck')) + (0.01 * self.stat('Agi'))
     @property
     def crit_dmg_mult(self): return self._excel_floor(1.5 * (1.0 + self.u('H13') + self.u('F30') + self.inf('com1') + (0.03 + self.u('H47')) * self.stat('Str')), 2)
+    @property
+    def enraged_crit_dmg_mult(self): 
+        # The 1.0 + F18 (130% at max) is injected directly inside the 1.5 * (...) equation
+        enrage_crit_bonus = 1.0 + self.u('F18')
+        return self._excel_floor(1.5 * (1.0 + enrage_crit_bonus + self.u('H13') + self.u('F30') + self.inf('com1') + (0.03 + self.u('H47')) * self.stat('Str')), 2)
     @property
     def super_crit_chance(self): return self.u('H20') + self.u('F37') + ((0.02 + 0.01 * self.u('F34')) * self.stat('Div')) + self.inf('epic2')
     @property
