@@ -953,7 +953,7 @@ with tab_optimizer:
     col_goal, col_target = st.columns(2)
     with col_goal:
         opt_goal = st.selectbox(
-            "Optimization Target",["Max Floor Push", "Max EXP Yield", "Fragment Farming", "Card/Ore Farming"]
+            "Optimization Target", ["Max Floor Push", "Max EXP Yield", "Fragment Farming", "Ore Card Farming"]
         )
     
     with col_target:
@@ -964,7 +964,7 @@ with tab_optimizer:
                 format_func=lambda x: {0:"Dirt", 1:"Common", 2:"Rare", 3:"Epic", 4:"Legendary", 5:"Mythic", 6:"Divine"}.get(x)
             )
             target_metric = f"frag_{frag_tier}_per_min"
-        elif opt_goal == "Card/Ore Farming":
+        elif opt_goal == "Ore Card Farming":
             ore_target = st.text_input("Target Ore ID (e.g., com1, myth3)", value="myth3").lower()
             target_metric = f"ore_{ore_target}_per_min"
         elif opt_goal == "Max EXP Yield":
@@ -1085,7 +1085,8 @@ with tab_optimizer:
             if p.asc2_unlocked: best_final['Corr'] = 5
             final_summary_out = {
                 target_metric: 450.5, "avg_floor": 125.4, 
-                "abs_max_floor": 132, "abs_max_chance": 0.05, "avg_metrics": {}
+                "abs_max_floor": 132, "abs_max_chance": 0.05, "avg_metrics": {},
+                "stamina_trace":[max(0, 10000 - (i**1.85)) for i in range(125)] # Mock quadratic decay
             }
             elapsed = 0.01
             time_limit_secs = 999
@@ -1278,9 +1279,29 @@ with tab_optimizer:
                         st.divider()
                         
                         # Clean, consolidated Real-Time readout
+                        # Clean, consolidated Real-Time readout
                         st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                         st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
                         
+                        # --- NEW ORE CARD ODDS SECTION ---
+                        if "ore_" in target_metric:
+                            st.divider()
+                            st.markdown(f"#### 🃏 Ore Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
+                            
+                            odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
+                            for drop_name, req_kills in odds.items():
+                                if val > 0:
+                                    rt_mins = req_kills / val
+                                    rt_str = f"{rt_mins:.1f} mins" if rt_mins < 60 else f"{rt_mins/60.0:.1f} hours"
+                                    
+                                    arch_secs = req_kills / (val / 60.0)
+                                    arch_1k = arch_secs / 1000.0
+                                    
+                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {req_kills:,})</span>", unsafe_allow_html=True)
+                                    st.write(f"*- Real-Time:* ~{rt_str} &nbsp;|&nbsp; *- Banked:* ~{arch_1k:.1f}k Secs", unsafe_allow_html=True)
+                                else:
+                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {req_kills:,})</span><br>*- N/A (0 kills)*", unsafe_allow_html=True)
+
                         st.divider()
                         
                         avg_flr = final_summary_out.get("avg_floor", 0)
@@ -1343,6 +1364,24 @@ with tab_optimizer:
                     fig_hist.update_traces(marker_color='#ff4b4b', textposition='outside')
                     fig_hist.update_layout(margin=dict(t=20, b=20), height=400, xaxis_type='category')
                     st.plotly_chart(fig_hist, use_container_width=True)
+
+                    # --- STAMINA PLOT (NEW) ---
+                    if "stamina_trace" in final_summary_out:
+                        st.divider()
+                        st.markdown("#### Stamina Depletion Trace (Sample Run)")
+                        st.write("A simulated look at how your stamina drains floor-by-floor with this optimal build. Notice where the line drops off a cliff—that is where enemy HP/Armor scaling overtakes your damage.")
+                        
+                        trace_data = final_summary_out["stamina_trace"]
+                        df_stam = pd.DataFrame({
+                            "Floor": range(1, len(trace_data) + 1), 
+                            "Stamina": trace_data
+                        })
+                        
+                        fig_stam = px.line(df_stam, x="Floor", y="Stamina")
+                        # Fill area under the curve for a cool "pool" effect
+                        fig_stam.update_traces(line_color="#ffa229", fill='tozeroy', fillcolor="rgba(255, 162, 41, 0.2)")
+                        fig_stam.update_layout(margin=dict(t=20, b=20), height=300)
+                        st.plotly_chart(fig_stam, use_container_width=True)
 
         else:
             st.error("Optimization failed or aborted before a single build could be tested.")
