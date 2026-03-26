@@ -1399,28 +1399,26 @@ with tab_optimizer:
                     if "stamina_trace" in final_summary_out:
                         st.divider()
                         st.markdown("#### Stamina Depletion Trace (Sample Run)")
-                        st.write("A simulated look at how your stamina drains ore-by-ore. Hover over the line to see exactly which Floor and Ore Slot caused massive drops.")
+                        st.write("A simulated look at how your stamina drains floor-by-floor. Hover over the line to see your exact remaining stamina at the end of each floor.")
                         
+                        # We still receive the granular arrays from the engine...
                         trace_floors = final_summary_out["stamina_trace"]["floor"]
                         trace_stamina = final_summary_out["stamina_trace"]["stamina"]
                         
-                        # Calculate exactly which ore slot we are on (1 to 24)
-                        ore_slots = [(i % 24) + 1 for i in range(len(trace_floors))]
-                        # Create a continuous float value for a smooth X-axis
-                        frac_floors =[f + ((s - 1) / 24.0) for f, s in zip(trace_floors, ore_slots)]
-                        
                         df_stam = pd.DataFrame({
-                            "Floor Progress": frac_floors,
                             "Floor": trace_floors,
-                            "Ore Slot": ore_slots,
                             "Stamina": trace_stamina
                         })
                         
+                        # ...but we use Pandas to extract ONLY the final stamina value for each floor!
+                        # This guarantees a strictly ascending X-axis and completely fixes the diagonal line bugs.
+                        df_grouped = df_stam.groupby("Floor", as_index=False).last()
+                        
                         fig_stam = px.line(
-                            df_stam, 
-                            x="Floor Progress", 
+                            df_grouped, 
+                            x="Floor", 
                             y="Stamina",
-                            hover_data={"Floor Progress": False, "Floor": True, "Ore Slot": True, "Stamina": ":,.0f"}
+                            hover_data={"Floor": True, "Stamina": ":,.0f"}
                         )
                         # Fill area under the curve
                         fig_stam.update_traces(line_color="#ffa229", fill='tozeroy', fillcolor="rgba(255, 162, 41, 0.2)")
