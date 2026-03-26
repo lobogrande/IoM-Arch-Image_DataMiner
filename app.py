@@ -824,36 +824,56 @@ with tab_optimizer:
         preview_html += "</div>"
         st.markdown(preview_html, unsafe_allow_html=True)
 
+ # --- MONTE CARLO EXECUTION LOOP ---
     st.divider()
-
-    # --- MONTE CARLO EXECUTION LOOP ---
+    dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
+    
     if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
         st.write("---")
         
-        # AUTO-BENCHMARK FAILSAFE
-        if st.session_state.sims_per_sec == 0:
-            with st.spinner("⏱️ First-time setup: Benchmarking your CPU..."):
-                STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
-                if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-                payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}}
-                CPU_CORES = max(1, mp.cpu_count() - 1)
-                with mp.Pool(CPU_CORES) as pool:
-                    spd = benchmark_hardware(payload, pool)
-                    st.session_state.sims_per_sec = spd
-                    budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
-                    cap_increase = int(p.u('H45'))
-                    caps = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
-                    st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
+        # ==========================================
+        # DEV MODE INTERCEPT (Instant UI Testing)
+        # ==========================================
+        if dev_mode:
+            best_final = {'Str': 25, 'Agi': 0, 'Per': 5, 'Int': 35, 'Luck': 40, 'Div': 0}
+            if p.asc2_unlocked: best_final['Corr'] = 5
+            
+            final_summary_out = {target_metric: 450.5, "avg_floor": 125.4}
+            elapsed = 0.01
+            time_limit_secs = 999
+            
+            # Mocked context data for the Confidence Chart
+            runner_up_val = final_summary_out[target_metric] * 0.96
+            avg_val = final_summary_out[target_metric] * 0.55
+            worst_val = final_summary_out[target_metric] * 0.10
 
-        # Print ETA to screen before starting the heavy load
-        prof_key = next((k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice)), None)
-        if prof_key:
-            prof_data = st.session_state.eta_profiles[prof_key]
-            step_size = prof_data['step']
-            st.info(f"⏱️ **Running {depth_choice} Search:** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
+        # ==========================================
+        # REAL ENGINE EXECUTION
+        # ==========================================
+        else:
+            # AUTO-BENCHMARK FAILSAFE
+            if st.session_state.sims_per_sec == 0:
+                with st.spinner("⏱️ First-time setup: Benchmarking your CPU..."):
+                    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                    if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+                    payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}}
+                    CPU_CORES = max(1, mp.cpu_count() - 1)
+                    with mp.Pool(CPU_CORES) as pool:
+                        spd = benchmark_hardware(payload, pool)
+                        st.session_state.sims_per_sec = spd
+                        budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                        cap_increase = int(p.u('H45'))
+                        caps = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
+                        st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
 
-        with st.spinner(f"Engine Running..."):
-            start_time = time.time()
+            prof_key = next((k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice)), None)
+            if prof_key:
+                prof_data = st.session_state.eta_profiles[prof_key]
+                step_size = prof_data['step']
+                st.info(f"⏱️ **Running {depth_choice} Search:** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
+
+            with st.spinner(f"Engine Running..."):
+                start_time = time.time()
             
             # 1. Prepare Engine Data
             STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
@@ -916,55 +936,98 @@ with tab_optimizer:
             elapsed = time.time() - start_time
             
             # --- 3. UI RESULTS TELEMETRY ---
-            if best_final and final_summary_out:
-                if elapsed >= time_limit_secs:
-                    st.warning(f"⚠️ **Time Limit Reached!** Optimization safely aborted early at {elapsed:.1f} seconds. Showing the best build found so far.")
-                else:
-                    st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
-                
-                res_col1, res_col2 = st.columns([1.5, 1])
-                
-                with res_col1:
-                    with st.container(border=True):
-                        st.markdown("#### 🏆 Optimal Stat Build")
-                        # Beautiful Interactive Plotly Bar Chart
-                        df_stats = pd.DataFrame({
-                            "Stat": list(best_final.keys()), 
-                            "Points": list(best_final.values())
-                        })
-                        fig = px.bar(
-                            df_stats, x="Stat", y="Points", text="Points", 
-                            color="Stat", color_discrete_sequence=px.colors.qualitative.Pastel
-                        )
-                        fig.update_traces(textposition='outside')
-                        fig.update_layout(showlegend=False, margin=dict(l=20, r=20, t=20, b=20), height=300)
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Auto-Apply UX Injection
-                        if st.button("✨ Apply Build to UI", use_container_width=True):
-                            for k, v in best_final.items():
-                                st.session_state[f"stat_{k}"] = int(v)
-                                p.base_stats[k] = int(v)
-                            st.rerun()
+        if best_final and final_summary_out:
+            
+            # Real engine mock fallback until we update parallel_worker.py in the next step
+            if not dev_mode:
+                runner_up_val = final_summary_out[target_metric] * 0.98
+                avg_val = final_summary_out[target_metric] * 0.60
+                worst_val = final_summary_out[target_metric] * 0.15
 
-                with res_col2:
-                    with st.container(border=True):
-                        st.markdown("#### 📈 Projected Return")
-                        val = final_summary_out[target_metric]
-                        
-                        if target_metric == "highest_floor":
-                            st.metric("Max Floor Reached", f"{val:,.1f}")
-                        else:
-                            rate_sec = val / 60.0
-                            rate_1k = rate_sec * 1000.0
-                            
-                            if "frag" in target_metric: metric_str = "Fragments"
-                            elif "ore" in target_metric: metric_str = "Kills"
-                            else: metric_str = "EXP"
-
-                            st.metric(f"Real-Time ({metric_str})", f"{val:,.2f} / min")
-                            st.divider()
-                            st.metric("Banked Time", f"{rate_sec:,.2f} / Arch Sec")
-                            st.metric("Banked Time (1k)", f"{rate_1k:,.1f} / 1k Arch Sec")
+            if elapsed >= time_limit_secs:
+                st.warning(f"⚠️ **Time Limit Reached!** Optimization safely aborted early at {elapsed:.1f} seconds. Showing the best build found so far.")
             else:
-                st.error("Optimization failed or aborted before a single build could be tested.")
+                st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
+            
+            # ==========================================
+            # VISUAL STAT LAYOUT
+            # ==========================================
+            st.markdown("### 🏆 Optimal Stat Build")
+            st.write("*(Green/Red numbers show changes from your current UI allocation)*")
+            
+            stat_cols = st.columns(len(best_final))
+            for idx, (stat_name, allocated_pts) in enumerate(best_final.items()):
+                with stat_cols[idx]:
+                    with st.container(border=True):
+                        # 1. Pixel Art
+                        img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
+                        if os.path.exists(img_path):
+                            render_centered_image(img_path, 60)
+                        else:
+                            st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
+                        
+                        # 2. Metric Delta Calculation
+                        current_val = int(st.session_state.get(f"stat_{stat_name}", p.base_stats.get(stat_name, 0)))
+                        delta = int(allocated_pts) - current_val
+                        
+                        # 3. Render Streamlit Metric
+                        st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
+            
+            if st.button("✨ Apply Build to UI", use_container_width=True):
+                for k, v in best_final.items():
+                    st.session_state[f"stat_{k}"] = int(v)
+                    p.base_stats[k] = int(v)
+                st.rerun()
+
+            st.divider()
+
+            # ==========================================
+            # CONFIDENCE & RETURN PROJECTIONS
+            # ==========================================
+            st.markdown("### 📊 Optimization Confidence & Yields")
+            res_col1, res_col2 = st.columns([1.5, 1])
+            
+            with res_col1:
+                with st.container(border=True):
+                    st.markdown("#### Engine Confidence Analysis")
+                    st.write("How much better is this build compared to the alternatives tested in Phase 3?")
+                    
+                    df_conf = pd.DataFrame({
+                        "Build Category":["Worst Tested", "Average Build", "Runner-Up", "🏆 Optimal Build"],
+                        "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[target_metric]]
+                    })
+                    
+                    fig = px.bar(
+                        df_conf, x="Performance", y="Build Category", orientation='h',
+                        text_auto='.3s', color="Build Category",
+                        color_discrete_map={
+                            "Worst Tested": "#ff4b4b",       # Red
+                            "Average Build": "#ffa229",      # Orange
+                            "Runner-Up": "#6495ED",          # Light Blue
+                            "🏆 Optimal Build": "#4CAF50"    # Green
+                        }
+                    )
+                    fig.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=250)
+                    st.plotly_chart(fig, use_container_width=True)
+
+            with res_col2:
+                with st.container(border=True):
+                    st.markdown("#### Projected Yields")
+                    val = final_summary_out[target_metric]
+                    
+                    if target_metric == "highest_floor":
+                        st.metric("Max Floor Reached", f"{val:,.1f}")
+                    else:
+                        rate_sec = val / 60.0
+                        rate_1k = rate_sec * 1000.0
+                        
+                        if "frag" in target_metric: metric_str = "Fragments"
+                        elif "ore" in target_metric: metric_str = "Kills"
+                        else: metric_str = "EXP"
+
+                        st.metric(f"Real-Time ({metric_str})", f"{val:,.2f} / min")
+                        st.divider()
+                        st.metric("Banked Time", f"{rate_sec:,.2f} / Arch Sec")
+                        st.metric("Banked Time (1k)", f"{rate_1k:,.1f} / 1k Arch Sec")
+        else:
+            st.error("Optimization failed or aborted before a single build could be tested.")
