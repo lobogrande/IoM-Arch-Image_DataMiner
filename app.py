@@ -760,12 +760,15 @@ with tab_sandbox:
     st.divider()
     
     # --- SANDBOX CALCULATOR LOGIC ---
+    if "sandbox_floor" not in st.session_state:
+        st.session_state["sandbox_floor"] = int(p.current_max_floor)
+        
     col_floor, col_toggles = st.columns([1, 2])
     with col_floor:
-        target_floor = st.number_input("Enemy Level (Target Floor):", min_value=1, value=int(p.current_max_floor), step=1, key="sandbox_floor")
+        target_floor = st.number_input("Enemy Level (Target Floor):", min_value=1, step=1, key="sandbox_floor")
     with col_toggles:
         show_unreachable = st.checkbox("Show Ores Above Target Floor (e.g. Div3 on Floor 50)")
-        show_crit_details = st.checkbox("Show Detailed Crit Multiplier Damages")
+        show_crit_details = st.checkbox("Show Detailed Crit Multipliers")
         
     # Build an isolated Sandbox Player Object
     sandbox_p = Player()
@@ -815,9 +818,9 @@ with tab_sandbox:
         
         # Filter Logic based on floor tiers
         if not show_unreachable:
-            if tier == 2 and target_floor < 50: continue
-            if tier == 3 and target_floor < 100: continue
-            if tier == 4 and target_floor < 150: continue
+            if tier == 2 and target_floor <= 50: continue
+            if tier == 3 and target_floor <= 100: continue
+            if tier == 4 and target_floor <= 150: continue
         if tier == 4 and not sandbox_p.asc2_unlocked: continue
             
         ore_obj = Ore(ore_id, target_floor, sandbox_p)
@@ -838,14 +841,15 @@ with tab_sandbox:
         img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{ore_id}.png")
         img_uri = get_scaled_image_uri(img_path, UI_ORE_TABLE_IMG_WIDTH)
         
+        # Shortened column names to save horizontal width!
         row = {
             "Icon": img_uri,
-            "Block Type": ore_id.capitalize(),
+            "Ore": ore_id.capitalize(),
             "HP": f"{ore_obj.hp:,}",
-            "Eff. Armor": f"{eff_armor:,.0f}",
+            "Armor": f"{eff_armor:,.0f}",
             "EDPS": f"{edps:,.0f}",
-            "Enraged EDPS": f"{enr_edps:,.0f}",
-            "Reg": f"{reg_hit:,.0f}"
+            "Enr EDPS": f"{enr_edps:,.0f}",
+            "Reg Hit": f"{reg_hit:,.0f}"
         }
         
         if show_crit_details:
@@ -853,27 +857,28 @@ with tab_sandbox:
             row["sCrit"] = f"{reg_hit * c_scrit:,.0f}"
             row["uCrit"] = f"{reg_hit * c_ucrit:,.0f}"
             
-        row["Max Sta to Kill"] = f"{max_sta:,}"
-        row["Avg Sta to Kill"] = f"{avg_sta:,}"
-        row["Enr. Hit"] = f"{enr_hit:,.0f}"
+        row["Max Hits"] = f"{max_sta:,}"
+        row["Avg Hits"] = f"{avg_sta:,}"
+        row["Enr Hit"] = f"{enr_hit:,.0f}"
         
         if show_crit_details:
-            row["Enr. Crit"] = f"{enr_hit * c_enr_crit:,.0f}"
-            row["Enr. sCrit"] = f"{enr_hit * c_enr_scrit:,.0f}"
-            row["Enr. uCrit"] = f"{enr_hit * c_enr_ucrit:,.0f}"
+            row["Enr Crit"] = f"{enr_hit * c_enr_crit:,.0f}"
+            row["Enr sCrit"] = f"{enr_hit * c_enr_scrit:,.0f}"
+            row["Enr uCrit"] = f"{enr_hit * c_enr_ucrit:,.0f}"
             
-        row["Max Enr. Sta to Kill"] = f"{max_enr_sta:,}"
-        row["Enr. Sta to Kill"] = f"{avg_enr_sta:,}"
+        row["Enr Max"] = f"{max_enr_sta:,}"
+        row["Enr Avg"] = f"{avg_enr_sta:,}"
             
         sb_table_data.append(row)
         
     if sb_table_data:
+        st.markdown(f"#### 🎯 Target Breakpoints <span style='font-size: 0.6em; color: gray;'>({len(sb_table_data)} Ores Displayed)</span>", unsafe_allow_html=True)
         st.dataframe(
             pd.DataFrame(sb_table_data),
             column_config={"Icon": st.column_config.ImageColumn("Icon", help="Ore Icon")},
             hide_index=True,
-            use_container_width=True,
-            height=600
+            use_container_width=True
+            # Removed height=600 so it organically expands to show added rows!
         )
         
 # --- TAB 7: RUN OPTIMIZER ---
