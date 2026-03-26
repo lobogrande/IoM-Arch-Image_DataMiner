@@ -1,0 +1,9 @@
+[theme]
+# Force Light mode so Dark Mode users don't get invisible white text
+base="light"
+
+# Inject our custom App branding natively!
+primaryColor="#ffa229"
+backgroundColor="#F4F6F9"
+secondaryBackgroundColor="#ffffff"
+textColor="#2b2b2b"
