@@ -1083,7 +1083,10 @@ with tab_optimizer:
         if dev_mode:
             best_final = {'Str': 25, 'Agi': 0, 'Per': 5, 'Int': 35, 'Luck': 40, 'Div': 0}
             if p.asc2_unlocked: best_final['Corr'] = 5
-            final_summary_out = {target_metric: 450.5, "avg_floor": 125.4}
+            final_summary_out = {
+                target_metric: 450.5, "avg_floor": 125.4, 
+                "abs_max_floor": 132, "abs_max_chance": 0.05, "avg_metrics": {}
+            }
             elapsed = 0.01
             time_limit_secs = 999
             
@@ -1235,8 +1238,9 @@ with tab_optimizer:
             # ADVANCED ANALYTICS DASHBOARD (TABS)
             # ==========================================
             st.markdown("### 📊 Advanced Analytics Dashboard")
-            tab_list = ["📈 Performance"]
-            show_loot = ("frag" in target_metric or "ore" in target_metric or dev_mode)
+            tab_list =["📈 Performance"]
+            # Show Loot for any farming/EXP mode, Show Wall strictly for Floor Pushing
+            show_loot = (target_metric != "highest_floor" or dev_mode)
             show_wall = (target_metric == "highest_floor" or dev_mode)
             
             if show_loot: tab_list.append("🎒 Loot Breakdown")
@@ -1251,23 +1255,37 @@ with tab_optimizer:
                 perf_col1, perf_col2 = st.columns([1, 1.5])
                 
                 with perf_col1:
-                    val = final_summary_out[target_metric]
                     if target_metric == "highest_floor":
-                        st.markdown("#### Projected Yields")
-                        st.metric("Max Floor Reached", f"{val:,.1f}")
+                        st.markdown("#### 🏆 Push Potential")
+                        
+                        # Use the specific telemetry calculated in parallel_worker.py
+                        abs_max = final_summary_out.get("abs_max_floor", final_summary_out.get(target_metric, 0))
+                        abs_chance = final_summary_out.get("abs_max_chance", 0) * 100
+                        avg_flr = final_summary_out.get("avg_floor", final_summary_out.get(target_metric, 0))
+                        
+                        st.metric("Absolute Max Floor (God Run)", f"Floor {abs_max:,.0f}")
+                        st.metric("God Run Probability", f"{abs_chance:.1f}%")
+                        st.metric("Average Consistency Floor", f"Floor {avg_flr:,.1f}")
                     else:
+                        val = final_summary_out[target_metric]
                         rate_1k = (val / 60.0) * 1000.0
                         metric_str = "Fragments" if "frag" in target_metric else "Kills" if "ore" in target_metric else "EXP"
                         
                         # Clean, consolidated Banked Time readout
-                        st.markdown(f"#### Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds Spent</span>", unsafe_allow_html=True)
+                        st.markdown(f"#### 💰 Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds</span>", unsafe_allow_html=True)
                         st.metric("Yield", f"{rate_1k:,.1f}", label_visibility="collapsed")
                         
                         st.divider()
                         
                         # Clean, consolidated Real-Time readout
-                        st.markdown(f"#### Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
+                        st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                         st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
+                        
+                        st.divider()
+                        
+                        avg_flr = final_summary_out.get("avg_floor", 0)
+                        st.markdown(f"#### 🧱 Average Death<br><span style='font-size: 0.9em; color: gray;'>Floor reached per run</span>", unsafe_allow_html=True)
+                        st.metric("Avg Floor", f"Floor {avg_flr:,.1f}", label_visibility="collapsed")
 
                 with perf_col2:
                     # Streamlit Markdown header completely fixes the Plotly overlap bug
