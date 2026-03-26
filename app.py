@@ -987,8 +987,11 @@ with tab_optimizer:
 
             st.divider()
 
+            # ==========================================
+            # ADVANCED ANALYTICS DASHBOARD (TABS)
+            # ==========================================
             st.markdown("### 📊 Advanced Analytics Dashboard")
-            tab_list =["📈 Performance"]
+            tab_list = ["📈 Performance"]
             show_loot = ("frag" in target_metric or "ore" in target_metric or dev_mode)
             show_wall = (target_metric == "highest_floor" or dev_mode)
             
@@ -1002,27 +1005,37 @@ with tab_optimizer:
             with ui_tabs[tab_idx]:
                 tab_idx += 1
                 perf_col1, perf_col2 = st.columns([1, 1.5])
+                
                 with perf_col1:
-                    st.markdown("#### Projected Yields")
                     val = final_summary_out[target_metric]
                     if target_metric == "highest_floor":
+                        st.markdown("#### Projected Yields")
                         st.metric("Max Floor Reached", f"{val:,.1f}")
                     else:
-                        rate_sec = val / 60.0
-                        rate_1k = rate_sec * 1000.0
+                        rate_1k = (val / 60.0) * 1000.0
                         metric_str = "Fragments" if "frag" in target_metric else "Kills" if "ore" in target_metric else "EXP"
-                        st.metric(f"Real-Time ({metric_str})", f"{val:,.2f} / min")
+                        
+                        # Clean, consolidated Banked Time readout
+                        st.markdown(f"#### Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds Spent</span>", unsafe_allow_html=True)
+                        st.metric("Yield", f"{rate_1k:,.1f}", label_visibility="collapsed")
+                        
                         st.divider()
-                        st.metric("Banked Time", f"{rate_sec:,.2f} / Arch Sec")
-                        st.metric("Banked Time (1k)", f"{rate_1k:,.1f} / 1k Arch Sec")
+                        
+                        # Clean, consolidated Real-Time readout
+                        st.markdown(f"#### Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
+                        st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
 
                 with perf_col2:
+                    # Streamlit Markdown header completely fixes the Plotly overlap bug
+                    st.markdown("#### AI Convergence (Hill Climb)")
                     df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score": chart_hill_scores})
-                    fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True, title="AI Convergence (Hill Climb)")
+                    fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True)
                     fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
-                    fig_hill.update_layout(margin=dict(l=10, r=20, t=40, b=20), height=200)
+                    fig_hill.update_layout(margin=dict(l=10, r=20, t=10, b=20), height=200)
                     st.plotly_chart(fig_hill, use_container_width=True)
                     
+                    # Streamlit Markdown header
+                    st.markdown("#### Engine Confidence Analysis")
                     df_conf = pd.DataFrame({
                         "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
                         "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[target_metric]]
@@ -1031,9 +1044,8 @@ with tab_optimizer:
                         df_conf, x="Performance", y="Build Category", orientation='h', text_auto='.3s', color="Build Category",
                         color_discrete_map={"Worst Tested": "#ff4b4b", "Average": "#ffa229", "Runner-Up": "#6495ED", "🏆 Optimal": "#4CAF50"}
                     )
-                    fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200, title="Engine Confidence Analysis")
+                    fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200)
                     st.plotly_chart(fig_conf, use_container_width=True)
-
             # --- TAB 2: COLLATERAL LOOT (BAR CHART) ---
             if show_loot:
                 with ui_tabs[tab_idx]:
