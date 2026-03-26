@@ -51,7 +51,8 @@ UI_EXT_SKILL_ICON  = 50   # Size of the Skill Icon (files ending in _1.png)
 UI_EXT_SKILL_TEXT  = 250  # Size of the Skill Description (files ending in _2.png)
 
 # Card Core Alignment
-# Negative numbers move the core image UP. Positive numbers move it DOWN.
+# X: Negative moves left, Positive moves right. Y: Negative moves up, Positive moves down.
+UI_EXT_CARD_CORE_X_OFFSET = 0
 UI_EXT_CARD_CORE_Y_OFFSET = -4 
 
 # --- NEW: CORE SCALING ---
@@ -62,7 +63,8 @@ UI_CARD_CORE_SCALE = 0.8
 # --- ORE CARDS ---
 # Width of the generated cards in the 4x7 grid
 UI_ORE_CARD_WIDTH = 100
-# Y-Offset specifically for Ore Card cores
+# Offsets specifically for Ore Card cores
+UI_ORE_CARD_X_OFFSET = 0
 UI_ORE_CARD_Y_OFFSET = -4
 
 # Width of the ore icons inside the Ore Stats DataFrame table
@@ -168,7 +170,7 @@ def render_centered_image(img_source, target_width):
     """
     st.markdown(html, unsafe_allow_html=True)
 
-def composite_card(bg_path, core_path, y_offset):
+def composite_card(bg_path, core_path, x_offset, y_offset):
     """Dynamically overlays ANY core asset onto a dynamic background."""
     try:
         bg = Image.open(bg_path).convert("RGBA")
@@ -180,8 +182,8 @@ def composite_card(bg_path, core_path, y_offset):
             new_h = max(1, int(fg.height * UI_CARD_CORE_SCALE))
             fg = fg.resize((new_w, new_h), Image.NEAREST)
         
-        offset_x = (bg.width - fg.width) // 2
-        # Apply the custom offset to shift the core up or down into the frame
+        # Apply the custom offsets to nudge the core into the perfect spot
+        offset_x = ((bg.width - fg.width) // 2) + x_offset
         offset_y = ((bg.height - fg.height) // 2) + y_offset
         
         composite = bg.copy()
@@ -482,7 +484,7 @@ with tab_upgrades:
                             bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{tier}.png")
                             # Passed the explicit core path and offset here
                             core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "20_Misc_Arch_Ability_face.png")
-                            comp_img = composite_card(bg_path, core_path, UI_EXT_CARD_CORE_Y_OFFSET)
+                            comp_img = composite_card(bg_path, core_path, UI_EXT_CARD_CORE_X_OFFSET, UI_EXT_CARD_CORE_Y_OFFSET)
                             
                             if comp_img:
                                 render_centered_image(comp_img, UI_EXT_IMG_CARD)
@@ -533,7 +535,7 @@ with tab_cards:
     bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", "1.png")
     core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "div1.png")
     
-    comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_Y_OFFSET)
+    comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_X_OFFSET, UI_ORE_CARD_Y_OFFSET)
     if comp_img:
         # Scale down to a crisp header icon size (e.g., 40px wide)
         target_width = 40
@@ -556,6 +558,11 @@ with tab_cards:
     
     # Loop over the 4 Tiers (Rows)
     for tier_num in range(1, 5):
+        
+        # --- ASC2 LOCK LOGIC: Completely hide the 4th row to prevent spoilers ---
+        if tier_num == 4 and not p.asc2_unlocked:
+            continue
+            
         # Create exactly 7 columns for the 7 Ore types
         cols_cards = st.columns(7)
         
@@ -579,7 +586,8 @@ with tab_cards:
                         bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{user_tier}.png")
                         core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
                         
-                        comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_Y_OFFSET)
+                        # Passing the new X Offset!
+                        comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_X_OFFSET, UI_ORE_CARD_Y_OFFSET)
                         if comp_img:
                             render_centered_image(comp_img, UI_ORE_CARD_WIDTH)
                         else:
@@ -589,19 +597,14 @@ with tab_cards:
                         
                     st.divider()
                     
-                    # --- ASC2 LOCK LOGIC ---
-                    is_locked = (tier_num == 4 and not p.asc2_unlocked)
-                    
-                    if is_locked:
-                        st.markdown("<div style='text-align: center; color: #ff4b4b;'><small>Locked (Asc2)</small></div>", unsafe_allow_html=True)
-                    else:
-                        st.number_input(
-                            f"Lvl##{card_id}", min_value=0, max_value=4,
-                            key=widget_key, step=1,
-                            on_change=update_card_level, args=(widget_key, card_id),
-                            label_visibility="collapsed"
-                        )
-                        p.set_card_level(card_id, st.session_state[widget_key])
+                    # Render native input without the spoiler red text logic
+                    st.number_input(
+                        f"Lvl##{card_id}", min_value=0, max_value=4,
+                        key=widget_key, step=1,
+                        on_change=update_card_level, args=(widget_key, card_id),
+                        label_visibility="collapsed"
+                    )
+                    p.set_card_level(card_id, st.session_state[widget_key])
 
 # --- TAB 4: CALCULATED STATS ---
 with tab_calc_stats:
@@ -1351,7 +1354,7 @@ with tab_optimizer:
                                         bg_tier = bg_mapping.get(drop_name, "1")
                                         bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
                                         
-                                        comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_Y_OFFSET)
+                                        comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_X_OFFSET, UI_ORE_CARD_Y_OFFSET)
                                         if comp_img:
                                             render_centered_image(comp_img, UI_ORE_CARD_WIDTH)
                                         else:
