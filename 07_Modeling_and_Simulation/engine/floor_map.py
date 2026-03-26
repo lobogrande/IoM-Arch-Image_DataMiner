@@ -117,11 +117,37 @@ class FloorGenerator:
         if not drop_table or target_ores == 0:
             return Floor(floor_id, [None] * 24, is_gleaming, gleaming_multi)
 
-        ore_pool = list(drop_table.keys())
-        ore_weights = list(drop_table.values())
+        # --- EXCEL-BASED DIV3 OVERRIDE (The "Breather" Mechanic) ---
+        div3_count = 0
+        if floor_id > 99:
+            r = random.random()
+            if r < 0.45: div3_count = 0
+            elif r < 0.85: div3_count = 1
+            elif r < 0.98: div3_count = 2
+            elif r < 0.995: div3_count = 3
+            else: div3_count = 4
+            
+        # Ensure we don't accidentally spawn more Div3s than total ores allowed
+        div3_count = min(div3_count, target_ores)
+        remaining_target = target_ores - div3_count
 
-        # Roll the specific ore types based on probability
-        generated_ore_ids = random.choices(ore_pool, weights=ore_weights, k=target_ores)
+        # Filter the generic drop table so we don't double-roll Div3 ores
+        ore_pool =[]
+        ore_weights =[]
+        for ore_name, weight in drop_table.items():
+            if floor_id > 99 and ore_name == 'div3':
+                continue
+            ore_pool.append(ore_name)
+            ore_weights.append(weight)
+
+        generated_ore_ids =[]
+        
+        # Roll the remaining non-Div3 ores based on standard probability
+        if remaining_target > 0 and ore_pool:
+            generated_ore_ids = random.choices(ore_pool, weights=ore_weights, k=remaining_target)
+
+        # Append our explicitly controlled Div3 ores
+        generated_ore_ids.extend(['div3'] * div3_count)
 
         # 5. Distribute them into the 24 slots randomly
         grid = [None] * 24
