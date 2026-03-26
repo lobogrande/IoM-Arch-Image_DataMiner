@@ -220,8 +220,11 @@ class Player:
         base_calc = 100 + self.u('F14') + self.u('F23') + self.u('H39') + self.u('F3')
         stat_calc = self.stat('Agi') * (5 + self.u('F26'))
         asc2_calc = (1 + self.u('H28') + self.u('F54')) * (1 - 0.03 * self.stat('Corr'))
-        floor_calc = 1 + (0.01 * min(100, self.current_max_floor))
-        val = (base_calc + stat_calc) * asc2_calc * floor_calc * (1.0 + self.inf('epic3'))
+        
+        # PROPER BLOCK BONKER BINDING (W13)
+        bb_mult = 1.0 + (self.w('W13') * min(100, self.current_max_floor))
+        
+        val = (base_calc + stat_calc) * asc2_calc * bb_mult * (1.0 + self.inf('epic3'))
         return self._excel_round(val, 0)
 
     @property
@@ -231,8 +234,11 @@ class Player:
         stat_calc2 = self.stat('Div') * (2 + self.u('F34'))
         mult1 = 1 + self.u('F51') + self.u('F36') + (self.stat('Str') * (0.01 + self.u('F47') + self.u('H25'))) + self.inf('div1')
         mult2 = (0.06 + self.u('F52')) * self.stat('Corr')
-        floor_calc = 1 + (0.01 * min(100, self.current_max_floor))
-        val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2) * floor_calc
+        
+        # PROPER BLOCK BONKER BINDING (W12)
+        bb_mult = 1.0 + (self.w('W12') * min(100, self.current_max_floor))
+        
+        val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2) * bb_mult
         return self._excel_round(val, 0)
 
     @property
@@ -243,12 +249,12 @@ class Player:
         stat_calc2 = self.stat('Div') * (2 + self.u('F34'))
         mult1 = 1 + self.u('F51') + self.u('F36') + (self.stat('Str') * (0.01 + self.u('F47') + self.u('H25'))) + self.inf('div1')
         mult2 = (0.06 + self.u('F52')) * self.stat('Corr')
-        
-        # Enrage Bonus (20% + F18) is added directly into the mult pool
         enrage_mult = 0.2 + self.u('F18')
         
-        floor_calc = 1 + (0.01 * min(100, self.current_max_floor))
-        val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2 + enrage_mult) * floor_calc
+        # PROPER BLOCK BONKER BINDING (W12)
+        bb_mult = 1.0 + (self.w('W12') * min(100, self.current_max_floor))
+        
+        val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2 + enrage_mult) * bb_mult
         return self._excel_round(val, 0)
     
     @property
@@ -314,7 +320,10 @@ class Player:
     @property
     def speed_mod_chance(self): return self.u('F24') + self.u('F44') + (0.003 * self.stat('Agi')) + (0.002 * self.stat('Luck'))
     @property
-    def speed_mod_gain(self): return self._excel_round(25.0 * (1.0 + self.u('F55') + self.stat('Corr') * (0.01 + self.u('H52'))), 0)
+    def speed_mod_gain(self): 
+        # PROPER BLOCK BONKER BINDING (W14)
+        base_val = (10.0 + (15.0 * self.w('W14'))) * (1.0 + self.u('F55') + self.stat('Corr') * (0.01 + self.u('H52')))
+        return self._excel_round(base_val, 0)
     @property
     def speed_mod_attack_rate(self): return 2.0
     @property
