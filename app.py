@@ -308,7 +308,7 @@ STAT_CAPS = {
 }
 
 tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_ore_stats, tab_sandbox, tab_optimizer = st.tabs([
-    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "📋 Calculated Player Stats", "🪨 Ore Stats", "🧪 Ore Hit Sandbox", "🚀 Run Optimizer"
+    "📊 Base Stats", "⬆️ Upgrades", "🎴 Ore Cards", "📋 Calculated Player Stats", "🪨 Ore Stats", "🧪 Ore Hit Sandbox", "🚀 Run Optimizer"
 ])
 
 # --- TAB 1: BASE STATS ---
@@ -518,8 +518,29 @@ with tab_upgrades:
 
 # --- TAB 3: ORE CARDS ---
 with tab_cards:
-    st.subheader("Ore Card Collection")
+    # --- CUSTOM DIV1 HEADER ICON ---
+    bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", "1.png")
+    core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "div1.png")
     
+    comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_Y_OFFSET)
+    if comp_img:
+        # Scale down to a crisp header icon size (e.g., 40px wide)
+        target_width = 40
+        w_pct = (target_width / float(comp_img.width))
+        target_height = int((float(comp_img.height) * float(w_pct)))
+        img_resized = comp_img.resize((target_width, target_height), Image.NEAREST)
+        
+        buffered = BytesIO()
+        img_resized.save(buffered, format="PNG")
+        encoded = base64.b64encode(buffered.getvalue()).decode()
+        
+        # Inject seamlessly alongside the title text
+        icon_html = f'<img src="data:image/png;base64,{encoded}" style="vertical-align: middle; margin-right: 12px; margin-bottom: 6px; border-radius: 4px;">'
+        st.markdown(f"<h3>{icon_html}Ore Card Collection</h3>", unsafe_allow_html=True)
+    else:
+        # Fallback if assets are missing
+        st.subheader("🎴 Ore Card Collection")
+        
     ore_types =['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
     
     # Loop over the 4 Tiers (Rows)
@@ -651,7 +672,7 @@ with tab_calc_stats:
 
 # --- TAB 5: ORE STATS ---
 with tab_ore_stats:
-    st.subheader("Ore Compendium")
+    st.subheader("🪨 Ore Compendium")
     
     col_ore_toggle, col_ore_floor = st.columns([1, 1])
     with col_ore_toggle:
