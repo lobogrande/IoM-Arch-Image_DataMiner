@@ -582,15 +582,19 @@ with tab_calc_stats:
             comp_scrit = p.crit_dmg_mult * p.super_crit_dmg_mult
             comp_ucrit = p.crit_dmg_mult * p.super_crit_dmg_mult * p.ultra_crit_dmg_mult
             
-            st.markdown("#### 🎯 True Hit Breakdown")
+            st.markdown("#### 🎯 True Hit Breakdown (Simulation Math)")
             st.write(f"*- Regular:* {true_reg*100:,.2f}%")
-            st.write(f"*- Crit:* {true_crit*100:,.2f}% *(Mult: {comp_crit:,.2f}x)*")
-            st.write(f"*- Super Crit:* {true_scrit*100:,.2f}% *(Mult: {comp_scrit:,.2f}x)*")
-            st.write(f"*- Ultra Crit:* {true_ucrit*100:,.2f}% *(Mult: {comp_ucrit:,.2f}x)*")
+            st.write(f"*- Crit:* {true_crit*100:,.2f}% *(Total Mult: {comp_crit:,.2f}x)*")
+            st.write(f"*- Super Crit:* {true_scrit*100:,.2f}% *(Total Mult: {comp_scrit:,.2f}x)*")
+            st.write(f"*- Ultra Crit:* {true_ucrit*100:,.2f}% *(Total Mult: {comp_ucrit:,.2f}x)*")
             
             st.divider()
-            st.markdown("<small>*Raw Stats (Before Nesting)*</small>", unsafe_allow_html=True)
-            st.write(f"<small>Base Crit: {p.crit_chance*100:.2f}% | sCrit: {p.super_crit_chance*100:.2f}% | uCrit: {p.ultra_crit_chance*100:.2f}%</small>", unsafe_allow_html=True)
+            
+            st.markdown("#### 📊 Raw In-Game Stats")
+            st.write("<small><i>These are the exact numbers shown on your in-game UI screen before nesting math is applied.</i></small>", unsafe_allow_html=True)
+            st.write(f"**Base Crit:** {p.crit_chance*100:.2f}% Chance | {p.crit_dmg_mult:,.2f}x Multiplier")
+            st.write(f"**Super Crit:** {p.super_crit_chance*100:.2f}% Chance | {p.super_crit_dmg_mult:,.2f}x Multiplier")
+            st.write(f"**Ultra Crit:** {p.ultra_crit_chance*100:.2f}% Chance | {p.ultra_crit_dmg_mult:,.2f}x Multiplier")
 
     with col_calc_2:
         with st.container(border=True):
