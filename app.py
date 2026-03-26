@@ -54,6 +54,11 @@ UI_EXT_SKILL_TEXT  = 250  # Size of the Skill Description (files ending in _2.pn
 # Negative numbers move the core image UP. Positive numbers move it DOWN.
 UI_EXT_CARD_CORE_Y_OFFSET = -4 
 
+# --- NEW: CORE SCALING ---
+# Shrinks the inner Ore/Core image BEFORE it gets pasted onto the background.
+# 1.0 = 100% (Original Size), 0.8 = 80%, 0.75 = 75%, etc.
+UI_CARD_CORE_SCALE = 0.8
+
 # --- ORE CARDS ---
 # Width of the generated cards in the 4x7 grid
 UI_ORE_CARD_WIDTH = 100
@@ -168,6 +173,12 @@ def composite_card(bg_path, core_path, y_offset):
     try:
         bg = Image.open(bg_path).convert("RGBA")
         fg = Image.open(core_path).convert("RGBA")
+        
+        # --- NEW: Scale the inner core down before pasting ---
+        if UI_CARD_CORE_SCALE != 1.0:
+            new_w = max(1, int(fg.width * UI_CARD_CORE_SCALE))
+            new_h = max(1, int(fg.height * UI_CARD_CORE_SCALE))
+            fg = fg.resize((new_w, new_h), Image.NEAREST)
         
         offset_x = (bg.width - fg.width) // 2
         # Apply the custom offset to shift the core up or down into the frame
