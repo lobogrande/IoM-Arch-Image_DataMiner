@@ -219,92 +219,93 @@ if 'player' not in st.session_state:
     st.session_state.player = Player()
 
 p = st.session_state.player
-st.set_page_config(page_title="AI Arch Optimizer", layout="wide", page_icon="⛏️")
+
+# Change "expanded" to "collapsed" if you want the sidebar to be completely hidden by default!
+st.set_page_config(
+    page_title="AI Arch Optimizer", 
+    layout="wide", 
+    page_icon="⛏️", 
+    initial_sidebar_state="expanded" 
+)
 
 
 # ==========================================
 # SIDEBAR
 # ==========================================
 with st.sidebar:
-    # --- 1. GLOBAL SETTINGS (Moved to top!) ---
-    st.header("⚙️ Global Settings")
     
-    # Initialize session state for global settings so they don't throw warnings
-    if "set_asc2" not in st.session_state: st.session_state["set_asc2"] = p.asc2_unlocked
-    if "set_arch" not in st.session_state: st.session_state["set_arch"] = int(p.arch_level)
-    if "set_floor" not in st.session_state: st.session_state["set_floor"] = int(p.current_max_floor)
-    if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
-    
-    # Render widgets with explicit keys
-    p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2")
-    p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
-    p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
-    
-    if p.asc2_unlocked:
-        p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
-    else:
-        p.hades_idol_level = 0
-
-    st.divider()
+    # --- 1. GLOBAL SETTINGS ---
+    with st.expander("⚙️ Global Settings", expanded=True):
+        # Initialize session state for global settings so they don't throw warnings
+        if "set_asc2" not in st.session_state: st.session_state["set_asc2"] = p.asc2_unlocked
+        if "set_arch" not in st.session_state: st.session_state["set_arch"] = int(p.arch_level)
+        if "set_floor" not in st.session_state: st.session_state["set_floor"] = int(p.current_max_floor)
+        if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
+        
+        # Render widgets with explicit keys
+        p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2")
+        p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
+        p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
+        
+        if p.asc2_unlocked:
+            p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
+        else:
+            p.hades_idol_level = 0
 
     # --- 2. IMPORT DATA ---
-    st.header("📂 Import Data")
-    uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
-    
-    if uploaded_file is not None:
-        # Prevent infinite reloading: Only process if it is a NEW file upload!
-        if 'last_uploaded_file' not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.file_id:
-            st.session_state.last_uploaded_file = uploaded_file.file_id
-            
-            temp_path = os.path.join(ROOT_DIR, "temp_upload.json")
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            load_state_from_json(p, temp_path)
-            os.remove(temp_path)
-            
-            # Flush ALL widget keys so they resync to the new JSON file!
-            for k in list(st.session_state.keys()):
-                if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
-                    del st.session_state[k]
-                    
-            # Force a clean restart from Line 1 to sync the reordered sidebar
-            st.rerun()
-            
-    st.divider()
-    
-    # --- 3. EXPORT DATA ---
-    st.header("💾 Export Data")
-    st.write("Download your current UI configuration.")
-    
-    # --- SYNC STATE BEFORE EXPORT ---
-    # Because the sidebar renders before the main tabs, we must explicitly force 
-    # the Player object to adopt the latest widget states before generating the JSON.
-    for k, v in st.session_state.items():
-        if k.startswith("stat_"):
-            stat_name = k.split("_")[1]
-            if stat_name in p.base_stats:
-                p.base_stats[stat_name] = int(v)
-        elif k.startswith("upg_"):
-            try:
-                upg_id = int(k.split("_")[1])
-                p.set_upgrade_level(upg_id, int(v))
-            except ValueError:
-                pass
-
-    temp_export = os.path.join(ROOT_DIR, "temp_export.json")
-    save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
-    with open(temp_export, "r") as f:
-        export_json_str = f.read()
-    if os.path.exists(temp_export):
-        os.remove(temp_export)
+    with st.expander("📂 Import Data", expanded=False):
+        uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
         
-    st.download_button(
-        label="📥 Download player_state.json",
-        data=export_json_str,
-        file_name="player_state.json",
-        mime="application/json",
-        use_container_width=True
-    )
+        if uploaded_file is not None:
+            # Prevent infinite reloading: Only process if it is a NEW file upload!
+            if 'last_uploaded_file' not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.file_id:
+                st.session_state.last_uploaded_file = uploaded_file.file_id
+                
+                temp_path = os.path.join(ROOT_DIR, "temp_upload.json")
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                load_state_from_json(p, temp_path)
+                os.remove(temp_path)
+                
+                # Flush ALL widget keys so they resync to the new JSON file!
+                for k in list(st.session_state.keys()):
+                    if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
+                        del st.session_state[k]
+                        
+                # Force a clean restart from Line 1 to sync the reordered sidebar
+                st.rerun() 
+        
+    # --- 3. EXPORT DATA ---
+    with st.expander("💾 Export Data", expanded=False):
+        st.write("Download your current UI configuration.")
+        
+        # --- SYNC STATE BEFORE EXPORT ---
+        for k, v in st.session_state.items():
+            if k.startswith("stat_") and "sandbox" not in k:
+                stat_name = k.split("_")[1]
+                if stat_name in p.base_stats:
+                    p.base_stats[stat_name] = int(v)
+            elif k.startswith("upg_"):
+                try:
+                    upg_id = int(k.split("_")[1])
+                    p.set_upgrade_level(upg_id, int(v))
+                except ValueError:
+                    pass
+
+        temp_export = os.path.join(ROOT_DIR, "temp_export.json")
+        save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
+        with open(temp_export, "r") as f:
+            export_json_str = f.read()
+        if os.path.exists(temp_export):
+            os.remove(temp_export)
+            
+        st.download_button(
+            label="📥 Download JSON",
+            data=export_json_str,
+            file_name="player_state.json",
+            mime="application/json",
+            use_container_width=True
+        )
 
 
 # ==========================================
