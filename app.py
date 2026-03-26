@@ -1294,18 +1294,32 @@ with tab_optimizer:
                             st.markdown(f"#### 🃏 Ore Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
                             
                             odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
-                            for drop_name, req_kills in odds.items():
+                            for drop_name, base_odds in odds.items():
                                 if val > 0:
-                                    rt_mins = req_kills / val
-                                    rt_str = f"{rt_mins:.1f} mins" if rt_mins < 60 else f"{rt_mins/60.0:.1f} hours"
+                                    # True Binomial Math for independent RNG events:
+                                    # P = 1 - (1 - p)^N  =>  N = ln(1 - P) / ln(1 - p)
+                                    # To avoid heavy math imports, we use the proven approximations:
+                                    # 50% chance ≈ 0.693 * odds | 90% chance ≈ 2.302 * odds
+                                    kills_50 = 0.693 * base_odds
+                                    kills_90 = 2.302 * base_odds
                                     
-                                    arch_secs = req_kills / (val / 60.0)
-                                    arch_1k = arch_secs / 1000.0
+                                    # Helper to format time dynamically
+                                    def format_time(req_kills):
+                                        rt_mins = req_kills / val
+                                        rt_str = f"{rt_mins:.1f} mins" if rt_mins < 60 else f"{rt_mins/60.0:.1f} hrs"
+                                        
+                                        arch_secs = req_kills / (val / 60.0)
+                                        arch_1k = arch_secs / 1000.0
+                                        return rt_str, arch_1k
+
+                                    rt_50, bk_50 = format_time(kills_50)
+                                    rt_90, bk_90 = format_time(kills_90)
                                     
-                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {req_kills:,})</span>", unsafe_allow_html=True)
-                                    st.write(f"*- Real-Time:* ~{rt_str} &nbsp;|&nbsp; *- Banked:* ~{arch_1k:.1f}k Secs", unsafe_allow_html=True)
+                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span>", unsafe_allow_html=True)
+                                    st.write(f"*- 50% Chance (Lucky):* ~{rt_50} &nbsp;|&nbsp; ~{bk_50:.1f}k Banked", unsafe_allow_html=True)
+                                    st.write(f"*- 90% Chance (Safe):* &nbsp;~{rt_90} &nbsp;|&nbsp; ~{bk_90:.1f}k Banked", unsafe_allow_html=True)
                                 else:
-                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {req_kills:,})</span><br>*- N/A (0 kills)*", unsafe_allow_html=True)
+                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span><br>*- N/A (0 kills)*", unsafe_allow_html=True)
 
                         st.divider()
                         
