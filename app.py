@@ -29,7 +29,7 @@ import pandas as pd
 
 # --- BASE STATS ---
 # Width of the stat icons
-UI_STAT_IMG_WIDTH = 250
+UI_STAT_IMG_WIDTH = 220
 
 # --- INTERNAL UPGRADES ---
 # The layout ratio for the single-column feed:[Left_Spacer, Center_Feed, Right_Spacer]
@@ -268,12 +268,42 @@ st.markdown("""
         background-color: #ffa229 !important;
     }
     
-    /* 3. Add a visual hint to the vertical resizer divider */
-    [data-testid="stSidebarResizer"] {
+    /* 3. Add a visual hint to the vertical resizer divider */[data-testid="stSidebarResizer"] {
         background-color: rgba(255, 162, 41, 0.2) !important;
         width: 4px !important;
-    }[data-testid="stSidebarResizer"]:hover {
+    }
+    [data-testid="stSidebarResizer"]:hover {
         background-color: rgba(255, 162, 41, 0.8) !important;
+    }
+    
+    /* =========================================================
+       4. GLOBAL UX COLORS & VERTICAL SPACING COMPRESSION
+       ========================================================= */
+       
+    /* Apply Professional Off-White Background to reduce eye strain */
+    .stApp {
+        background-color: #F4F6F9 !important;
+    }
+    
+    /* Pull the entire app higher up on the screen */
+    .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 2rem !important;
+    }
+    
+    /* Squash the massive blank space under the 100/100 Metric */[data-testid="stMetric"] {
+        margin-bottom: -15px !important;
+    }
+    
+    /* Squash the massive margins around the st.divider() lines */
+    hr {
+        margin-top: 5px !important;
+        margin-bottom: 15px !important;
+    }
+    
+    /* Tighten the internal padding of the bordered stat containers */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        padding: 0.75rem !important;
     }
     </style>
 """, unsafe_allow_html=True)
