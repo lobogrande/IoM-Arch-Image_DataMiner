@@ -309,6 +309,35 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
+# 🔐 BETA ACCESS GATE
+# ==========================================
+# Check if the user has entered the correct beta key
+if "beta_authorized" not in st.session_state:
+    st.session_state.beta_authorized = False
+
+if not st.session_state.beta_authorized:
+    st.title("⛏️ IoM Arch Optimizer (Closed Beta)")
+    st.warning("This application performs heavy Monte Carlo simulations. To prevent server overload during the testing phase, access is currently restricted.")
+    
+    # Try to get the password from st.secrets, fallback to a hardcoded default for local testing
+    try:
+        CORRECT_KEY = st.secrets["BETA_KEY"]
+    except:
+        CORRECT_KEY = "archbeta2026" # Change this to whatever you want for local testing!
+
+    user_key = st.text_input("Enter Beta Key:", type="password")
+    
+    if st.button("Unlock Optimizer"):
+        if user_key == CORRECT_KEY:
+            st.session_state.beta_authorized = True
+            st.rerun()
+        else:
+            st.error("❌ Invalid Beta Key.")
+            
+    # Stop the script entirely so the rest of the app doesn't render or execute
+    st.stop()
+    
+# ==========================================
 # SIDEBAR
 # ==========================================
 with st.sidebar:
