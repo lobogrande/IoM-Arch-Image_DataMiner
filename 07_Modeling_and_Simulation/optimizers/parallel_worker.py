@@ -97,7 +97,8 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     tracker = {}
     for d in dists:
         key = tuple(sorted(d.items()))
-        tracker[key] = {'dist': d, 'sum_target': 0.0, 'sum_floor': 0.0, 'runs': 0}
+        # Added 'metrics_sum' and 'floors' to aggregate deep telemetry for the UI
+        tracker[key] = {'dist': d, 'sum_target': 0.0, 'sum_floor': 0.0, 'runs': 0, 'metrics_sum': {}, 'floors':[]}
         
     active_keys = list(tracker.keys())
     
@@ -112,7 +113,6 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     for round_idx, (run_count, keep_ratio) in enumerate(rounds):
         if len(active_keys) == 0: break
         
-        # --- GRACEFUL TIMEOUT CHECK ---
         if global_start_time and time_limit_seconds:
             if time.time() - global_start_time >= time_limit_seconds:
                 print(f"\n[TIMEOUT] Max time limit reached. Halting {phase_name} early!")
@@ -121,7 +121,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         if len(rounds) > 1:
             print(f"  -> Round {round_idx+1}: Testing {len(active_keys)} builds ({run_count} runs each)...")
             
-        tasks = [{'stats': tracker[k]['dist'], 'fixed_stats': fixed_stats} for k in active_keys for _ in range(run_count)]
+        tasks =[{'stats': tracker[k]['dist'], 'fixed_stats': fixed_stats} for k in active_keys for _ in range(run_count)]
         total_tasks = len(tasks)
         chunk_size = max(1, total_tasks // 100)
         
@@ -141,6 +141,12 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
             tracker[k]['sum_floor'] += sum(r.get('highest_floor', 0.0) for r in chunk)
             tracker[k]['runs'] += run_count
             
+            # Aggregate specific telemetry for the Dashboard charts
+            for r in chunk:
+                tracker[k]['floors'].append(int(r.get('highest_floor', 0)))
+                for m_k, m_v in r.items():
+                    tracker[k]['metrics_sum'][m_k] = tracker[k]['metrics_sum'].get(m_k, 0.0) + m_v
+            
         active_keys.sort(key=lambda k: tracker[k]['sum_target'] / max(1, tracker[k]['runs']), reverse=True)
         
         if round_idx < len(rounds) - 1:
@@ -152,15 +158,26 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     best_dist = best_data['dist']
     runs_completed = best_data['runs'] if best_data['runs'] > 0 else 1
     
+    # Analyze the whole phase to find context for the Confidence Chart
+    all_scores = [data['sum_target'] / max(1, data['runs']) for data in tracker.values() if data['runs'] > 0]
+    all_scores.sort(reverse=True)
+    runner_up = all_scores[1] if len(all_scores) > 1 else all_scores[0]
+    worst = all_scores[-1] if all_scores else 0
+    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
+    
     best_summary = {
         target_metric: best_data['sum_target'] / runs_completed,
-        "avg_floor": best_data['sum_floor'] / runs_completed
+        "avg_floor": best_data['sum_floor'] / runs_completed,
+        "worst_val": worst,
+        "avg_val": avg_score,
+        "runner_up_val": runner_up,
+        "floors": best_data['floors'],
+        "avg_metrics": {k: v / runs_completed for k, v in best_data['metrics_sum'].items()}
     }
 
     if best_summary[target_metric] > 0:
         print(f"[{phase_name} Winner] {best_dist} -> {best_summary[target_metric]:,.2f} {target_metric}")
     
-    # If a timeout happened before ANY runs completed, return None so it skips to the UI
     if best_data['runs'] == 0:
         return None, None
         

@@ -18,6 +18,7 @@ import multiprocessing as mp
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+from collections import Counter
 from PIL import Image
 import pandas as pd
 
@@ -838,20 +839,18 @@ with tab_optimizer:
         if dev_mode:
             best_final = {'Str': 25, 'Agi': 0, 'Per': 5, 'Int': 35, 'Luck': 40, 'Div': 0}
             if p.asc2_unlocked: best_final['Corr'] = 5
-            
             final_summary_out = {target_metric: 450.5, "avg_floor": 125.4}
             elapsed = 0.01
             time_limit_secs = 999
             
-            # Mocked context data for the Confidence Chart
-            runner_up_val = final_summary_out[target_metric] * 0.96
-            avg_val = final_summary_out[target_metric] * 0.55
-            worst_val = final_summary_out[target_metric] * 0.10
+            worst_val = 45.0
+            avg_val = 247.5
+            runner_up_val = 432.5
             
-            # Mocked data for Advanced Charts
-            mock_hill_climb = [final_summary_out[target_metric] * 0.85, final_summary_out[target_metric] * 0.96, final_summary_out[target_metric]]
-            mock_loot = {"Dirt": 50, "Common": 150, "Rare": 300, "Epic": 500, "Legendary": 250, "Mythic": 450, "Divine": 10}
-            mock_histogram = {"124": 5, "125": 12, "126": 78, "127": 5}
+            chart_hill_scores =[380.0, 432.5, 450.5]
+            chart_hill_labels =["P1 (Coarse)", "P2 (Fine)", "P3 (Exact)"]
+            chart_loot = {"Dirt": 50, "Common": 150, "Rare": 300, "Epic": 500, "Legendary": 250, "Mythic": 450, "Divine": 10}
+            chart_hist = {"124": 5, "125": 12, "126": 78, "127": 5}
 
         # ==========================================
         # REAL ENGINE EXECUTION
@@ -880,83 +879,89 @@ with tab_optimizer:
 
             with st.spinner(f"Engine Running..."):
                 start_time = time.time()
-            
-            # 1. Prepare Engine Data
-            STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
-            if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-            
-            DYNAMIC_BUDGET = int(sum(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE))
-            FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}
-            cap_increase = int(p.u('H45'))
-            EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
-            
-            CPU_CORES = max(1, mp.cpu_count() - 1)
-            ITER_P1, ITER_P2, ITER_P3 = 40, 70, 100
-            
-            best_p3, final_summary = None, None
-            
-            # --- LIVE UI PROGRESS BAR BRIDGE ---
-            ui_prog_bar = st.progress(0, text="Booting up engine cores...")
-            def st_progress_callback(phase_name, r_idx, r_total, task_idx, task_total):
-                pct = min(100, max(0, int((task_idx / task_total) * 100)))
-                ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims completed)")
-            
-            # 2. Trigger Parallel Worker Pool
-            time_limit_secs = time_limit_mins * 60
-            
-            with mp.Pool(CPU_CORES) as pool:
-                # Phase 1: Coarse Grid
-                bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
-                best_p1, summary_p1 = run_optimization_phase(
-                    "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
-                    DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
-                    progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
-                )
+                STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+                DYNAMIC_BUDGET = int(sum(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE))
+                FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}
+                cap_increase = int(p.u('H45'))
+                EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
                 
-                best_p2, summary_p2 = None, None
-                if best_p1 and (time.time() - start_time) < time_limit_secs:
-                    # Phase 2: Fine Grid
-                    bounds_p2 = {s: (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size)) for s in STATS_TO_OPTIMIZE}
-                    step_2 = max(2, step_size // 3)
-                    best_p2, summary_p2 = run_optimization_phase(
-                        "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
-                        DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
+                CPU_CORES = max(1, mp.cpu_count() - 1)
+                ITER_P1, ITER_P2, ITER_P3 = 25, 50, 100
+                best_p3, final_summary = None, None
+                
+                ui_prog_bar = st.progress(0, text="Booting up engine cores...")
+                def st_progress_callback(phase_name, r_idx, r_total, task_idx, task_total):
+                    pct = min(100, max(0, int((task_idx / task_total) * 100)))
+                    ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims completed)")
+                
+                time_limit_secs = time_limit_mins * 60
+                
+                with mp.Pool(CPU_CORES) as pool:
+                    bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
+                    best_p1, summary_p1 = run_optimization_phase(
+                        "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
+                        DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
                         progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
                     )
                     
-                if best_p2 and (time.time() - start_time) < time_limit_secs:
-                    # Phase 3: Exact Micro-Grid
-                    p3_radius = min(2, step_2) 
-                    bounds_p3 = {s: (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius)) for s in STATS_TO_OPTIMIZE}
-                    best_p3, final_summary = run_optimization_phase(
-                        "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
-                        DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
-                        progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
-                    )
-            
-            # --- CASCADE RESULTS (If it aborted early, grab the best it found) ---
-            best_final = best_p3 or best_p2 or best_p1
-            final_summary_out = final_summary or summary_p2 or summary_p1
-            
-            ui_prog_bar.empty()
-            elapsed = time.time() - start_time
-            
-            # --- 3. UI RESULTS TELEMETRY ---
-        if best_final and final_summary_out:
-            
-            if not dev_mode:
-                runner_up_val = final_summary_out[target_metric] * 0.98
-                avg_val = final_summary_out[target_metric] * 0.60
-                worst_val = final_summary_out[target_metric] * 0.15
+                    best_p2, summary_p2 = None, None
+                    if best_p1 and (time.time() - start_time) < time_limit_secs:
+                        bounds_p2 = {s: (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size)) for s in STATS_TO_OPTIMIZE}
+                        step_2 = max(2, step_size // 3)
+                        best_p2, summary_p2 = run_optimization_phase(
+                            "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
+                            DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
+                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
+                        )
+                        
+                    if best_p2 and (time.time() - start_time) < time_limit_secs:
+                        p3_radius = min(2, step_2) 
+                        bounds_p3 = {s: (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius)) for s in STATS_TO_OPTIMIZE}
+                        best_p3, final_summary = run_optimization_phase(
+                            "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
+                            DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
+                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
+                        )
+                
+                best_final = best_p3 or best_p2 or best_p1
+                final_summary_out = final_summary or summary_p2 or summary_p1
+                ui_prog_bar.empty()
+                elapsed = time.time() - start_time
+                
+                # --- MAP REAL TELEMETRY ---
+                if final_summary_out:
+                    worst_val = final_summary_out.get("worst_val", 0)
+                    avg_val = final_summary_out.get("avg_val", 0)
+                    runner_up_val = final_summary_out.get("runner_up_val", 0)
+                    
+                    chart_hill_scores =[]
+                    chart_hill_labels =[]
+                    if summary_p1: chart_hill_scores.append(summary_p1[target_metric]); chart_hill_labels.append("P1 (Coarse)")
+                    if summary_p2: chart_hill_scores.append(summary_p2[target_metric]); chart_hill_labels.append("P2 (Fine)")
+                    if final_summary: chart_hill_scores.append(final_summary[target_metric]); chart_hill_labels.append("P3 (Exact)")
+                    
+                    floors = final_summary_out.get("floors",[])
+                    chart_hist = dict(Counter(floors))
+                    
+                    chart_loot = {}
+                    frag_names = {0:"Dirt", 1:"Common", 2:"Rare", 3:"Epic", 4:"Legendary", 5:"Mythic", 6:"Divine"}
+                    avg_metrics = final_summary_out.get("avg_metrics", {})
+                    for tier, name in frag_names.items():
+                        k = f"frag_{tier}_per_min"
+                        val = avg_metrics.get(k, 0)
+                        if val > 0:
+                            chart_loot[name] = val
 
+        # ==========================================
+        # UI RESULTS TELEMETRY (DYNAMIC RENDER)
+        # ==========================================
+        if best_final and final_summary_out:
             if elapsed >= time_limit_secs:
                 st.warning(f"⚠️ **Time Limit Reached!** Optimization safely aborted early at {elapsed:.1f} seconds. Showing the best build found so far.")
             else:
                 st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
             
-            # ==========================================
-            # VISUAL STAT LAYOUT
-            # ==========================================
             st.markdown("### 🏆 Optimal Stat Build")
             st.write("*(Green/Red numbers show changes from your current UI allocation)*")
             
@@ -966,7 +971,6 @@ with tab_optimizer:
                     with st.container(border=True):
                         img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
                         if os.path.exists(img_path):
-                            # Set to 250 per your UI preference!
                             render_centered_image(img_path, 250) 
                         else:
                             st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
@@ -983,12 +987,7 @@ with tab_optimizer:
 
             st.divider()
 
-            # ==========================================
-            # ADVANCED ANALYTICS DASHBOARD (TABS)
-            # ==========================================
             st.markdown("### 📊 Advanced Analytics Dashboard")
-            
-            # Dynamically construct the tabs based on what the user is optimizing for
             tab_list =["📈 Performance"]
             show_loot = ("frag" in target_metric or "ore" in target_metric or dev_mode)
             show_wall = (target_metric == "highest_floor" or dev_mode)
@@ -1003,7 +1002,6 @@ with tab_optimizer:
             with ui_tabs[tab_idx]:
                 tab_idx += 1
                 perf_col1, perf_col2 = st.columns([1, 1.5])
-                
                 with perf_col1:
                     st.markdown("#### Projected Yields")
                     val = final_summary_out[target_metric]
@@ -1019,15 +1017,12 @@ with tab_optimizer:
                         st.metric("Banked Time (1k)", f"{rate_1k:,.1f} / 1k Arch Sec")
 
                 with perf_col2:
-                    if dev_mode:
-                        # Hill Climb Chart
-                        df_hill = pd.DataFrame({"Phase":["P1 (Coarse)", "P2 (Fine)", "P3 (Exact)"], "Score": mock_hill_climb})
-                        fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True, title="AI Convergence (Hill Climb)")
-                        fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
-                        fig_hill.update_layout(margin=dict(l=10, r=20, t=40, b=20), height=200)
-                        st.plotly_chart(fig_hill, use_container_width=True)
+                    df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score": chart_hill_scores})
+                    fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True, title="AI Convergence (Hill Climb)")
+                    fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
+                    fig_hill.update_layout(margin=dict(l=10, r=20, t=40, b=20), height=200)
+                    st.plotly_chart(fig_hill, use_container_width=True)
                     
-                    # Confidence Bar Chart
                     df_conf = pd.DataFrame({
                         "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
                         "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[target_metric]]
@@ -1043,40 +1038,37 @@ with tab_optimizer:
             if show_loot:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
-                    if dev_mode:
-                        st.markdown("#### Collateral Loot Distribution")
-                        st.write("Every specific targeted run yields collateral rewards. Here is what else you are earning:")
-                        
-                        # Compute percentages for the text labels
-                        total_loot = sum(mock_loot.values())
-                        df_loot = pd.DataFrame(list(mock_loot.items()), columns=['Loot Tier', 'Amount'])
-                        df_loot['Label'] = df_loot['Amount'].apply(lambda x: f"{x:,}  ({(x/total_loot)*100:.1f}%)")
-                        
-                        # Plotly Bar Chart
-                        fig_loot = px.bar(
-                            df_loot, x='Loot Tier', y='Amount', text='Label', color='Loot Tier',
-                            color_discrete_sequence=px.colors.qualitative.Pastel
-                        )
-                        fig_loot.update_traces(textposition='outside')
-                        fig_loot.update_layout(showlegend=False, margin=dict(t=20, b=20), height=400)
-                        st.plotly_chart(fig_loot, use_container_width=True)
-                    else:
-                        st.info("Loot Distribution will appear here in the next engine update!")
+                    st.markdown("#### Collateral Loot Distribution")
+                    st.write("On average, each minute of simulated combat yields the following collateral rewards alongside your target:")
+                    
+                    total_loot = sum(chart_loot.values()) if chart_loot else 1
+                    df_loot = pd.DataFrame(list(chart_loot.items()), columns=['Loot Tier', 'Amount'])
+                    df_loot['Label'] = df_loot['Amount'].apply(lambda x: f"{x:,.1f}  ({(x/total_loot)*100:.1f}%)")
+                    
+                    fig_loot = px.bar(
+                        df_loot, x='Loot Tier', y='Amount', text='Label', color='Loot Tier',
+                        color_discrete_sequence=px.colors.qualitative.Pastel
+                    )
+                    fig_loot.update_traces(textposition='outside')
+                    fig_loot.update_layout(showlegend=False, margin=dict(t=20, b=20), height=400)
+                    st.plotly_chart(fig_loot, use_container_width=True)
 
             # --- TAB 3: THE WALL (HISTOGRAM) ---
             if show_wall:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
-                    if dev_mode:
-                        st.markdown("#### Death Distribution (The Brick Wall)")
-                        st.write("Out of 100 simulations, this is exactly where your character died. High spikes indicate a hard scaling wall (usually enemy armor).")
-                        df_hist = pd.DataFrame(list(mock_histogram.items()), columns=['Floor', 'Deaths'])
-                        fig_hist = px.bar(df_hist, x='Floor', y='Deaths', text='Deaths')
-                        fig_hist.update_traces(marker_color='#ff4b4b', textposition='outside')
-                        fig_hist.update_layout(margin=dict(t=20, b=20), height=400)
-                        st.plotly_chart(fig_hist, use_container_width=True)
-                    else:
-                        st.info("Death Histogram will appear here in the next engine update!")
+                    st.markdown("#### Death Distribution (The Brick Wall)")
+                    st.write("Out of the simulations run on the optimal build, this is exactly where your character died. High spikes indicate a hard scaling wall (usually enemy armor).")
+                    
+                    df_hist = pd.DataFrame(list(chart_hist.items()), columns=['Floor', 'Deaths'])
+                    # Sort the dataframe by Floor numerically so the x-axis reads chronologically
+                    df_hist['Floor'] = pd.to_numeric(df_hist['Floor'])
+                    df_hist = df_hist.sort_values(by='Floor')
+                    
+                    fig_hist = px.bar(df_hist, x='Floor', y='Deaths', text='Deaths')
+                    fig_hist.update_traces(marker_color='#ff4b4b', textposition='outside')
+                    fig_hist.update_layout(margin=dict(t=20, b=20), height=400, xaxis_type='category')
+                    st.plotly_chart(fig_hist, use_container_width=True)
 
         else:
             st.error("Optimization failed or aborted before a single build could be tested.")
