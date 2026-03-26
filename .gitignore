@@ -14,3 +14,6 @@ forensic_v37_1/
 forensic_verification_endless/
 path/
 v29_results/
+*.pyc
+!assets/**/*.png
+!assets/*.png
