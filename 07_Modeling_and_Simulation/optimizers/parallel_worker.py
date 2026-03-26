@@ -171,7 +171,13 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
                 avg_f = sum(floors) / len(floors) if floors else 0
                 return (max_f, avg_f)
             else:
-                return tracker[k]['sum_target'] / max(1, tracker[k]['runs'])
+                score = tracker[k]['sum_target'] / max(1, tracker[k]['runs'])
+                floors = tracker[k]['floors']
+                avg_f = sum(floors) / len(floors) if floors else 0
+                
+                # Use Average Floor as a secondary tiebreaker!
+                # If 'score' is 0 for all builds, it will correctly pick the build that reached the highest floor.
+                return (score, avg_f)
                 
         active_keys.sort(key=get_sort_key, reverse=True)
         
