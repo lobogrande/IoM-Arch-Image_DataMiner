@@ -894,7 +894,7 @@ with tab_optimizer:
                     step_2 = max(2, step_size // 3)
                     best_p2, summary_p2 = run_optimization_phase(
                         "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
-                        DYNAMIC_BUDGET, step_2, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p2,
+                        DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
                         progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
                     )
                     
@@ -904,7 +904,7 @@ with tab_optimizer:
                     bounds_p3 = {s: (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius)) for s in STATS_TO_OPTIMIZE}
                     best_p3, final_summary = run_optimization_phase(
                         "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
-                        DYNAMIC_BUDGET, 1, ITERATIONS_PER_DIST, pool, FIXED_STATS, bounds_p3,
+                        DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
                         progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
                     )
             
