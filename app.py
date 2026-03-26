@@ -949,6 +949,17 @@ with tab_optimizer:
     st.header("🚀 Monte Carlo Stat Optimizer")
     st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution. Ensure your total allocated points do not exceed your budget before running.")
 
+    # --- PROJECTION DISCLAIMER ---
+    st.warning(
+        "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
+        "This tool is highly accurate at finding the **optimal stat distribution** for your target. "
+        "However, please take the **absolute output numbers** (Max Floor, Yields/hr, Drop Times) with a grain of salt. "
+        "Extensive testing shows these projections lean conservative and will likely fall short of your actual in-game "
+        "performance (typically by 5-10 floors for late-game Asc1 players).\n\n"
+        "*Why?* While the combat math is exact, the enemy spawn data for Floors 100+ is based on a limited sample "
+        "size of real-world runs. Treat the output yields as a baseline, not absolute gospel!"
+    )
+
     # --- GOAL SELECTION ---
     col_goal, col_target = st.columns(2)
     with col_goal:
