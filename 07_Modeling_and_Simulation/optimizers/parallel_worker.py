@@ -147,7 +147,18 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
                 for m_k, m_v in r.items():
                     tracker[k]['metrics_sum'][m_k] = tracker[k]['metrics_sum'].get(m_k, 0.0) + m_v
             
-        active_keys.sort(key=lambda k: tracker[k]['sum_target'] / max(1, tracker[k]['runs']), reverse=True)
+        # --- NEW TARGET SORTING LOGIC ---
+        def get_sort_key(k):
+            if target_metric == 'highest_floor':
+                # Sort by the Absolute Max floor reached. If tied, use average floor as a tiebreaker.
+                floors = tracker[k]['floors']
+                max_f = max(floors) if floors else 0
+                avg_f = sum(floors) / len(floors) if floors else 0
+                return (max_f, avg_f)
+            else:
+                return tracker[k]['sum_target'] / max(1, tracker[k]['runs'])
+                
+        active_keys.sort(key=get_sort_key, reverse=True)
         
         if round_idx < len(rounds) - 1:
             keep_count = max(3, int(len(active_keys) * keep_ratio))
@@ -165,18 +176,28 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     worst = all_scores[-1] if all_scores else 0
     avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
     
+    # Calculate God-Run Probabilities
+    floors = best_data['floors']
+    abs_max_floor = max(floors) if floors else 0
+    abs_max_chance = (floors.count(abs_max_floor) / len(floors)) if floors else 0
+    
     best_summary = {
-        target_metric: best_data['sum_target'] / runs_completed,
+        target_metric: best_data['sum_target'] / runs_completed, # Keep for backwards compat
         "avg_floor": best_data['sum_floor'] / runs_completed,
+        "abs_max_floor": abs_max_floor,
+        "abs_max_chance": abs_max_chance,
         "worst_val": worst,
         "avg_val": avg_score,
         "runner_up_val": runner_up,
-        "floors": best_data['floors'],
+        "floors": floors,
         "avg_metrics": {k: v / runs_completed for k, v in best_data['metrics_sum'].items()}
     }
 
     if best_summary[target_metric] > 0:
-        print(f"[{phase_name} Winner] {best_dist} -> {best_summary[target_metric]:,.2f} {target_metric}")
+        if target_metric == 'highest_floor':
+            print(f"[{phase_name} Winner] {best_dist} -> Peak Floor {abs_max_floor} (Avg: {best_summary['avg_floor']:.1f})")
+        else:
+            print(f"[{phase_name} Winner] {best_dist} -> {best_summary[target_metric]:,.2f} {target_metric}")
     
     if best_data['runs'] == 0:
         return None, None
