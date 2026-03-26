@@ -757,214 +757,215 @@ with tab_sandbox:
     st.header("🧪 Ore Hit Sandbox")
     st.write("Experiment with stat distributions without worrying about your global point budget. Find the exact breakpoints for how many hits it takes to kill specific ores.")
     
-    # --- SANDBOX SYNC ---
-    if st.button("🔄 Sync from Base Stats", help="Pull your currently saved stat distribution into the sandbox."):
-        for stat in STAT_CAPS.keys():
-            st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
-        st.rerun()
+    # --- DASHBOARD LAYOUT SPLIT ---
+    # Left side (1 part) for Controls, Right side (3 parts) for the Data Table
+    col_controls, col_table = st.columns([1, 3])
 
-    st.markdown("#### Sandbox Stat Allocation")
-    
-    # We use simple clamping for the sandbox (no global budget limits)
-    def render_sandbox_stat(label, stat_key, col):
-        max_val = int(STAT_CAPS[stat_key])
-        widget_key = f"sandbox_stat_{stat_key}"
-        if widget_key not in st.session_state:
-            st.session_state[widget_key] = int(p.base_stats.get(stat_key, 0))
-        
-        with col:
-            with st.container(border=True):
-                st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{label}</b><br><small>(Max: {max_val})</small></div>", unsafe_allow_html=True)
-                st.number_input(
-                    f"{label} Sandbox", key=widget_key, step=1, on_change=enforce_caps,
-                    args=(widget_key, 0, max_val, f"Sandbox {label}"), label_visibility="collapsed"
-                )
+    with col_controls:
+        # --- SANDBOX SYNC ---
+        if st.button("🔄 Sync from Base Stats", use_container_width=True, help="Pull your currently saved stat distribution into the sandbox."):
+            for stat in STAT_CAPS.keys():
+                st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
+            st.rerun()
 
-    col1, col2, col3, col4 = st.columns(4)
-    render_sandbox_stat("Strength", 'Str', col1)
-    render_sandbox_stat("Agility", 'Agi', col1)
-    render_sandbox_stat("Perception", 'Per', col2)
-    render_sandbox_stat("Intelligence", 'Int', col2)
-    render_sandbox_stat("Luck", 'Luck', col3)
-    render_sandbox_stat("Divinity", 'Div', col3)
-    if p.asc2_unlocked:
-        render_sandbox_stat("Corruption", 'Corr', col4)
+        st.markdown("#### Sandbox Stats")
+        
+        def render_sandbox_stat(label, stat_key, col):
+            max_val = int(STAT_CAPS[stat_key])
+            widget_key = f"sandbox_stat_{stat_key}"
+            if widget_key not in st.session_state:
+                st.session_state[widget_key] = int(p.base_stats.get(stat_key, 0))
+            
+            with col:
+                with st.container(border=True):
+                    # Removed the "Max" subtext here to make the sidebar incredibly tight and clean
+                    st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{label}</b></div>", unsafe_allow_html=True)
+                    st.number_input(
+                        f"{label} Sandbox", key=widget_key, step=1, on_change=enforce_caps,
+                        args=(widget_key, 0, max_val, f"Sandbox {label}"), label_visibility="collapsed"
+                    )
 
-    st.divider()
-    
-    # --- SANDBOX CALCULATOR LOGIC ---
-    with st.expander("📚 Math & Formulas Breakdown (Click to expand)"):
-        st.markdown("""
-        **Legend:**  
-        `P[x]` = Probability of x  |  `M[x]` = Multiplier of x  
+        # Compact 2-column grid inside the left panel for the stats
+        scol1, scol2 = st.columns(2)
+        render_sandbox_stat("Strength", 'Str', scol1)
+        render_sandbox_stat("Agility", 'Agi', scol2)
+        render_sandbox_stat("Perception", 'Per', scol1)
+        render_sandbox_stat("Intelligence", 'Int', scol2)
+        render_sandbox_stat("Luck", 'Luck', scol1)
+        render_sandbox_stat("Divinity", 'Div', scol2)
+        if p.asc2_unlocked:
+            render_sandbox_stat("Corruption", 'Corr', scol1)
 
-        **Hit Damage Formulas:**
-        * **Armor** = `(Base Armor) - (Armor Penetration Stat)`
-        * **Regular Hit** = `(Damage - Armor)`
-        * **Crit Hit** = `(Damage - Armor) × M[Crit]`
-        * **Super Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit]`
-        * **Ultra Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit] × M[uCrit]`
+        st.divider()
         
-        **True Crit Probability Formulas (Nested):**
-        * **P[Reg]** = `(1 - Crit Chance)`
-        * **P[Crit]** = `(Crit Chance) × (1 - sCrit Chance)`
-        * **P[sCrit]** = `(Crit Chance) × (sCrit Chance) × (1 - uCrit Chance)`
-        * **P[uCrit]** = `(Crit Chance) × (sCrit Chance) × (uCrit Chance)`
-        
-        **Expected Damage Per Swing (EDPS):**  
-        *Gives average damage over time, factoring in all probabilities and crit multipliers.*  
-        `EDPS = ( P[Reg]×1.0 + P[Crit]×M[Crit] + P[sCrit]×M[sCrit] + P[uCrit]×M[uCrit] ) × (Damage - Armor)`
-        
-        *(Note: For Enraged State, replace Damage with EnrDamage and M[Crit] with M[EnrCrit].)*
-        """)
-
-    if "sandbox_floor" not in st.session_state:
-        st.session_state["sandbox_floor"] = int(p.current_max_floor)
-        
-    col_floor, col_toggles = st.columns([1, 2])
-    with col_floor:
-        target_floor = st.number_input("Enemy Level (Target Floor):", min_value=1, step=1, key="sandbox_floor")
-    with col_toggles:
-        show_unreachable = st.checkbox("Show Ores Above Target Floor (e.g. Div3 on Floor 50)")
+        st.markdown("#### Simulation Settings")
+        if "sandbox_floor" not in st.session_state:
+            st.session_state["sandbox_floor"] = int(p.current_max_floor)
+            
+        target_floor = st.number_input("Target Floor:", min_value=1, step=1, key="sandbox_floor")
+        min_hits = st.number_input("Min Avg Hits to Kill:", min_value=1, value=1, step=1, help="Hides ores that take fewer hits than this.")
+            
+        show_unreachable = st.checkbox("Show Ores Above Target Floor")
         show_crit_details = st.checkbox("Show Detailed Crit Multipliers")
         
-    # Build an isolated Sandbox Player Object
-    import copy
-    sandbox_p = copy.deepcopy(p)
-    
-    # Inject Sandbox Stats into the isolated clone
-    for stat in STAT_CAPS.keys():
-        if sandbox_p.asc2_unlocked or stat != 'Corr':
-            sandbox_p.base_stats[stat] = st.session_state.get(f"sandbox_stat_{stat}", 0)
+        st.divider()
         
-    # Combat Math Extraction
-    p_dmg = sandbox_p.damage
-    p_enr_dmg = sandbox_p.enraged_damage
-    p_pen = sandbox_p.armor_pen
-    
-    t_reg = 1.0 - sandbox_p.crit_chance
-    t_crit = sandbox_p.crit_chance * (1.0 - sandbox_p.super_crit_chance)
-    t_scrit = sandbox_p.crit_chance * sandbox_p.super_crit_chance * (1.0 - sandbox_p.ultra_crit_chance)
-    t_ucrit = sandbox_p.crit_chance * sandbox_p.super_crit_chance * sandbox_p.ultra_crit_chance
-    
-    c_crit = sandbox_p.crit_dmg_mult
-    c_scrit = c_crit * sandbox_p.super_crit_dmg_mult
-    c_ucrit = c_scrit * sandbox_p.ultra_crit_dmg_mult
-    
-    c_enr_crit = sandbox_p.enraged_crit_dmg_mult
-    c_enr_scrit = c_enr_crit * sandbox_p.super_crit_dmg_mult
-    c_enr_ucrit = c_enr_scrit * sandbox_p.ultra_crit_dmg_mult
-    
-    avg_mult = t_reg*1.0 + t_crit*c_crit + t_scrit*c_scrit + t_ucrit*c_ucrit
-    avg_enr_mult = t_reg*1.0 + t_crit*c_enr_crit + t_scrit*c_enr_scrit + t_ucrit*c_enr_ucrit
-    
-    # Generate the Table using pure Integers for native sorting
-    sb_table_data =[]
-    for ore_id in cfg.ORE_BASE_STATS.keys():
-        tier = int(ore_id[-1])
-        
-        if not show_unreachable:
-            if tier == 2 and target_floor <= 50: continue
-            if tier == 3 and target_floor <= 100: continue
-            if tier == 4 and target_floor <= 150: continue
-        if tier == 4 and not sandbox_p.asc2_unlocked: continue
+        with st.expander("📚 Math & Formulas Breakdown"):
+            st.markdown("""
+            **Legend:**  
+            `P[x]` = Probability of x  |  `M[x]` = Multiplier of x  
+
+            **Hit Damage Formulas:**
+            * **Armor** = `(Base Armor) - (Armor Pen)`
+            * **Regular Hit** = `(Damage - Armor)`
+            * **Crit Hit** = `(Damage - Armor) × M[Crit]`
+            * **Super Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit]`
+            * **Ultra Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit] × M[uCrit]`
             
-        ore_obj = Ore(ore_id, target_floor, sandbox_p)
-        eff_armor = max(0, ore_obj.armor - p_pen)
-        
-        reg_hit = max(1.0, p_dmg - eff_armor)
-        enr_hit = max(1.0, p_enr_dmg - eff_armor)
-        
-        edps = reg_hit * avg_mult
-        enr_edps = enr_hit * avg_enr_mult
-        
-        max_sta = math.ceil(ore_obj.hp / reg_hit)
-        avg_sta = math.ceil(ore_obj.hp / edps)
-        max_enr_sta = math.ceil(ore_obj.hp / enr_hit)
-        avg_enr_sta = math.ceil(ore_obj.hp / enr_edps)
-        
-        img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{ore_id}.png")
-        img_uri = get_scaled_image_uri(img_path, UI_ORE_TABLE_IMG_WIDTH)
-        
-        row = {
-            "Icon": img_uri,
-            "Ore": ore_id.capitalize(),
-            "HP": int(ore_obj.hp),
-            "Armor": int(eff_armor),
-            "EDPS": int(edps),
-            "Enr EDPS": int(enr_edps),
-            "Reg Hit": int(reg_hit)
-        }
-        
-        if show_crit_details:
-            row["Crit"] = int(reg_hit * c_crit)
-            row["sCrit"] = int(reg_hit * c_scrit)
-            row["uCrit"] = int(reg_hit * c_ucrit)
+            **True Crit Probabilities (Nested):**
+            * **P[Reg]** = `(1 - Crit Chance)`
+            * **P[Crit]** = `(Crit Chance) × (1 - sCrit Chance)`
+            * **P[sCrit]** = `(Crit Chance) × (sCrit Chance) × (1 - uCrit Chance)`
+            * **P[uCrit]** = `(Crit Chance) × (sCrit Chance) × (uCrit Chance)`
             
-        row["Max Hits"] = int(max_sta)
-        row["Avg Hits"] = int(avg_sta)
-        row["Enr Hit"] = int(enr_hit)
+            **Expected Damage Per Swing (EDPS):**  
+            `EDPS = (P[Reg]×1.0 + P[Crit]×M[Crit] + P[sCrit]×M[sCrit] + P[uCrit]×M[uCrit]) × (Damage - Armor)`
+            """)
+
+    with col_table:
+        # Build an isolated Sandbox Player Object
+        import copy
+        sandbox_p = copy.deepcopy(p)
         
-        if show_crit_details:
-            row["Enr Crit"] = int(enr_hit * c_enr_crit)
-            row["Enr sCrit"] = int(enr_hit * c_enr_scrit)
-            row["Enr uCrit"] = int(enr_hit * c_enr_ucrit)
+        # Inject Sandbox Stats into the isolated clone
+        for stat in STAT_CAPS.keys():
+            if sandbox_p.asc2_unlocked or stat != 'Corr':
+                sandbox_p.base_stats[stat] = st.session_state.get(f"sandbox_stat_{stat}", 0)
             
-        row["Enr Max Hits"] = int(max_enr_sta)
-        row["Enr Avg Hits"] = int(avg_enr_sta)
+        # Combat Math Extraction
+        p_dmg = sandbox_p.damage
+        p_enr_dmg = sandbox_p.enraged_damage
+        p_pen = sandbox_p.armor_pen
+        
+        t_reg = 1.0 - sandbox_p.crit_chance
+        t_crit = sandbox_p.crit_chance * (1.0 - sandbox_p.super_crit_chance)
+        t_scrit = sandbox_p.crit_chance * sandbox_p.super_crit_chance * (1.0 - sandbox_p.ultra_crit_chance)
+        t_ucrit = sandbox_p.crit_chance * sandbox_p.super_crit_chance * sandbox_p.ultra_crit_chance
+        
+        c_crit = sandbox_p.crit_dmg_mult
+        c_scrit = c_crit * sandbox_p.super_crit_dmg_mult
+        c_ucrit = c_scrit * sandbox_p.ultra_crit_dmg_mult
+        
+        c_enr_crit = sandbox_p.enraged_crit_dmg_mult
+        c_enr_scrit = c_enr_crit * sandbox_p.super_crit_dmg_mult
+        c_enr_ucrit = c_enr_scrit * sandbox_p.ultra_crit_dmg_mult
+        
+        avg_mult = t_reg*1.0 + t_crit*c_crit + t_scrit*c_scrit + t_ucrit*c_ucrit
+        avg_enr_mult = t_reg*1.0 + t_crit*c_enr_crit + t_scrit*c_enr_scrit + t_ucrit*c_enr_ucrit
+        
+        # Generate the Table
+        sb_table_data =[]
+        for ore_id in cfg.ORE_BASE_STATS.keys():
+            tier = int(ore_id[-1])
             
-        sb_table_data.append(row)
-        
-    if sb_table_data:
-        df_sandbox = pd.DataFrame(sb_table_data)
-        
-        # --- EXPLICIT UI FILTERS ---
-        st.markdown("#### 🔍 Filter Results")
-        f_col1, f_col2 = st.columns(2)
-        with f_col1:
+            if not show_unreachable:
+                if tier == 2 and target_floor <= 50: continue
+                if tier == 3 and target_floor <= 100: continue
+                if tier == 4 and target_floor <= 150: continue
+            if tier == 4 and not sandbox_p.asc2_unlocked: continue
+                
+            ore_obj = Ore(ore_id, target_floor, sandbox_p)
+            eff_armor = max(0, ore_obj.armor - p_pen)
+            
+            reg_hit = max(1.0, p_dmg - eff_armor)
+            enr_hit = max(1.0, p_enr_dmg - eff_armor)
+            
+            edps = reg_hit * avg_mult
+            enr_edps = enr_hit * avg_enr_mult
+            
+            max_sta = math.ceil(ore_obj.hp / reg_hit)
+            avg_sta = math.ceil(ore_obj.hp / edps)
+            max_enr_sta = math.ceil(ore_obj.hp / enr_hit)
+            avg_enr_sta = math.ceil(ore_obj.hp / enr_edps)
+            
+            img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{ore_id}.png")
+            img_uri = get_scaled_image_uri(img_path, UI_ORE_TABLE_IMG_WIDTH)
+            
+            row = {
+                "Icon": img_uri,
+                "Ore": ore_id.capitalize(),
+                "HP": int(ore_obj.hp),
+                "Armor": int(eff_armor),
+                "EDPS": int(edps),
+                "Enr EDPS": int(enr_edps),
+                "Reg Hit": int(reg_hit)
+            }
+            
+            if show_crit_details:
+                row["Crit"] = int(reg_hit * c_crit)
+                row["sCrit"] = int(reg_hit * c_scrit)
+                row["uCrit"] = int(reg_hit * c_ucrit)
+                
+            row["Max Hits"] = int(max_sta)
+            row["Avg Hits"] = int(avg_sta)
+            row["Enr Hit"] = int(enr_hit)
+            
+            if show_crit_details:
+                row["Enr Crit"] = int(enr_hit * c_enr_crit)
+                row["Enr sCrit"] = int(enr_hit * c_enr_scrit)
+                row["Enr uCrit"] = int(enr_hit * c_enr_ucrit)
+                
+            row["Enr Max Hits"] = int(max_enr_sta)
+            row["Enr Avg Hits"] = int(avg_enr_sta)
+                
+            sb_table_data.append(row)
+            
+        if sb_table_data:
+            df_sandbox = pd.DataFrame(sb_table_data)
+            
+            # --- EXPLICIT UI FILTERS ---
             all_ores = df_sandbox["Ore"].unique().tolist()
-            selected_ores = st.multiselect("Filter by Specific Ores", options=all_ores, default=[])
-        with f_col2:
-            min_hits = st.number_input("Show only Ores taking at least X Avg Hits to kill:", min_value=1, value=1, step=1)
-            
-        if selected_ores:
-            df_sandbox = df_sandbox[df_sandbox["Ore"].isin(selected_ores)]
-            
-        if min_hits > 1:
-            df_sandbox = df_sandbox[df_sandbox["Avg Hits"] >= min_hits]
+            selected_ores = st.multiselect("🔍 Filter by Specific Ores", options=all_ores, default=[], placeholder="Select specific ores to filter...")
+                
+            if selected_ores:
+                df_sandbox = df_sandbox[df_sandbox["Ore"].isin(selected_ores)]
+                
+            if min_hits > 1:
+                df_sandbox = df_sandbox[df_sandbox["Avg Hits"] >= min_hits]
 
-        st.markdown(f"#### 🎯 Target Breakpoints <span style='font-size: 0.6em; color: gray;'>({len(df_sandbox)} Ores Displayed)</span>", unsafe_allow_html=True)
-        
-        # --- TOOLTIPS & COMMA FORMATTING ---
-        num_cfg = st.column_config.NumberColumn(format="%,d")
-        col_config = {
-            "Icon": st.column_config.ImageColumn("Icon", help="Ore Icon"),
-            "HP": num_cfg,
-            "Armor": num_cfg,
-            "EDPS": st.column_config.NumberColumn(format="%,d", help="Expected Damage Per Swing (Average over time factoring crits)"),
-            "Enr EDPS": st.column_config.NumberColumn(format="%,d", help="Enraged Expected Damage Per Swing"),
-            "Reg Hit": num_cfg,
-            "Max Hits": st.column_config.NumberColumn(format="%,d", help="Max regular hits to kill (Worst case, no crits)"),
-            "Avg Hits": st.column_config.NumberColumn(format="%,d", help="Average regular hits to kill (Factoring crits)"),
-            "Enr Hit": st.column_config.NumberColumn(format="%,d", help="Damage of a Regular Hit while Enraged"),
-            "Enr Max Hits": st.column_config.NumberColumn(format="%,d", help="Max enraged hits to kill (Worst case, no crits)"),
-            "Enr Avg Hits": st.column_config.NumberColumn(format="%,d", help="Average enraged hits to kill (Factoring crits)")
-        }
-        
-        if show_crit_details:
-            col_config.update({
-                "Crit": num_cfg, "sCrit": num_cfg, "uCrit": num_cfg,
-                "Enr Crit": st.column_config.NumberColumn(format="%,d", help="Enraged Critical Hit"),
-                "Enr sCrit": st.column_config.NumberColumn(format="%,d", help="Enraged Super Crit Hit"),
-                "Enr uCrit": st.column_config.NumberColumn(format="%,d", help="Enraged Ultra Crit Hit")
-            })
+            st.markdown(f"#### 🎯 Target Breakpoints <span style='font-size: 0.6em; color: gray;'>({len(df_sandbox)} Ores Displayed)</span>", unsafe_allow_html=True)
+            
+            # --- TOOLTIPS & COMMA FORMATTING ---
+            num_cfg = st.column_config.NumberColumn(format="%,d")
+            col_config = {
+                "Icon": st.column_config.ImageColumn("Icon", help="Ore Icon"),
+                "HP": num_cfg,
+                "Armor": num_cfg,
+                "EDPS": st.column_config.NumberColumn(format="%,d", help="Expected Damage Per Swing (Average over time factoring crits)"),
+                "Enr EDPS": st.column_config.NumberColumn(format="%,d", help="Enraged Expected Damage Per Swing"),
+                "Reg Hit": num_cfg,
+                "Max Hits": st.column_config.NumberColumn(format="%,d", help="Max regular hits to kill (Worst case, no crits)"),
+                "Avg Hits": st.column_config.NumberColumn(format="%,d", help="Average regular hits to kill (Factoring crits)"),
+                "Enr Hit": st.column_config.NumberColumn(format="%,d", help="Damage of a Regular Hit while Enraged"),
+                "Enr Max Hits": st.column_config.NumberColumn(format="%,d", help="Max enraged hits to kill (Worst case, no crits)"),
+                "Enr Avg Hits": st.column_config.NumberColumn(format="%,d", help="Average enraged hits to kill (Factoring crits)")
+            }
+            
+            if show_crit_details:
+                col_config.update({
+                    "Crit": num_cfg, "sCrit": num_cfg, "uCrit": num_cfg,
+                    "Enr Crit": st.column_config.NumberColumn(format="%,d", help="Enraged Critical Hit"),
+                    "Enr sCrit": st.column_config.NumberColumn(format="%,d", help="Enraged Super Crit Hit"),
+                    "Enr uCrit": st.column_config.NumberColumn(format="%,d", help="Enraged Ultra Crit Hit")
+                })
 
-        st.dataframe(
-            df_sandbox,
-            column_config=col_config,
-            hide_index=True,
-            use_container_width=True
-        )
+            st.dataframe(
+                df_sandbox,
+                column_config=col_config,
+                hide_index=True,
+                use_container_width=True,
+                height=700 # Forces the table to be nice and tall to match the left panel
+            )
         
 # --- TAB 7: RUN OPTIMIZER ---
 with tab_optimizer:
