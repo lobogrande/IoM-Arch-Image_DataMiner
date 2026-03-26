@@ -16,6 +16,7 @@ import base64
 import time
 import multiprocessing as mp
 import plotly.express as px
+import plotly.graph_objects as go
 from io import BytesIO
 from PIL import Image
 import pandas as pd
@@ -846,6 +847,13 @@ with tab_optimizer:
             runner_up_val = final_summary_out[target_metric] * 0.96
             avg_val = final_summary_out[target_metric] * 0.55
             worst_val = final_summary_out[target_metric] * 0.10
+            
+            # Mocked data for Advanced Charts
+            mock_hill_climb = [final_summary_out[target_metric] * 0.85, final_summary_out[target_metric] * 0.96, final_summary_out[target_metric]]
+            mock_radar_opt =[1.0, 0.4, 0.9, 0.2, 0.5] # Normalized 0-1
+            mock_radar_bal =[0.6, 0.6, 0.6, 0.6, 0.6]
+            mock_donut = {"Dirt": 50, "Common": 150, "Rare": 300, "Epic": 500, "Legendary": 250, "Mythic": 450, "Divine": 10}
+            mock_histogram = {"124": 5, "125": 12, "126": 78, "127": 5}
 
         # ==========================================
         # REAL ENGINE EXECUTION
@@ -938,7 +946,6 @@ with tab_optimizer:
             # --- 3. UI RESULTS TELEMETRY ---
         if best_final and final_summary_out:
             
-            # Real engine mock fallback until we update parallel_worker.py in the next step
             if not dev_mode:
                 runner_up_val = final_summary_out[target_metric] * 0.98
                 avg_val = final_summary_out[target_metric] * 0.60
@@ -959,18 +966,15 @@ with tab_optimizer:
             for idx, (stat_name, allocated_pts) in enumerate(best_final.items()):
                 with stat_cols[idx]:
                     with st.container(border=True):
-                        # 1. Pixel Art
                         img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
                         if os.path.exists(img_path):
-                            render_centered_image(img_path, 60)
+                            # Set to 250 per your UI preference!
+                            render_centered_image(img_path, 250) 
                         else:
                             st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
                         
-                        # 2. Metric Delta Calculation
                         current_val = int(st.session_state.get(f"stat_{stat_name}", p.base_stats.get(stat_name, 0)))
                         delta = int(allocated_pts) - current_val
-                        
-                        # 3. Render Streamlit Metric
                         st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
             
             if st.button("✨ Apply Build to UI", use_container_width=True):
@@ -982,52 +986,105 @@ with tab_optimizer:
             st.divider()
 
             # ==========================================
-            # CONFIDENCE & RETURN PROJECTIONS
+            # ADVANCED ANALYTICS DASHBOARD (TABS)
             # ==========================================
-            st.markdown("### 📊 Optimization Confidence & Yields")
-            res_col1, res_col2 = st.columns([1.5, 1])
+            st.markdown("### 📊 Advanced Analytics Dashboard")
             
-            with res_col1:
-                with st.container(border=True):
-                    st.markdown("#### Engine Confidence Analysis")
-                    st.write("How much better is this build compared to the alternatives tested in Phase 3?")
-                    
-                    df_conf = pd.DataFrame({
-                        "Build Category":["Worst Tested", "Average Build", "Runner-Up", "🏆 Optimal Build"],
-                        "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[target_metric]]
-                    })
-                    
-                    fig = px.bar(
-                        df_conf, x="Performance", y="Build Category", orientation='h',
-                        text_auto='.3s', color="Build Category",
-                        color_discrete_map={
-                            "Worst Tested": "#ff4b4b",       # Red
-                            "Average Build": "#ffa229",      # Orange
-                            "Runner-Up": "#6495ED",          # Light Blue
-                            "🏆 Optimal Build": "#4CAF50"    # Green
-                        }
-                    )
-                    fig.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=250)
-                    st.plotly_chart(fig, use_container_width=True)
-
-            with res_col2:
-                with st.container(border=True):
+            # Dynamically construct the tabs based on what the user is optimizing for
+            tab_list = ["📈 Performance", "🕸️ Trade-Offs"]
+            show_loot = ("frag" in target_metric or "ore" in target_metric or dev_mode)
+            show_wall = (target_metric == "highest_floor" or dev_mode)
+            
+            if show_loot: tab_list.append("🎒 Loot Breakdown")
+            if show_wall: tab_list.append("🧱 The Wall")
+            
+            ui_tabs = st.tabs(tab_list)
+            tab_idx = 0
+            
+            # --- TAB 1: PERFORMANCE & CONFIDENCE ---
+            with ui_tabs[tab_idx]:
+                tab_idx += 1
+                perf_col1, perf_col2 = st.columns([1, 1.5])
+                
+                with perf_col1:
                     st.markdown("#### Projected Yields")
                     val = final_summary_out[target_metric]
-                    
                     if target_metric == "highest_floor":
                         st.metric("Max Floor Reached", f"{val:,.1f}")
                     else:
                         rate_sec = val / 60.0
                         rate_1k = rate_sec * 1000.0
-                        
-                        if "frag" in target_metric: metric_str = "Fragments"
-                        elif "ore" in target_metric: metric_str = "Kills"
-                        else: metric_str = "EXP"
-
+                        metric_str = "Fragments" if "frag" in target_metric else "Kills" if "ore" in target_metric else "EXP"
                         st.metric(f"Real-Time ({metric_str})", f"{val:,.2f} / min")
                         st.divider()
                         st.metric("Banked Time", f"{rate_sec:,.2f} / Arch Sec")
                         st.metric("Banked Time (1k)", f"{rate_1k:,.1f} / 1k Arch Sec")
+
+                with perf_col2:
+                    if dev_mode:
+                        # Hill Climb Chart
+                        df_hill = pd.DataFrame({"Phase": ["P1 (Coarse)", "P2 (Fine)", "P3 (Exact)"], "Score": mock_hill_climb})
+                        fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True, title="AI Convergence (Hill Climb)")
+                        fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
+                        fig_hill.update_layout(margin=dict(l=10, r=20, t=40, b=20), height=200)
+                        st.plotly_chart(fig_hill, use_container_width=True)
+                    
+                    # Confidence Bar Chart
+                    df_conf = pd.DataFrame({
+                        "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
+                        "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[target_metric]]
+                    })
+                    fig_conf = px.bar(
+                        df_conf, x="Performance", y="Build Category", orientation='h', text_auto='.3s', color="Build Category",
+                        color_discrete_map={"Worst Tested": "#ff4b4b", "Average": "#ffa229", "Runner-Up": "#6495ED", "🏆 Optimal": "#4CAF50"}
+                    )
+                    fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200, title="Engine Confidence Analysis")
+                    st.plotly_chart(fig_conf, use_container_width=True)
+
+            # --- TAB 2: TRADE-OFFS (RADAR) ---
+            with ui_tabs[tab_idx]:
+                tab_idx += 1
+                if dev_mode:
+                    st.markdown("#### The Build Compromise")
+                    st.write("Visualizing what you sacrificed to achieve this specific peak.")
+                    categories =['Max Floor Push', 'EXP Yield', 'High-Tier Frags', 'Low-Tier Frags', 'Ore Kills']
+                    fig_radar = go.Figure()
+                    fig_radar.add_trace(go.Scatterpolar(r=mock_radar_bal, theta=categories, fill='toself', name='Balanced Build', line_color='gray'))
+                    fig_radar.add_trace(go.Scatterpolar(r=mock_radar_opt, theta=categories, fill='toself', name='🏆 Optimal Build', line_color='#4CAF50'))
+                    fig_radar.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 1])), showlegend=True, margin=dict(t=40, b=20), height=400)
+                    st.plotly_chart(fig_radar, use_container_width=True)
+                else:
+                    st.info("Radar metrics will appear here in the next engine update!")
+
+            # --- TAB 3: COLLATERAL LOOT (DONUT) ---
+            if show_loot:
+                with ui_tabs[tab_idx]:
+                    tab_idx += 1
+                    if dev_mode:
+                        st.markdown("#### Collateral Loot Distribution")
+                        st.write("Every specific targeted run yields collateral rewards. Here is what else you are earning:")
+                        df_donut = pd.DataFrame(list(mock_donut.items()), columns=['Loot', 'Amount'])
+                        fig_donut = px.pie(df_donut, values='Amount', names='Loot', hole=0.5)
+                        fig_donut.update_traces(textposition='inside', textinfo='percent+label')
+                        fig_donut.update_layout(margin=dict(t=20, b=20), height=400)
+                        st.plotly_chart(fig_donut, use_container_width=True)
+                    else:
+                        st.info("Loot Distribution will appear here in the next engine update!")
+
+            # --- TAB 4: THE WALL (HISTOGRAM) ---
+            if show_wall:
+                with ui_tabs[tab_idx]:
+                    tab_idx += 1
+                    if dev_mode:
+                        st.markdown("#### Death Distribution (The Brick Wall)")
+                        st.write("Out of 100 simulations, this is exactly where your character died. High spikes indicate a hard scaling wall (usually enemy armor).")
+                        df_hist = pd.DataFrame(list(mock_histogram.items()), columns=['Floor', 'Deaths'])
+                        fig_hist = px.bar(df_hist, x='Floor', y='Deaths', text='Deaths')
+                        fig_hist.update_traces(marker_color='#ff4b4b', textposition='outside')
+                        fig_hist.update_layout(margin=dict(t=20, b=20), height=400)
+                        st.plotly_chart(fig_hist, use_container_width=True)
+                    else:
+                        st.info("Death Histogram will appear here in the next engine update!")
+
         else:
             st.error("Optimization failed or aborted before a single build could be tested.")
