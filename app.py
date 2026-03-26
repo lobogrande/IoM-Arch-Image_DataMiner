@@ -757,80 +757,94 @@ with tab_sandbox:
     st.header("🧪 Ore Hit Sandbox")
     st.write("Experiment with stat distributions without worrying about your global point budget. Find the exact breakpoints for how many hits it takes to kill specific ores.")
     
+    # --- MATH & FORMULAS (MOVED TO TOP) ---
+    with st.expander("📚 Math & Formulas Breakdown (Click to expand)"):
+        st.markdown("""
+        **Legend:**  
+        `P[x]` = Probability of x  |  `M[x]` = Multiplier of x  
+
+        **Hit Damage Formulas:**
+        * **Armor** = `(Base Armor) - (Armor Pen)`
+        * **Regular Hit** = `(Damage - Armor)`
+        * **Crit Hit** = `(Damage - Armor) × M[Crit]`
+        * **Super Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit]`
+        * **Ultra Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit] × M[uCrit]`
+        
+        **True Crit Probabilities (Nested):**
+        * **P[Reg]** = `(1 - Crit Chance)`
+        * **P[Crit]** = `(Crit Chance) × (1 - sCrit Chance)`
+        * **P[sCrit]** = `(Crit Chance) × (sCrit Chance) × (1 - uCrit Chance)`
+        * **P[uCrit]** = `(Crit Chance) × (sCrit Chance) × (uCrit Chance)`
+        
+        **Expected Damage Per Swing (EDPS):**  
+        `EDPS = (P[Reg]×1.0 + P[Crit]×M[Crit] + P[sCrit]×M[sCrit] + P[uCrit]×M[uCrit]) × (Damage - Armor)`
+        """)
+
+    st.divider()
+    
     # --- DASHBOARD LAYOUT SPLIT ---
     # Left side (1 part) for Controls, Right side (3 parts) for the Data Table
     col_controls, col_table = st.columns([1, 3])
 
     with col_controls:
-        # --- SANDBOX SYNC ---
-        if st.button("🔄 Sync from Base Stats", use_container_width=True, help="Pull your currently saved stat distribution into the sandbox."):
-            for stat in STAT_CAPS.keys():
-                st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
-            st.rerun()
+        # Wrap the controls in an expander so the user can collapse the panel
+        with st.expander("🎛️ Control Panel", expanded=True):
+            
+            # --- SANDBOX SYNC ---
+            if st.button("🔄 Sync from Base Stats", use_container_width=True, help="Pull your currently saved stat distribution into the sandbox."):
+                for stat in STAT_CAPS.keys():
+                    st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
+                st.rerun()
 
-        st.markdown("#### Sandbox Stats")
-        
-        def render_sandbox_stat(label, stat_key, col):
-            max_val = int(STAT_CAPS[stat_key])
-            widget_key = f"sandbox_stat_{stat_key}"
-            if widget_key not in st.session_state:
-                st.session_state[widget_key] = int(p.base_stats.get(stat_key, 0))
+            st.markdown("#### Sandbox Stats")
             
-            with col:
-                with st.container(border=True):
-                    # Removed the "Max" subtext here to make the sidebar incredibly tight and clean
-                    st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{label}</b></div>", unsafe_allow_html=True)
-                    st.number_input(
-                        f"{label} Sandbox", key=widget_key, step=1, on_change=enforce_caps,
-                        args=(widget_key, 0, max_val, f"Sandbox {label}"), label_visibility="collapsed"
-                    )
+            def render_sandbox_stat(label, stat_key, col):
+                max_val = int(STAT_CAPS[stat_key])
+                widget_key = f"sandbox_stat_{stat_key}"
+                if widget_key not in st.session_state:
+                    st.session_state[widget_key] = int(p.base_stats.get(stat_key, 0))
+                
+                with col:
+                    with st.container(border=True):
+                        st.markdown(f"<div style='text-align: center; margin-bottom: 5px; font-size: 0.9em;'><b>{label}</b></div>", unsafe_allow_html=True)
+                        
+                        # --- MINI STAT ICON INJECTION ---
+                        # Looks for the new small folder, falls back to the original large folder if missing
+                        img_path_small = os.path.join(ROOT_DIR, "assets", "stats_small", f"{stat_key.lower()}.png")
+                        img_path_large = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_key.lower()}.png")
+                        
+                        if os.path.exists(img_path_small):
+                            render_centered_image(img_path_small, 40)
+                        elif os.path.exists(img_path_large):
+                            render_centered_image(img_path_large, 40)
+                            
+                        st.number_input(
+                            f"{label} Sandbox", key=widget_key, step=1, on_change=enforce_caps,
+                            args=(widget_key, 0, max_val, f"Sandbox {label}"), label_visibility="collapsed"
+                        )
 
-        # Compact 2-column grid inside the left panel for the stats
-        scol1, scol2 = st.columns(2)
-        render_sandbox_stat("Strength", 'Str', scol1)
-        render_sandbox_stat("Agility", 'Agi', scol2)
-        render_sandbox_stat("Perception", 'Per', scol1)
-        render_sandbox_stat("Intelligence", 'Int', scol2)
-        render_sandbox_stat("Luck", 'Luck', scol1)
-        render_sandbox_stat("Divinity", 'Div', scol2)
-        if p.asc2_unlocked:
-            render_sandbox_stat("Corruption", 'Corr', scol1)
+            # Compact 2-column grid inside the left panel for the stats
+            scol1, scol2 = st.columns(2)
+            render_sandbox_stat("Strength", 'Str', scol1)
+            render_sandbox_stat("Agility", 'Agi', scol2)
+            render_sandbox_stat("Perception", 'Per', scol1)
+            render_sandbox_stat("Intelligence", 'Int', scol2)
+            render_sandbox_stat("Luck", 'Luck', scol1)
+            render_sandbox_stat("Divinity", 'Div', scol2)
+            if p.asc2_unlocked:
+                render_sandbox_stat("Corruption", 'Corr', scol1)
 
-        st.divider()
-        
-        st.markdown("#### Simulation Settings")
-        if "sandbox_floor" not in st.session_state:
-            st.session_state["sandbox_floor"] = int(p.current_max_floor)
+            st.divider()
             
-        target_floor = st.number_input("Target Floor:", min_value=1, step=1, key="sandbox_floor")
-        min_hits = st.number_input("Min Avg Hits to Kill:", min_value=1, value=1, step=1, help="Hides ores that take fewer hits than this.")
-            
-        show_unreachable = st.checkbox("Show Ores Above Target Floor")
-        show_crit_details = st.checkbox("Show Detailed Crit Multipliers")
-        
-        st.divider()
-        
-        with st.expander("📚 Math & Formulas Breakdown"):
-            st.markdown("""
-            **Legend:**  
-            `P[x]` = Probability of x  |  `M[x]` = Multiplier of x  
-
-            **Hit Damage Formulas:**
-            * **Armor** = `(Base Armor) - (Armor Pen)`
-            * **Regular Hit** = `(Damage - Armor)`
-            * **Crit Hit** = `(Damage - Armor) × M[Crit]`
-            * **Super Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit]`
-            * **Ultra Crit Hit** = `(Damage - Armor) × M[Crit] × M[sCrit] × M[uCrit]`
-            
-            **True Crit Probabilities (Nested):**
-            * **P[Reg]** = `(1 - Crit Chance)`
-            * **P[Crit]** = `(Crit Chance) × (1 - sCrit Chance)`
-            * **P[sCrit]** = `(Crit Chance) × (sCrit Chance) × (1 - uCrit Chance)`
-            * **P[uCrit]** = `(Crit Chance) × (sCrit Chance) × (uCrit Chance)`
-            
-            **Expected Damage Per Swing (EDPS):**  
-            `EDPS = (P[Reg]×1.0 + P[Crit]×M[Crit] + P[sCrit]×M[sCrit] + P[uCrit]×M[uCrit]) × (Damage - Armor)`
-            """)
+            st.markdown("#### Settings")
+            if "sandbox_floor" not in st.session_state:
+                st.session_state["sandbox_floor"] = int(p.current_max_floor)
+                
+            target_floor = st.number_input("Target Floor:", min_value=1, step=1, key="sandbox_floor")
+            min_hits = st.number_input("Min Avg Hits to Kill:", min_value=1, value=1, step=1, help="Hides ores that take fewer hits than this.")
+                
+            show_unreachable = st.checkbox("Show Ores Above Target Floor")
+            show_crit_details = st.checkbox("Show Detailed Crit Multipliers")
 
     with col_table:
         # Build an isolated Sandbox Player Object
