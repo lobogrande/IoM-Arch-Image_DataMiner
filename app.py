@@ -325,7 +325,8 @@ if not st.session_state.beta_authorized:
     except:
         CORRECT_KEY = "archbeta2026" # Change this to whatever you want for local testing!
 
-    user_key = st.text_input("Enter Beta Key:", type="password")
+    # Removed type="password" to fix Firefox copy/paste blocking
+    user_key = st.text_input("Enter Beta Key:")
     
     if st.button("Unlock Optimizer"):
         if user_key == CORRECT_KEY:
@@ -336,7 +337,7 @@ if not st.session_state.beta_authorized:
             
     # Stop the script entirely so the rest of the app doesn't render or execute
     st.stop()
-    
+
 # ==========================================
 # SIDEBAR
 # ==========================================
