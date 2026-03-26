@@ -1083,10 +1083,15 @@ with tab_optimizer:
         if dev_mode:
             best_final = {'Str': 25, 'Agi': 0, 'Per': 5, 'Int': 35, 'Luck': 40, 'Div': 0}
             if p.asc2_unlocked: best_final['Corr'] = 5
+            
+            # Generate a mock granular trace (24 ticks per floor)
+            mock_floors =[120 + (i // 24) for i in range(120)]
+            mock_stamina =[max(0, 10000 - (i**1.85)) for i in range(120)]
+            
             final_summary_out = {
                 target_metric: 450.5, "avg_floor": 125.4, 
                 "abs_max_floor": 132, "abs_max_chance": 0.05, "avg_metrics": {},
-                "stamina_trace":[max(0, 10000 - (i**1.85)) for i in range(125)] # Mock quadratic decay
+                "stamina_trace": {"floor": mock_floors, "stamina": mock_stamina}
             }
             elapsed = 0.01
             time_limit_secs = 999
@@ -1369,18 +1374,36 @@ with tab_optimizer:
                     if "stamina_trace" in final_summary_out:
                         st.divider()
                         st.markdown("#### Stamina Depletion Trace (Sample Run)")
-                        st.write("A simulated look at how your stamina drains floor-by-floor with this optimal build. Notice where the line drops off a cliff—that is where enemy HP/Armor scaling overtakes your damage.")
+                        st.write("A simulated look at how your stamina drains ore-by-ore. Hover over the line to see exactly which Floor and Ore Slot caused massive drops.")
                         
-                        trace_data = final_summary_out["stamina_trace"]
+                        trace_floors = final_summary_out["stamina_trace"]["floor"]
+                        trace_stamina = final_summary_out["stamina_trace"]["stamina"]
+                        
+                        # Calculate exactly which ore slot we are on (1 to 24)
+                        ore_slots = [(i % 24) + 1 for i in range(len(trace_floors))]
+                        # Create a continuous float value for a smooth X-axis
+                        frac_floors =[f + ((s - 1) / 24.0) for f, s in zip(trace_floors, ore_slots)]
+                        
                         df_stam = pd.DataFrame({
-                            "Floor": range(1, len(trace_data) + 1), 
-                            "Stamina": trace_data
+                            "Floor Progress": frac_floors,
+                            "Floor": trace_floors,
+                            "Ore Slot": ore_slots,
+                            "Stamina": trace_stamina
                         })
                         
-                        fig_stam = px.line(df_stam, x="Floor", y="Stamina")
-                        # Fill area under the curve for a cool "pool" effect
+                        fig_stam = px.line(
+                            df_stam, 
+                            x="Floor Progress", 
+                            y="Stamina",
+                            hover_data={"Floor Progress": False, "Floor": True, "Ore Slot": True, "Stamina": ":,.0f"}
+                        )
+                        # Fill area under the curve
                         fig_stam.update_traces(line_color="#ffa229", fill='tozeroy', fillcolor="rgba(255, 162, 41, 0.2)")
-                        fig_stam.update_layout(margin=dict(t=20, b=20), height=300)
+                        fig_stam.update_layout(
+                            margin=dict(t=20, b=20), 
+                            height=300,
+                            xaxis_title="Floor Level"
+                        )
                         st.plotly_chart(fig_stam, use_container_width=True)
 
         else:

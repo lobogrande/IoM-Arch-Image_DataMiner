@@ -181,6 +181,19 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     abs_max_floor = max(floors) if floors else 0
     abs_max_chance = (floors.count(abs_max_floor) / len(floors)) if floors else 0
     
+    # --- SINGLE DETERMINISTIC PROFILING TRACE ---
+    # Run exactly one predictable simulation of the winner to map the stamina curve
+    p_profile = Player()
+    load_state_from_json(p_profile, JSON_PATH)
+    for k, v in best_dist.items(): p_profile.base_stats[k] = v
+    for k, v in fixed_stats.items(): p_profile.base_stats[k] = v
+    
+    random.seed(42) # Fixed seed ensures a clean, average-looking trace
+    sim_profile = CombatSimulator(p_profile)
+    sys.stdout = open(os.devnull, 'w')
+    profile_state = sim_profile.run_simulation()
+    sys.stdout = sys.__stdout__
+    
     best_summary = {
         target_metric: best_data['sum_target'] / runs_completed, # Keep for backwards compat
         "avg_floor": best_data['sum_floor'] / runs_completed,
@@ -190,7 +203,12 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         "avg_val": avg_score,
         "runner_up_val": runner_up,
         "floors": floors,
-        "avg_metrics": {k: v / runs_completed for k, v in best_data['metrics_sum'].items()}
+        "avg_metrics": {k: v / runs_completed for k, v in best_data['metrics_sum'].items()},
+        # Package BOTH arrays so the UI knows exactly what floor/ore we are on
+        "stamina_trace": {
+            "floor": profile_state.history['floor'],
+            "stamina": profile_state.history['stamina']
+        }
     }
 
     if best_summary[target_metric] > 0:
