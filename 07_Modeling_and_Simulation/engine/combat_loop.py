@@ -33,6 +33,7 @@ class RunState:
         self.stamina = player.max_sta
         self.speed_pool = 0
         self.total_time = 0.0
+        self.crosshair_timer = 0.0
         self.total_xp = 0.0
         self.total_frags = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0}
         
@@ -99,6 +100,13 @@ class CombatSimulator:
         p_enraged_damage = self.player.enraged_damage
         p_armor_pen = self.player.armor_pen
         p_quake_dmg_to_all = self.player.quake_dmg_to_all
+
+        # --- NEW CROSSHAIR CACHE ---
+        p_crosshair_auto_tap = self.player.crosshair_auto_tap
+        p_gold_crosshair_chance = self.player.gold_crosshair_chance
+        p_gold_crosshair_mult = self.player.gold_crosshair_mult
+        # Default testing interval. The stress test will override this dynamically.
+        CROSSHAIR_SPAWN_INTERVAL = getattr(self, 'crosshair_interval', 999.0)
         
 # Crit Cache
         p_u_crit_ch = self.player.ultra_crit_chance
@@ -172,7 +180,31 @@ class CombatSimulator:
                         
                     time_passed = 1.0 / current_atk_spd
                     state.total_time += time_passed
+                    state.crosshair_timer += time_passed
                     
+                    # --- NEW: CROSSHAIR SPAWN & AUTO-TAP LOGIC ---
+                    while state.crosshair_timer >= CROSSHAIR_SPAWN_INTERVAL:
+                        state.crosshair_timer -= CROSSHAIR_SPAWN_INTERVAL
+                        
+                        # Did it roll an Auto-Tap?
+                        if random.random() < p_crosshair_auto_tap:
+                            ch_base_dmg = p_enraged_damage if is_enrage else p_damage
+                            
+                            # Did it roll a Gold (Crit) Crosshair?
+                            if random.random() < p_gold_crosshair_chance:
+                                ch_dmg = ch_base_dmg * p_gold_crosshair_mult
+                            else:
+                                ch_dmg = ch_base_dmg
+                                
+                            ch_eff_armor = max(0, target_ore.armor - p_armor_pen)
+                            ch_actual_dmg = max(1.0, ch_dmg - ch_eff_armor)
+                            
+                            target_ore.hp -= ch_actual_dmg
+                            # Note: No Stamina subtracted! Free damage!
+                            
+                    if target_ore.hp <= 0:
+                        break  # Ore died to a Crosshair hit, break out of micro-tick loop!
+                        
                     events = skills.tick(time_passed)
                     if events["stamina_restored"] > 0:
                         state.stamina = min(p_max_sta, state.stamina + events["stamina_restored"])
