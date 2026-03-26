@@ -1196,7 +1196,12 @@ if __name__ == "__main__":
                     'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
                 }
                     
-                    payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_dict': base_state_dict}
+                payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_file': temp_run_file}
+                
+                # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
+                if sys.platform == "linux":
+                    CPU_CORES = min(2, mp.cpu_count()) 
+                else:
                     CPU_CORES = max(1, mp.cpu_count() - 1)
                     
                     with mp.Pool(CPU_CORES) as pool:
@@ -1319,7 +1324,11 @@ if __name__ == "__main__":
                         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_dict': base_state_dict}
-                        CPU_CORES = max(1, mp.cpu_count() - 1)
+                        # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
+                        if sys.platform == "linux":
+                            CPU_CORES = min(2, mp.cpu_count()) 
+                        else:
+                            CPU_CORES = max(1, mp.cpu_count() - 1)
                         with mp.Pool(CPU_CORES) as pool:
                             spd = benchmark_hardware(payload, pool)
                             st.session_state.sims_per_sec = spd
@@ -1343,7 +1352,11 @@ if __name__ == "__main__":
                     cap_increase = int(p.u('H45'))
                     EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
                     
-                    CPU_CORES = max(1, mp.cpu_count() - 1)
+                    # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
+                    if sys.platform == "linux":
+                        CPU_CORES = min(2, mp.cpu_count()) 
+                    else:
+                        CPU_CORES = max(1, mp.cpu_count() - 1)
                     ITER_P1, ITER_P2, ITER_P3 = 25, 50, 100
                     best_p3, final_summary = None, None
                     
