@@ -58,13 +58,13 @@ UI_EXT_CARD_CORE_Y_OFFSET = -4
 # --- NEW: CORE SCALING ---
 # Shrinks the inner Ore/Core image BEFORE it gets pasted onto the background.
 # 1.0 = 100% (Original Size), 0.8 = 80%, 0.75 = 75%, etc.
-UI_CARD_CORE_SCALE = 0.8
+UI_CARD_CORE_SCALE = 0.7
 
 # --- ORE CARDS ---
 # Width of the generated cards in the 4x7 grid
 UI_ORE_CARD_WIDTH = 100
 # Offsets specifically for Ore Card cores
-UI_ORE_CARD_X_OFFSET = 0
+UI_ORE_CARD_X_OFFSET = 1
 UI_ORE_CARD_Y_OFFSET = -4
 
 # Width of the ore icons inside the Ore Stats DataFrame table
