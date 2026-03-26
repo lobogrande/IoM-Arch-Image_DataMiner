@@ -850,9 +850,7 @@ with tab_optimizer:
             
             # Mocked data for Advanced Charts
             mock_hill_climb = [final_summary_out[target_metric] * 0.85, final_summary_out[target_metric] * 0.96, final_summary_out[target_metric]]
-            mock_radar_opt =[1.0, 0.4, 0.9, 0.2, 0.5] # Normalized 0-1
-            mock_radar_bal =[0.6, 0.6, 0.6, 0.6, 0.6]
-            mock_donut = {"Dirt": 50, "Common": 150, "Rare": 300, "Epic": 500, "Legendary": 250, "Mythic": 450, "Divine": 10}
+            mock_loot = {"Dirt": 50, "Common": 150, "Rare": 300, "Epic": 500, "Legendary": 250, "Mythic": 450, "Divine": 10}
             mock_histogram = {"124": 5, "125": 12, "126": 78, "127": 5}
 
         # ==========================================
@@ -991,7 +989,7 @@ with tab_optimizer:
             st.markdown("### 📊 Advanced Analytics Dashboard")
             
             # Dynamically construct the tabs based on what the user is optimizing for
-            tab_list = ["📈 Performance", "🕸️ Trade-Offs"]
+            tab_list =["📈 Performance"]
             show_loot = ("frag" in target_metric or "ore" in target_metric or dev_mode)
             show_wall = (target_metric == "highest_floor" or dev_mode)
             
@@ -1023,7 +1021,7 @@ with tab_optimizer:
                 with perf_col2:
                     if dev_mode:
                         # Hill Climb Chart
-                        df_hill = pd.DataFrame({"Phase": ["P1 (Coarse)", "P2 (Fine)", "P3 (Exact)"], "Score": mock_hill_climb})
+                        df_hill = pd.DataFrame({"Phase":["P1 (Coarse)", "P2 (Fine)", "P3 (Exact)"], "Score": mock_hill_climb})
                         fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True, title="AI Convergence (Hill Climb)")
                         fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
                         fig_hill.update_layout(margin=dict(l=10, r=20, t=40, b=20), height=200)
@@ -1041,37 +1039,31 @@ with tab_optimizer:
                     fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200, title="Engine Confidence Analysis")
                     st.plotly_chart(fig_conf, use_container_width=True)
 
-            # --- TAB 2: TRADE-OFFS (RADAR) ---
-            with ui_tabs[tab_idx]:
-                tab_idx += 1
-                if dev_mode:
-                    st.markdown("#### The Build Compromise")
-                    st.write("Visualizing what you sacrificed to achieve this specific peak.")
-                    categories =['Max Floor Push', 'EXP Yield', 'High-Tier Frags', 'Low-Tier Frags', 'Ore Kills']
-                    fig_radar = go.Figure()
-                    fig_radar.add_trace(go.Scatterpolar(r=mock_radar_bal, theta=categories, fill='toself', name='Balanced Build', line_color='gray'))
-                    fig_radar.add_trace(go.Scatterpolar(r=mock_radar_opt, theta=categories, fill='toself', name='🏆 Optimal Build', line_color='#4CAF50'))
-                    fig_radar.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 1])), showlegend=True, margin=dict(t=40, b=20), height=400)
-                    st.plotly_chart(fig_radar, use_container_width=True)
-                else:
-                    st.info("Radar metrics will appear here in the next engine update!")
-
-            # --- TAB 3: COLLATERAL LOOT (DONUT) ---
+            # --- TAB 2: COLLATERAL LOOT (BAR CHART) ---
             if show_loot:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
                     if dev_mode:
                         st.markdown("#### Collateral Loot Distribution")
                         st.write("Every specific targeted run yields collateral rewards. Here is what else you are earning:")
-                        df_donut = pd.DataFrame(list(mock_donut.items()), columns=['Loot', 'Amount'])
-                        fig_donut = px.pie(df_donut, values='Amount', names='Loot', hole=0.5)
-                        fig_donut.update_traces(textposition='inside', textinfo='percent+label')
-                        fig_donut.update_layout(margin=dict(t=20, b=20), height=400)
-                        st.plotly_chart(fig_donut, use_container_width=True)
+                        
+                        # Compute percentages for the text labels
+                        total_loot = sum(mock_loot.values())
+                        df_loot = pd.DataFrame(list(mock_loot.items()), columns=['Loot Tier', 'Amount'])
+                        df_loot['Label'] = df_loot['Amount'].apply(lambda x: f"{x:,}  ({(x/total_loot)*100:.1f}%)")
+                        
+                        # Plotly Bar Chart
+                        fig_loot = px.bar(
+                            df_loot, x='Loot Tier', y='Amount', text='Label', color='Loot Tier',
+                            color_discrete_sequence=px.colors.qualitative.Pastel
+                        )
+                        fig_loot.update_traces(textposition='outside')
+                        fig_loot.update_layout(showlegend=False, margin=dict(t=20, b=20), height=400)
+                        st.plotly_chart(fig_loot, use_container_width=True)
                     else:
                         st.info("Loot Distribution will appear here in the next engine update!")
 
-            # --- TAB 4: THE WALL (HISTOGRAM) ---
+            # --- TAB 3: THE WALL (HISTOGRAM) ---
             if show_wall:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
