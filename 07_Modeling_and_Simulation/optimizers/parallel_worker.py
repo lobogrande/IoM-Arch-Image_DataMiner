@@ -175,7 +175,7 @@ def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     return test_iterations / elapsed if elapsed > 0 else 1
 
 def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=40, iter_p2=70, iter_p3=100):
-    """Calculates exact bounding box permutations with Progressive Iteration Scaling."""
+    """Calculates ETAs compensated for Instant-Death Culling Speedups."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
@@ -192,20 +192,25 @@ def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=40, iter
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
         p1_sims = p1_builds * iter_p1 * 0.25
         
-        # 2. Exact Phase 2 Builds 
+        # 2. Phase 2 & 3 Builds (Multiplied by 3 to account for boundary edge-clamping variations)
         mock_bounds_p2 = {s: (-step_1, step_1) for s in stats_list}
-        p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2))
+        p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2)) * 3
         p2_sims = p2_builds * iter_p2 * 0.25
         
-        # 3. Exact Phase 3 Builds
         mock_bounds_p3 = {s: (-p3_radius, p3_radius) for s in stats_list}
-        p3_builds = len(generate_distributions(stats_list, 0, 1, mock_bounds_p3))
+        p3_builds = len(generate_distributions(stats_list, 0, 1, mock_bounds_p3)) * 3
         p3_sims = p3_builds * iter_p3 * 0.25
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
         total_simulations = p1_sims + p2_sims + p3_sims
         
-        estimated_seconds = total_simulations / max(1, sims_per_second)
+        # --- THE TRASH BUILD CULLING FACTOR ---
+        # Grid search tests mostly terrible builds that die on Floor 1 instantly.
+        # This makes the real grid search ~5.5x faster than the benchmark's "good" build.
+        CULLING_FACTOR = 5.5 
+        effective_sims_sec = max(1, sims_per_second) * CULLING_FACTOR
+        
+        estimated_seconds = total_simulations / effective_sims_sec
         
         if estimated_seconds < 60:
             time_str = f"~{int(estimated_seconds)} seconds"
