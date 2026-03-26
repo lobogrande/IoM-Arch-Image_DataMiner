@@ -14,6 +14,7 @@ import math
 import glob
 import base64
 import time
+import hashlib
 import multiprocessing as mp
 import plotly.express as px
 import plotly.graph_objects as go
@@ -279,11 +280,6 @@ st.markdown("""
     /* =========================================================
        4. GLOBAL UX COLORS & VERTICAL SPACING COMPRESSION
        ========================================================= */
-       
-    /* Apply Professional Off-White Background to reduce eye strain */
-    .stApp {
-        background-color: #F4F6F9 !important;
-    }
     
     /* Pull the entire app higher up on the screen */
     .block-container {
@@ -309,28 +305,36 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔐 BETA ACCESS GATE
+# 🔐 BETA ACCESS GATE (WITH URL MEMORY)
 # ==========================================
-# Check if the user has entered the correct beta key
-if "beta_authorized" not in st.session_state:
+# Securely grab the password from .streamlit/secrets.toml (locally) or the Streamlit Dashboard
+try:
+    CORRECT_KEY = st.secrets["BETA_KEY"]
+except FileNotFoundError:
+    st.error("Missing secrets configuration! App locked.")
+    st.stop()
+
+# Generate a one-way cryptographic hash of the password
+master_hash = hashlib.sha256(CORRECT_KEY.encode()).hexdigest()
+
+# 1. Check if their URL contains the matching hash (survives server reboots!)
+if st.query_params.get("beta") == master_hash:
+    st.session_state.beta_authorized = True
+elif "beta_authorized" not in st.session_state:
     st.session_state.beta_authorized = False
 
 if not st.session_state.beta_authorized:
     st.title("⛏️ IoM Arch Optimizer (Closed Beta)")
     st.warning("This application performs heavy Monte Carlo simulations. To prevent server overload during the testing phase, access is currently restricted.")
     
-    # Try to get the password from st.secrets, fallback to a hardcoded default for local testing
-    try:
-        CORRECT_KEY = st.secrets["BETA_KEY"]
-    except:
-        CORRECT_KEY = "archbeta2026" # Change this to whatever you want for local testing!
-
     # Removed type="password" to fix Firefox copy/paste blocking
     user_key = st.text_input("Enter Beta Key:")
     
     if st.button("Unlock Optimizer"):
         if user_key == CORRECT_KEY:
             st.session_state.beta_authorized = True
+            # 2. Inject the secure hash into their browser URL
+            st.query_params["beta"] = master_hash
             st.rerun()
         else:
             st.error("❌ Invalid Beta Key.")
