@@ -184,15 +184,28 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     return best_dist, best_summary
 
 def benchmark_hardware(baseline_payload, pool, test_iterations=200):
-    """Runs a fast micro-benchmark to determine CPU processing speed."""
-    tasks = [baseline_payload for _ in range(test_iterations)]
+    """Runs a blended micro-benchmark to determine true average CPU processing speed."""
+    # Create a "trash" build to mimic the builds that die instantly on Floor 1
+    trash_payload = {
+        'stats': {k: 0 for k in baseline_payload['stats'].keys()},
+        'fixed_stats': baseline_payload['fixed_stats']
+    }
+    
+    # Successive Halving grid searches test roughly 75% garbage builds and 25% good builds.
+    # By blending the benchmark, the speed naturally adapts to ANY player's max floor level!
+    good_count = int(test_iterations * 0.25)
+    trash_count = test_iterations - good_count
+    
+    tasks = [baseline_payload for _ in range(good_count)] +[trash_payload for _ in range(trash_count)]
+    
     start_time = time.time()
     pool.map(worker_simulate, tasks)
     elapsed = time.time() - start_time
+    
     return test_iterations / elapsed if elapsed > 0 else 1
 
 def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=25, iter_p2=50, iter_p3=100):
-    """Calculates ETAs dynamically adjusted for Endgame Culling Factors."""
+    """Calculates ETAs dynamically based on the Blended Hardware Benchmark."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
@@ -209,7 +222,7 @@ def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=25, iter
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
         p1_sims = p1_builds * iter_p1 * 0.25
         
-        # 2. Phase 2 & 3 Builds (Removed the artificial *3 bloat factor)
+        # 2. Phase 2 & 3 Builds
         mock_bounds_p2 = {s: (-step_1, step_1) for s in stats_list}
         p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2))
         p2_sims = p2_builds * iter_p2 * 0.25
@@ -221,12 +234,8 @@ def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=25, iter
         total_estimated_builds = p1_builds + p2_builds + p3_builds
         total_simulations = p1_sims + p2_sims + p3_sims
         
-        # --- ENDGAME CULLING FACTOR ---
-        # A Floor 1 death executes vastly faster than a Floor 125+ benchmark run.
-        # Adjusted to 12.0x to match high-level account loop differentials.
-        CULLING_FACTOR = 12.0 
-        effective_sims_sec = max(1, sims_per_second) * CULLING_FACTOR
-        
+        # No more guessing or Culling Factors. The benchmark speed is now natively accurate!
+        effective_sims_sec = max(1, sims_per_second)
         estimated_seconds = total_simulations / effective_sims_sec
         
         if estimated_seconds < 60:
