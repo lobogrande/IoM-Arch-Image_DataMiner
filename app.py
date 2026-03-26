@@ -308,7 +308,7 @@ STAT_CAPS = {
 }
 
 tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_ore_stats, tab_sandbox, tab_optimizer = st.tabs([
-    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🧮 Calculated Stats", "🪨 Ore Stats", "🧮 Hit Calculator", "🚀 Run Optimizer"
+    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "📋 Calculated Player Stats", "🪨 Ore Stats", "🧪 Ore Hit Sandbox", "🚀 Run Optimizer"
 ])
 
 # --- TAB 1: BASE STATS ---
@@ -573,7 +573,7 @@ with tab_cards:
 
 # --- TAB 4: CALCULATED STATS ---
 with tab_calc_stats:
-    st.subheader("Calculated Player Stats")
+    st.subheader("📋 Calculated Player Stats")
     st.write("This is the exact mathematical output derived from your Base Stats, Upgrades, and Cards being fed into the Engine.")
     
     col_calc_1, col_calc_2, col_calc_3 = st.columns(3)
@@ -587,29 +587,27 @@ with tab_calc_stats:
             
             st.divider()
             
-            # --- TRUE NESTED PROBABILITIES & COMPOUND MULTIPLIERS ---
-            true_reg = 1.0 - p.crit_chance
-            true_crit = p.crit_chance * (1.0 - p.super_crit_chance)
-            true_scrit = p.crit_chance * p.super_crit_chance * (1.0 - p.ultra_crit_chance)
-            true_ucrit = p.crit_chance * p.super_crit_chance * p.ultra_crit_chance
-            
-            comp_crit = p.crit_dmg_mult
-            comp_scrit = p.crit_dmg_mult * p.super_crit_dmg_mult
-            comp_ucrit = p.crit_dmg_mult * p.super_crit_dmg_mult * p.ultra_crit_dmg_mult
-            
-            st.markdown("#### 🎯 True Hit Breakdown (Simulation Math)")
-            st.write(f"*- Regular:* {true_reg*100:,.2f}%")
-            st.write(f"*- Crit:* {true_crit*100:,.2f}% *(Total Mult: {comp_crit:,.2f}x)*")
-            st.write(f"*- Super Crit:* {true_scrit*100:,.2f}% *(Total Mult: {comp_scrit:,.2f}x)*")
-            st.write(f"*- Ultra Crit:* {true_ucrit*100:,.2f}% *(Total Mult: {comp_ucrit:,.2f}x)*")
-            
-            st.divider()
-            
             st.markdown("#### 📊 Raw In-Game Stats")
-            st.write("<small><i>These are the exact numbers shown on your in-game UI screen before nesting math is applied.</i></small>", unsafe_allow_html=True)
+            st.write("<small><i>These are the exact numbers shown on your in-game UI screen. Verify these match!</i></small>", unsafe_allow_html=True)
             st.write(f"**Base Crit:** {p.crit_chance*100:.2f}% Chance | {p.crit_dmg_mult:,.2f}x Multiplier")
             st.write(f"**Super Crit:** {p.super_crit_chance*100:.2f}% Chance | {p.super_crit_dmg_mult:,.2f}x Multiplier")
             st.write(f"**Ultra Crit:** {p.ultra_crit_chance*100:.2f}% Chance | {p.ultra_crit_dmg_mult:,.2f}x Multiplier")
+            
+            # --- TRUE NESTED PROBABILITIES & COMPOUND MULTIPLIERS (HIDDEN) ---
+            with st.expander("🔬 View Simulation Math (True Nested Probs)"):
+                true_reg = 1.0 - p.crit_chance
+                true_crit = p.crit_chance * (1.0 - p.super_crit_chance)
+                true_scrit = p.crit_chance * p.super_crit_chance * (1.0 - p.ultra_crit_chance)
+                true_ucrit = p.crit_chance * p.super_crit_chance * p.ultra_crit_chance
+                
+                comp_crit = p.crit_dmg_mult
+                comp_scrit = p.crit_dmg_mult * p.super_crit_dmg_mult
+                comp_ucrit = p.crit_dmg_mult * p.super_crit_dmg_mult * p.ultra_crit_dmg_mult
+                
+                st.write(f"*- Regular:* {true_reg*100:,.2f}%")
+                st.write(f"*- Crit:* {true_crit*100:,.2f}% *(Total Mult: {comp_crit:,.2f}x)*")
+                st.write(f"*- Super Crit:* {true_scrit*100:,.2f}% *(Total Mult: {comp_scrit:,.2f}x)*")
+                st.write(f"*- Ultra Crit:* {true_ucrit*100:,.2f}% *(Total Mult: {comp_ucrit:,.2f}x)*")
 
     with col_calc_2:
         with st.container(border=True):
@@ -721,7 +719,7 @@ with tab_ore_stats:
 
 # --- TAB 6: HIT CALCULATOR (SANDBOX) ---
 with tab_sandbox:
-    st.header("🧮 Ore Hit Calculator (Sandbox)")
+    st.header("🧪 Ore Hit Sandbox")
     st.write("Experiment with stat distributions without worrying about your global point budget. Find the exact breakpoints for how many hits it takes to kill specific ores.")
     
     # --- SANDBOX SYNC ---
@@ -1305,32 +1303,50 @@ with tab_optimizer:
                             st.markdown(f"#### 🃏 Ore Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
                             
                             odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
-                            for drop_name, base_odds in odds.items():
-                                if val > 0:
-                                    # True Binomial Math for independent RNG events:
-                                    # P = 1 - (1 - p)^N  =>  N = ln(1 - P) / ln(1 - p)
-                                    # To avoid heavy math imports, we use the proven approximations:
-                                    # 50% chance ≈ 0.693 * odds | 90% chance ≈ 2.302 * odds
-                                    kills_50 = 0.693 * base_odds
-                                    kills_90 = 2.302 * base_odds
-                                    
-                                    # Helper to format time dynamically
-                                    def format_time(req_kills):
-                                        rt_mins = req_kills / val
-                                        rt_str = f"{rt_mins:.1f} mins" if rt_mins < 60 else f"{rt_mins/60.0:.1f} hrs"
+                            
+                            # Extract the exact core image needed (e.g., "ore_myth3_per_min" -> "myth3")
+                            target_ore_id = target_metric.replace("ore_", "").replace("_per_min", "")
+                            core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_ore_id}.png")
+                            
+                            # Map backgrounds: Base=1(Com), Poly=2(Rare), Infernal=4(Leg)
+                            bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
+                            
+                            cols_cards = st.columns(3)
+                            for idx, (drop_name, base_odds) in enumerate(odds.items()):
+                                with cols_cards[idx]:
+                                    with st.container(border=True):
+                                        # --- RENDER DYNAMIC CARD ---
+                                        bg_tier = bg_mapping.get(drop_name, "1")
+                                        bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
                                         
-                                        arch_secs = req_kills / (val / 60.0)
-                                        arch_1k = arch_secs / 1000.0
-                                        return rt_str, arch_1k
+                                        comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_Y_OFFSET)
+                                        if comp_img:
+                                            render_centered_image(comp_img, UI_ORE_CARD_WIDTH)
+                                        else:
+                                            st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
+                                        
+                                        st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
+                                        st.divider()
+                                        
+                                        # --- MATH & YIELDS ---
+                                        if val > 0:
+                                            kills_50 = 0.693 * base_odds
+                                            kills_90 = 2.302 * base_odds
+                                            
+                                            def format_time(req_kills):
+                                                rt_mins = req_kills / val
+                                                rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
+                                                arch_secs = req_kills / (val / 60.0)
+                                                arch_1k = arch_secs / 1000.0
+                                                return rt_str, arch_1k
 
-                                    rt_50, bk_50 = format_time(kills_50)
-                                    rt_90, bk_90 = format_time(kills_90)
-                                    
-                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span>", unsafe_allow_html=True)
-                                    st.write(f"*- 50% Chance (Lucky):* ~{rt_50} &nbsp;|&nbsp; ~{bk_50:.1f}k Banked", unsafe_allow_html=True)
-                                    st.write(f"*- 90% Chance (Safe):* &nbsp;~{rt_90} &nbsp;|&nbsp; ~{bk_90:.1f}k Banked", unsafe_allow_html=True)
-                                else:
-                                    st.write(f"**{drop_name}** <span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span><br>*- N/A (0 kills)*", unsafe_allow_html=True)
+                                            rt_50, bk_50 = format_time(kills_50)
+                                            rt_90, bk_90 = format_time(kills_90)
+                                            
+                                            st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
+                                            st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
+                                        else:
+                                            st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
 
                         st.divider()
                         
@@ -1340,7 +1356,14 @@ with tab_optimizer:
 
                 with perf_col2:
                     # Streamlit Markdown header completely fixes the Plotly overlap bug
-                    st.markdown("#### AI Convergence (Hill Climb)")
+                    st.markdown(
+                        "#### AI Convergence (Hill Climb) "
+                        "<span title='This chart shows how the AI narrowed down the best build across the 3 optimization phases. "
+                        "An upward curve means the engine successfully found significantly better builds as it zoomed in. "
+                        "A flat line means Phase 1 already hit the near-perfect build.' "
+                        "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
+                        unsafe_allow_html=True
+                    )
                     df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score": chart_hill_scores})
                     fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True)
                     fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
@@ -1348,7 +1371,14 @@ with tab_optimizer:
                     st.plotly_chart(fig_hill, use_container_width=True)
                     
                     # Streamlit Markdown header
-                    st.markdown("#### Engine Confidence Analysis")
+                    st.markdown(
+                        "#### Engine Confidence Analysis "
+                        "<span title='Compares the Optimal build against the Worst, Average, and Runner-Up builds tested. "
+                        "A large gap between Optimal and Average proves your stats highly impact this target. A small gap between Runner-Up and Optimal "
+                        "shows the AI fine-tuned the absolute perfect micro-adjustments.' "
+                        "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
+                        unsafe_allow_html=True
+                    )
                     df_conf = pd.DataFrame({
                         "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
                         "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[target_metric]]
