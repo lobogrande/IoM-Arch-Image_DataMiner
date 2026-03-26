@@ -30,13 +30,18 @@ def worker_simulate(payload):
     state = payload.get('state_dict', {})
     if state:
         p.base_stats = state.get('base_stats', {}).copy()
-        p.upgrade_levels = state.get('upgrade_levels', {}).copy()
-        p.external_levels = state.get('external_levels', {}).copy()
-        p.cards = state.get('cards', {}).copy()
         p.asc2_unlocked = state.get('asc2_unlocked', False)
         p.arch_level = state.get('arch_level', 1)
         p.current_max_floor = state.get('current_max_floor', 1)
         p.hades_idol_level = state.get('hades_idol_level', 0)
+        
+        # PROPERLY RE-APPLY UPGRADES USING SETTERS SO MATH TRIGGERS!
+        for upg_id, lvl in state.get('upgrade_levels', {}).items():
+            p.set_upgrade_level(upg_id, lvl)
+        for ext_id, lvl in state.get('external_levels', {}).items():
+            p.set_external_level(ext_id, lvl)
+        for card_id, lvl in state.get('cards', {}).items():
+            p.set_card_level(card_id, lvl)
     else:
         # Fallback for local CLI script testing
         load_state_from_json(p, JSON_PATH)
@@ -171,7 +176,13 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
                 avg_f = sum(floors) / len(floors) if floors else 0
                 return (max_f, avg_f)
             else:
-                return tracker[k]['sum_target'] / max(1, tracker[k]['runs'])
+                score = tracker[k]['sum_target'] / max(1, tracker[k]['runs'])
+                floors = tracker[k]['floors']
+                avg_f = sum(floors) / len(floors) if floors else 0
+                
+                # Use Average Floor as a secondary tiebreaker!
+                # If 'score' is 0 for all builds, it will correctly pick the build that reached the highest floor.
+                return (score, avg_f)
                 
         active_keys.sort(key=get_sort_key, reverse=True)
         
@@ -200,13 +211,17 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     p_profile = Player()
     if base_state_dict:
         p_profile.base_stats = base_state_dict.get('base_stats', {}).copy()
-        p_profile.upgrade_levels = base_state_dict.get('upgrade_levels', {}).copy()
-        p_profile.external_levels = base_state_dict.get('external_levels', {}).copy()
-        p_profile.cards = base_state_dict.get('cards', {}).copy()
         p_profile.asc2_unlocked = base_state_dict.get('asc2_unlocked', False)
         p_profile.arch_level = base_state_dict.get('arch_level', 1)
         p_profile.current_max_floor = base_state_dict.get('current_max_floor', 1)
         p_profile.hades_idol_level = base_state_dict.get('hades_idol_level', 0)
+        
+        for upg_id, lvl in base_state_dict.get('upgrade_levels', {}).items():
+            p_profile.set_upgrade_level(upg_id, lvl)
+        for ext_id, lvl in base_state_dict.get('external_levels', {}).items():
+            p_profile.set_external_level(ext_id, lvl)
+        for card_id, lvl in base_state_dict.get('cards', {}).items():
+            p_profile.set_card_level(card_id, lvl)
     else:
         load_state_from_json(p_profile, JSON_PATH)
         
