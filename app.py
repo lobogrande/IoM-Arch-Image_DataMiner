@@ -228,6 +228,55 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
+# --- GLOBAL CSS OVERRIDES (REACT-STYLE UI MAPPING) ---
+st.markdown("""
+    <style>
+    /* 1. Force the collapsed 'open' arrow to be permanently visible and mid-screen */
+    [data-testid="collapsedControl"],[data-testid="stSidebarCollapsedControl"] {
+        display: flex !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        background-color: #2b2b2b !important;
+        border: 1px solid #ffa229 !important;
+        border-left: none !important;
+        border-radius: 0 8px 8px 0 !important;
+        box-shadow: 2px 0px 5px rgba(0,0,0,0.5) !important;
+        top: 50vh !important; 
+        position: fixed !important;
+        transform: translateY(-50%) !important;
+        z-index: 100000 !important;
+        transition: background-color 0.2s ease !important;
+    }[data-testid="collapsedControl"]:hover, [data-testid="stSidebarCollapsedControl"]:hover {
+        background-color: #ffa229 !important;
+    }
+    [data-testid="collapsedControl"] svg, [data-testid="stSidebarCollapsedControl"] svg {
+        fill: #ffa229 !important;
+        width: 20px !important;
+        height: 20px !important;
+    }
+    [data-testid="collapsedControl"]:hover svg,[data-testid="stSidebarCollapsedControl"]:hover svg {
+        fill: #2b2b2b !important;
+    }
+    
+    /* 2. Highlight the 'close' button inside the expanded sidebar */[data-testid="stSidebarHeader"] button, [data-testid="baseButton-header"] {
+        opacity: 1 !important;
+        visibility: visible !important;
+        background-color: rgba(255, 162, 41, 0.1) !important;
+        border: 1px solid #ffa229 !important;
+        border-radius: 6px !important;
+    }[data-testid="stSidebarHeader"] button:hover, [data-testid="baseButton-header"]:hover {
+        background-color: #ffa229 !important;
+    }
+    
+    /* 3. Add a visual hint to the vertical resizer divider */
+    [data-testid="stSidebarResizer"] {
+        background-color: rgba(255, 162, 41, 0.2) !important;
+        width: 4px !important;
+    }[data-testid="stSidebarResizer"]:hover {
+        background-color: rgba(255, 162, 41, 0.8) !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # ==========================================
 # SIDEBAR
