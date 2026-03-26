@@ -1,6 +1,6 @@
 # dna_continuity_audit.py
 # Purpose: Group frames into stable temporal blocks, resolve collisions using 
-# Circular Masked Ore Identity, and export chronologically sorted verification frames.
+# Circular Masked Block Identity, and export chronologically sorted verification frames.
 # Version: 2.9 (Sequential Sorting Update)
 
 import sys, os, cv2, pandas as pd, numpy as np
@@ -23,21 +23,21 @@ def get_spatial_mask():
     cv2.circle(mask, (24, 24), 18, 255, -1)
     return mask
 
-def get_row4_ore_identity(img, templates, mask):
+def get_row4_block_identity(img, templates, mask):
     """
-    Identifies the 6 ores in Row 4 using your circular spatial mask.
+    Identifies the 6 blocks in Row 4 using your circular spatial mask.
     """
     row4_y = int(ORE0_Y + (3 * STEP))
-    ore_ids = []
+    block_ids = []
     
     for col in range(6):
         x = int(ORE0_X + (col * STEP))
-        # Crop the 48x48 slot centered on the ore
+        # Crop the 48x48 slot centered on the block
         x1, y1 = int(x - AI_DIM//2), int(row4_y - AI_DIM//2)
         roi = img[y1 : y1 + AI_DIM, x1 : x1 + AI_DIM]
         
         if roi.shape != (AI_DIM, AI_DIM):
-            ore_ids.append("err")
+            block_ids.append("err")
             continue
 
         best_val = -1
@@ -58,9 +58,9 @@ def get_row4_ore_identity(img, templates, mask):
                 best_val = val
                 best_name = name
         
-        ore_ids.append(best_name if best_val > 0.80 else "empty")
+        block_ids.append(best_name if best_val > 0.80 else "empty")
         
-    return "-".join(ore_ids)
+    return "-".join(block_ids)
 
 def run_continuity_audit():
     if not os.path.exists(INPUT_CSV):
@@ -73,16 +73,16 @@ def run_continuity_audit():
     if not os.path.exists(VERIFY_DIR): os.makedirs(VERIFY_DIR)
     mask = get_spatial_mask()
     
-    # Load Ore Templates
-    ore_tpls = {}
-    ore_dir = os.path.join(cfg.TEMPLATE_DIR, "ores") 
+    # Load Block Templates
+    block_tpls = {}
+    block_dir = os.path.join(cfg.TEMPLATE_DIR, "ores") 
     if os.path.exists(ore_dir):
         for f in os.listdir(ore_dir):
             if f.endswith('.png'):
                 name = f.replace('.png', '')
                 img = cv2.imread(os.path.join(ore_dir, f), 0)
                 if img is not None:
-                    ore_tpls[name] = cv2.resize(img, (AI_DIM, AI_DIM))
+                    block_tpls[name] = cv2.resize(img, (AI_DIM, AI_DIM))
 
     print(f"--- DNA CONTINUITY & COLLISION RESOLUTION (v2.9) ---")
 
@@ -124,7 +124,7 @@ def run_continuity_audit():
         if row['dna_sig'] in collision_sigs or row['dna_sig'] == "111111-111111":
             img = cv2.imread(os.path.join(source_dir, row['filenames'][0]), 0)
             if img is not None:
-                identity = get_row4_ore_identity(img, ore_tpls, mask)
+                identity = get_row4_block_identity(img, block_tpls, mask)
         
         row_dict = row.to_dict()
         row_dict['full_fingerprint'] = f"{row['dna_sig']}_{identity}"
@@ -148,12 +148,12 @@ def run_continuity_audit():
         # idx + 1 gives us a 1-based floor sequence number
         label = f"FLOOR {idx+1:03d} | Frame: {f_row['start_idx']}"
         sig_label = f"DNA: {f_row['dna_sig']}"
-        ore_label = f"Identity: {f_row['full_fingerprint'].split('_')[1]}"
+        block_label = f"Identity: {f_row['full_fingerprint'].split('_')[1]}"
         
         cv2.rectangle(vis, (10, 10), (600, 85), (0, 0, 0), -1)
         cv2.putText(vis, label, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.putText(vis, sig_label, (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-        cv2.putText(vis, ore_label, (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+        cv2.putText(vis, block_label, (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
         
         out_name = f"floor_{idx+1:03d}_frame_{f_row['start_idx']}.jpg"
         cv2.imwrite(os.path.join(VERIFY_DIR, out_name), vis)

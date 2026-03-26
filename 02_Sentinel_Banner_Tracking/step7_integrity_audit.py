@@ -11,7 +11,7 @@ def run_integrity_audit():
     # Resolve dynamic path
     source_dir = cfg.get_buffer_path()
     run_id = os.path.basename(source_dir).split('_')[-1]
-    csv_path = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_ore_inventory_run_{run_id}.csv")
+    csv_path = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_block_inventory_run_{run_id}.csv")
     
     if not os.path.exists(csv_path):
         print(f"!!! ERROR: Could not find inventory at {csv_path}")

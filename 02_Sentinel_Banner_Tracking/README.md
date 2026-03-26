@@ -1,4 +1,4 @@
-# Ore Data Collection Pipeline (v3.0)
+# Block Data Collection Pipeline (v3.0)
 
 Linear 8-step pipeline to convert raw video captures into validated 110-floor datasets.
 
@@ -7,9 +7,9 @@ Linear 8-step pipeline to convert raw video captures into validated 110-floor da
 | Constant | Value | Description |
 | :--- | :--- | :--- |
 | **Grid Origin** | `(74, 261)` | Validated center of Slot 0. |
-| **Grid Step** | `59.0px` | Distance between ores. |
+| **Grid Step** | `59.0px` | Distance between blocks. |
 | **Complexity Gate**| `500` | Min Laplacian variance to distinguish Shadow from Active. |
-| **Signal Floor** | `0.30` | Min confidence required for an Ore vote to count. |
+| **Signal Floor** | `0.30` | Min confidence required for an Block vote to count. |
 
 ---
 
@@ -19,7 +19,7 @@ The identification engine (Step 6) generates visual proofs with specific tags to
 
 | Tag | Color | Meaning |
 | :--- | :--- | :--- |
-| `[M]` | **Green** | **Momentum/Majority Consensus.** Ore confirmed via temporal voting across clean frames. |
+| `[M]` | **Green** | **Momentum/Majority Consensus.** Block confirmed via temporal voting across clean frames. |
 | `[B]` | **Green** | **Boss Floor.** Identification bypassed AI vision and was pulled from `project_config.py` hardcoded layouts. |
 | `[L]` | **Cyan** | **Likely Empty.** Player obstructed the slot for 100% of the floor, but extreme-edge forensics confirmed the background ground texture. |
 | `[U]` | **Yellow** | **Unknown/Obstructed.** Player obstructed the slot for 100% of the floor, and edge forensics could not definitively prove the ground was empty. |
@@ -62,19 +62,19 @@ Run this if you suspect the Homing script is missing floors.
 
 ### Step 5: Floor Occupancy Masking
 **Script:** `step5_floor_occupancy.py`
-* **Action:** Scans a 150-frame window after floor arrival to create the finalized 1/0 map indicating which slots have ores. Boss floors automatically bypass this and load directly from project config.
+* **Action:** Scans a 150-frame window after floor arrival to create the finalized 1/0 map indicating which slots have blocks. Boss floors automatically bypass this and load directly from project config.
 * **Output:** `floor_dna_inventory_run_X.csv`.
 
 ### Step 6: Tier Consensus
 **Script:** `step6_tier_consensus.py`
 * **Action:** The forensic identification engine. Uses the Step 5 mask, Step 1 Homing data (to exclude player-obstructed frames), and Temporal Consensus Voting to achieve 100% identification accuracy.
-* **Output:** `floor_ore_inventory_run_X.csv` and visual proofs.
+* **Output:** `floor_block_inventory_run_X.csv` and visual proofs.
 
 #### 🔍 Step 6 Quality Control (Optional)
 **Script:** `step6_audit_profiler.py`
 Run this to extract the raw mathematical fingerprints (Texture, Geometry, Grain, and Laplacian Complexity) of every occupied slot to establish baselines.
 
-**Script:** `diag_ore_forensics.py` (or your renamed equivalent)
+**Script:** `diag_block_forensics.py` (or your renamed equivalent)
 Run this if specific slots are failing to identify correctly.
 * **Action:** Deep-dives into a specific `(Floor, Row, Col)` to output the exact leaderboard of template matches, ROI brightness, and complexity.
 * **Interpretation:** Use this to determine if `BULLY_PENALTIES` need tweaking or if floating UI icons are washing out the template match.

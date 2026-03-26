@@ -12,7 +12,7 @@ GAME_Y = 225  # Replace with your Y
 # -----------------------------------------------------
 
 print("Template Tool Active.")
-print("Position your mouse over an Ore or Shadow and press 'S' to save a 50x50 template.")
+print("Position your mouse over an Block or Shadow and press 'S' to save a 50x50 template.")
 print("Press 'ESC' to stop.")
 
 count = 0

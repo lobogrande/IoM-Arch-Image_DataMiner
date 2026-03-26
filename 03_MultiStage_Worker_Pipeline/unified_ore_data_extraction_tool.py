@@ -26,7 +26,7 @@ def get_spatial_mask():
     return mask
 
 def load_all_templates():
-    templates = {'ore': {}, 'bg': []}
+    templates = {'block': {}, 'bg': []}
     t_path = cfg.TEMPLATE_DIR
     for f in os.listdir(t_path):
         img = cv2.imread(os.path.join(t_path, f), 0)
@@ -38,8 +38,8 @@ def load_all_templates():
             parts = f.split("_")
             if len(parts) < 2: continue
             tier, state = parts[0], parts[1]
-            if tier not in templates['ore']: templates['ore'][tier] = {'act': [], 'sha': []}
-            if state in ['act', 'sha']: templates['ore'][tier][state].append(img)
+            if tier not in templates['block']: templates['block'][tier] = {'act': [], 'sha': []}
+            if state in ['act', 'sha']: templates['block'][tier][state].append(img)
     return templates
 
 def perform_mining_pass(templates):
@@ -70,7 +70,7 @@ def perform_mining_pass(templates):
                 cx, cy = int(SLOT1_CENTER[0]+(col*STEP_X)), int(SLOT1_CENTER[1]+(row*STEP_Y))
                 x1, y1, x2, y2 = cx-24, cy-24, cx+24, cy+24
 
-                best_ore = {'tier': 'empty', 'score': 0.0, 'state': 'none'}
+                best_block = {'tier': 'empty', 'score': 0.0, 'state': 'none'}
                 best_bg_score = 0.0
 
                 # Temporal Persistence Loop (+/- 3 standard)
@@ -84,23 +84,23 @@ def perform_mining_pass(templates):
                         bg_res = cv2.matchTemplate(roi, bg_img, cv2.TM_CCOEFF_NORMED).max()
                         if bg_res > best_bg_score: best_bg_score = bg_res
 
-                    # MASKED Ore Matching
+                    # MASKED Block Matching
                     for tier in (allowed if floor not in cfg.BOSS_DATA else [BOSS_DATA[floor].get('tier', 'empty')]):
-                        if tier not in templates['ore']: continue
+                        if tier not in templates['block']: continue
                         for state in ['act', 'sha']:
-                            for t_img in templates['ore'][tier][state]:
+                            for t_img in templates['block'][tier][state]:
                                 res = cv2.matchTemplate(roi, t_img, cv2.TM_CCORR_NORMED, mask=mask)
                                 _, score, _, _ = cv2.minMaxLoc(res)
                                 if state == 'sha': score *= 1.05
-                                if score > best_ore['score']:
-                                    best_ore = {'tier': tier, 'score': score, 'state': state}
+                                if score > best_block['score']:
+                                    best_block = {'tier': tier, 'score': score, 'state': state}
 
                 # COMPETITIVE LOGIC GATE
-                # An ore must beat 0.80 AND outscore background by 0.06 delta
-                if best_ore['score'] > 0.80 and (best_ore['score'] - best_bg_score > 0.06):
-                    status = best_ore['tier']
-                    color = (0, 255, 0) if best_ore['state'] == 'act' else (0, 165, 255)
-                    global_report.append({'run': run_id, 'floor': floor, 'slot': slot, 'tier': status, 'state': best_ore['state'], 'score': f"{best_ore['score']:.4f}"})
+                # A block must beat 0.80 AND outscore background by 0.06 delta
+                if best_block['score'] > 0.80 and (best_block['score'] - best_bg_score > 0.06):
+                    status = best_block['tier']
+                    color = (0, 255, 0) if best_block['state'] == 'act' else (0, 165, 255)
+                    global_report.append({'run': run_id, 'floor': floor, 'slot': slot, 'tier': status, 'state': best_block['state'], 'score': f"{best_block['score']:.4f}"})
                     
                     # HUD: Label at the bottom inside
                     cv2.rectangle(hud_img, (x1, y1), (x2, y2), color, 1)

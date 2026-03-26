@@ -34,6 +34,7 @@ def worker_simulate(payload):
         p.arch_level = state.get('arch_level', 1)
         p.current_max_floor = state.get('current_max_floor', 1)
         p.hades_idol_level = state.get('hades_idol_level', 0)
+        p.arch_ability_infernal_bonus = state.get('arch_ability_infernal_bonus', 0.0)
         
         # PROPERLY RE-APPLY UPGRADES USING SETTERS SO MATH TRIGGERS!
         for upg_id, lvl in state.get('upgrade_levels', {}).items():
@@ -64,15 +65,15 @@ def worker_simulate(payload):
     metrics = {
         "highest_floor": result.highest_floor,
         "xp_per_min": result.total_xp / runtime_mins,
-        "ores_per_min": result.ores_mined / runtime_mins
+        "blocks_per_min": result.blocks_mined / runtime_mins
     }
     
     for frag_tier, amt in result.total_frags.items():
         metrics[f"frag_{frag_tier}_per_min"] = amt / runtime_mins
         
-    if hasattr(result, 'specific_ores_mined'):
-        for ore_id, count in result.specific_ores_mined.items():
-            metrics[f"ore_{ore_id}_per_min"] = count / runtime_mins
+    if hasattr(result, 'specific_blocks_mined'):
+        for block_id, count in result.specific_blocks_mined.items():
+            metrics[f"block_{block_id}_per_min"] = count / runtime_mins
             
     return metrics
 
@@ -215,7 +216,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         p_profile.arch_level = base_state_dict.get('arch_level', 1)
         p_profile.current_max_floor = base_state_dict.get('current_max_floor', 1)
         p_profile.hades_idol_level = base_state_dict.get('hades_idol_level', 0)
-        
+        p_profile.arch_ability_infernal_bonus = base_state_dict.get('arch_ability_infernal_bonus', 0.0)
         for upg_id, lvl in base_state_dict.get('upgrade_levels', {}).items():
             p_profile.set_upgrade_level(upg_id, lvl)
         for ext_id, lvl in base_state_dict.get('external_levels', {}).items():

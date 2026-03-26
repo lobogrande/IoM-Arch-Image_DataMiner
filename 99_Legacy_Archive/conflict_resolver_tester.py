@@ -12,7 +12,7 @@ STEP_X, STEP_Y = 59.1, 59.1
 
 def run_conflict_resolver():
     # 1. Load Templates
-    templates = {'ore': {}, 'bg': []}
+    templates = {'block': {}, 'bg': []}
     t_path = "templates"
     for f in os.listdir(t_path):
         img = cv2.imread(os.path.join(t_path, f), 0)
@@ -23,8 +23,8 @@ def run_conflict_resolver():
         else:
             parts = f.split("_")
             tier, state = parts[0], parts[1]
-            if tier not in templates['ore']: templates['ore'][tier] = {'act': [], 'sha': []}
-            templates['ore'][tier][state].append(img)
+            if tier not in templates['block']: templates['block'][tier] = {'act': [], 'sha': []}
+            templates['block'][tier][state].append(img)
 
     # 2. Load Image
     run_path = os.path.join(UNIFIED_ROOT, f"Run_{TARGET_RUN}")
@@ -44,21 +44,21 @@ def run_conflict_resolver():
         # Calculate Best BG
         best_bg = max([cv2.matchTemplate(roi, t, cv2.TM_CCOEFF_NORMED).max() for t in templates['bg']])
         
-        # Calculate Best Ore
-        best_ore_score = 0
-        best_ore_name = "None"
-        for tier, states in templates['ore'].items():
+        # Calculate Best Block
+        best_block_score = 0
+        best_block_name = "None"
+        for tier, states in templates['block'].items():
             for state, imgs in states.items():
                 for t_img in imgs:
                     score = cv2.matchTemplate(roi, t_img, cv2.TM_CCOEFF_NORMED).max()
                     if state == 'sha': score *= 1.03 # The Shadow Boost
-                    if score > best_ore_score:
-                        best_ore_score = score
-                        best_ore_name = tier
+                    if score > best_block_score:
+                        best_block_score = score
+                        best_block_name = tier
 
         # Draw Comparison
-        color = (0, 255, 0) if best_ore_score > 0.77 and (best_ore_score > best_bg) else (255, 0, 0)
-        label1 = f"O:{best_ore_name[:4]} {best_ore_score:.2f}"
+        color = (0, 255, 0) if best_block_score > 0.77 and (best_block_score > best_bg) else (255, 0, 0)
+        label1 = f"O:{best_block_name[:4]} {best_block_score:.2f}"
         label2 = f"B:{best_bg:.2f}"
         
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 1)

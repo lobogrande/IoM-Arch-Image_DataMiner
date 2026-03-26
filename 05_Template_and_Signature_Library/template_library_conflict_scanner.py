@@ -19,13 +19,13 @@ def run_library_conflict_scan():
     mask = np.zeros((48, 48), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
 
-    # 1. Load ALL Ore Templates
-    ore_templates = []
+    # 1. Load ALL Block Templates
+    block_templates = []
     for f in os.listdir(cfg.TEMPLATE_DIR):
         if f.startswith("background"): continue
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is not None:
-            ore_templates.append({'name': f, 'img': cv2.resize(img, (48, 48))})
+            block_templates.append({'name': f, 'img': cv2.resize(img, (48, 48))})
 
     run_path = os.path.join(UNIFIED_ROOT, f"Run_{TARGET_RUN}")
     
@@ -48,7 +48,7 @@ def run_library_conflict_scan():
             roi = gray[cy-24:cy+24, cx-24:cx+24]
             
             # If this slot is actually empty in reality, any high match here is a 'Ghost'
-            for t in ore_templates:
+            for t in block_templates:
                 res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
                 

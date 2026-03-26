@@ -47,12 +47,12 @@ def get_slot_status_worker(args):
     roi_gray, roi_bgr, mask, templates, is_row1 = args
     bg_s = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
     if is_xhair_present(roi_bgr): return "1"
-    ore_s = 0.0
+    block_s = 0.0
     for t_list in templates['active']:
         s = cv2.matchTemplate(roi_gray, t_list[0], cv2.TM_CCORR_NORMED, mask=mask).max()
         if s < 0.85: s = max(s, cv2.matchTemplate(roi_gray, t_list[1], cv2.TM_CCORR_NORMED, mask=mask).max())
-        if s > ore_s: ore_s = s
-    delta = ore_s - bg_s
+        if s > block_s: block_s = s
+    delta = block_s - bg_s
     # Using v5.27 stabilized thresholds
     is_dirty = (delta > 0.085 if is_row1 else delta > 0.06) or (bg_s < 0.85)
     return "1" if is_dirty else "0"
@@ -67,7 +67,7 @@ def run_transition_signature_audit():
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
     # 1. LOAD ALL TEMPLATES WITH STRICT FILTER
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     for f in os.listdir(cfg.TEMPLATE_DIR):
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is None: continue
@@ -76,16 +76,16 @@ def run_transition_signature_audit():
             raw_tpls['bg'].append(img)
             continue
         
-        # STRICT FILTER: Skip if not a known ore tier
+        # STRICT FILTER: Skip if not a known block tier
         if not any(f.startswith(tier) for tier in KNOWN_TIERS): continue
         if "_" not in f: continue
 
         parts = f.replace(".png", "").split("_")
         tier, state = parts[0], parts[1]
-        if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = {'act': [], 'sha': []}
+        if tier not in raw_tpls['block']: raw_tpls['block'][tier] = {'act': [], 'sha': []}
         if state in ['act', 'sha']:
             m5 = cv2.getRotationMatrix2D((24, 24), 5, 1.0)
-            raw_tpls['ore'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
+            raw_tpls['block'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
 
     executor = ThreadPoolExecutor(max_workers=24)
     std_mask, text_mask = get_combined_mask(False), get_combined_mask(True)
@@ -102,8 +102,8 @@ def run_transition_signature_audit():
             
         active_list = []
         for tier in allowed:
-            if tier in raw_tpls['ore']:
-                for state in ['act', 'sha']: active_list.extend(raw_tpls['ore'][tier][state])
+            if tier in raw_tpls['block']:
+                for state in ['act', 'sha']: active_list.extend(raw_tpls['block'][tier][state])
         
         runtime_tpls = {'active': active_list, 'bg': raw_tpls['bg']}
         tasks = []

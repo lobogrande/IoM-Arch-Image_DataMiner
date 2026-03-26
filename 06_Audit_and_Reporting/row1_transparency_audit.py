@@ -9,9 +9,9 @@ import os
 # --- TARGET FRAMES (Ground Truth Provided by User) ---
 # We are testing if the script can "see" these signatures through the text
 TARGET_FRAMES = {
-    43: "001000", # F2 Start (Ore in Slot 2, player in Slot 1)
-    53: "000010", # F3 Start (Ore in Slot 4, player in Slot 3)
-    63: "101010", # F4 Start (Ores in 0, 2, 4)
+    43: "001000", # F2 Start (Block in Slot 2, player in Slot 1)
+    53: "000010", # F3 Start (Block in Slot 4, player in Slot 3)
+    63: "101010", # F4 Start (Blocks in 0, 2, 4)
     82: "101010", # F5 Start
     92: "100010"  # F6 Start
 }
@@ -44,15 +44,15 @@ def get_slot_status_debug(roi_gray, mask, templates, delta_thresh):
     bg_matches = [cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']]
     bg_s = max(bg_matches) if bg_matches else 0
     
-    # Ore match
-    ore_s = 0.0
+    # Block match
+    block_s = 0.0
     for t_img in templates['active']:
         # Ensure template matches mask size (48x48)
         s = cv2.matchTemplate(roi_gray, t_img, cv2.TM_CCORR_NORMED, mask=mask).max()
-        if s > ore_s: ore_s = s
+        if s > block_s: block_s = s
 
-    delta = ore_s - bg_s
-    # If the ore is significantly stronger than background, or background is very weak
+    delta = block_s - bg_s
+    # If the block is significantly stronger than background, or background is very weak
     return "1" if (delta > delta_thresh or bg_s < 0.80) else "0"
 
 # --- FORENSIC ENGINE ---
@@ -65,7 +65,7 @@ def run_row1_transparency_audit():
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
     # 1. LOAD TEMPLATES (With Mac-file protection)
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     if not os.path.exists(cfg.TEMPLATE_DIR):
         print("Error: 'templates' folder not found.")
         return
@@ -82,8 +82,8 @@ def run_row1_transparency_audit():
         elif "_" in f:
             tier = f.split("_")[0]
             if tier in KNOWN_TIERS or any(tier.startswith(t) for t in KNOWN_TIERS):
-                if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = []
-                raw_tpls['ore'][tier].append(img)
+                if tier not in raw_tpls['block']: raw_tpls['block'][tier] = []
+                raw_tpls['block'][tier].append(img)
 
     print(f"--- Row-1 Transparency Audit (Text-Overlap Focus) ---")
     print(f"{'Idx':<6} | {'Truth':<10} | {'D=0.04':<10} | {'D=0.06':<10} | {'D=0.08'}")
@@ -98,8 +98,8 @@ def run_row1_transparency_audit():
         # Build templates for Floor 1-6 range
         active_list = []
         for tier in ['dirt1', 'com1', 'rare1']:
-            if tier in raw_tpls['ore']:
-                active_list.extend(raw_tpls['ore'][tier])
+            if tier in raw_tpls['block']:
+                active_list.extend(raw_tpls['block'][tier])
         
         runtime_tpls = {'active': active_list, 'bg': raw_tpls['bg']}
 

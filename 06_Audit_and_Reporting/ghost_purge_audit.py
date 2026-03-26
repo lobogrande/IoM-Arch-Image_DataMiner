@@ -29,12 +29,12 @@ def run_v41_audit():
     bg_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("background")]
     player_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("negative_player")]
     ui_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("negative_ui")]
-    all_ore_t = []
+    all_block_t = []
     for f in os.listdir(cfg.TEMPLATE_DIR):
         if any(x in f for x in ["background", "negative"]): continue
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is not None:
-            all_ore_t.append({'name': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
+            all_block_t.append({'name': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
 
     with open(os.path.join(UNIFIED_ROOT, "final_sequence.json"), 'r') as f:
         full_sequence = json.load(f)
@@ -49,7 +49,7 @@ def run_v41_audit():
         gray = cv2.cvtColor(raw_img, cv2.COLOR_BGR2GRAY)
         
         is_boss = f_num in cfg.BOSS_DATA
-        valid_templates = [t for t in all_ore_t if cfg.ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[0] <= f_num <= cfg.ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[1]]
+        valid_templates = [t for t in all_block_t if cfg.ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[0] <= f_num <= cfg.ORE_RESTRICTIONS.get(t['name'].lower(), (0,999))[1]]
 
         for slot in range(24):
             row, col = divmod(slot, 6)
@@ -89,7 +89,7 @@ def run_v41_audit():
                 bottom_bg_diff = min([np.sum(cv2.absdiff(bottom_roi, bg[24:48, :])) / (1152) for bg in bg_t])
                 
                 # REJECT IF:
-                # - UI match strictly beats Ore match
+                # - UI match strictly beats Block match
                 # - Bottom half is TOO similar to background (Rescued threshold: 3.5)
                 # - Peak white exists without elite confidence (>0.90)
                 if (best_u > best_o) or (bottom_bg_diff < 3.5) or (np.max(roi[5:15, :]) > 242 and best_o < 0.90):

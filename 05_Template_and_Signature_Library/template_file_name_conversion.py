@@ -72,14 +72,14 @@ def run_template_architect():
                 print(" Deleted.")
                 continue
 
-            # Step 2: Ore Type
+            # Step 2: Block Type
             print(" Type: [1]dirt [2]com [3]rare [4]epic [5]leg [6]myth [7]div")
             otype_key = ""
             while otype_key not in ORE_TYPES:
                 otype_key = chr(cv2.waitKey(0) & 0xFF)
             otype = ORE_TYPES[otype_key]
 
-            # Step 3: Ore Tier
+            # Step 3: Block Tier
             print(" Tier: [1] [2] [3] [4]")
             otier = ""
             while otier not in ['1', '2', '3', '4']:

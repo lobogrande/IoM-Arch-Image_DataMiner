@@ -127,9 +127,9 @@ def run_v31_44_audit():
                 census_ptr = min(curr_ptr + 6, idx_end)
                 census_img = cv2.imread(os.path.join(BUFFER_DIR, frames[census_ptr]))
                 
-                ores, hud_img = run_census_and_draw_hud(census_img, actual_f, cfg.BOSS_DATA, templates)
+                blocks, hud_img = run_census_and_draw_hud(census_img, actual_f, cfg.BOSS_DATA, templates)
                 
-                for slot, data in ores.items():
+                for slot, data in blocks.items():
                     writer.writerow([frames[census_ptr], actual_f, slot, data['tier'], data['score'], "v31.44_Surgical"])
                 
                 cv2.rectangle(hud_img, (DIG_SITE_ROI[1], DIG_SITE_ROI[0]), (DIG_SITE_ROI[1]+DIG_SITE_ROI[3], DIG_SITE_ROI[0]+DIG_SITE_ROI[2]), (255, 0, 255), 1)

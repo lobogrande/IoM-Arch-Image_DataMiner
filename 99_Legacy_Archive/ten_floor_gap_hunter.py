@@ -25,13 +25,13 @@ def get_grid_dna_v17_4(img_gray):
         dna += "1" if np.mean(roi) > 60 else "0"
     return dna
 
-def get_ore_id_v17_4(img_gray, slot_idx, current_floor, templates):
+def get_block_id_v17_4(img_gray, slot_idx, current_floor, templates):
     cx = int(SLOT1_CENTER[0] + (slot_idx * STEP_X))
     cy = SLOT1_CENTER[1]
     roi = img_gray[cy-24:cy+24, cx-24:cx+24]
     allowed = [p for p, (m, x) in ORE_RESTRICTIONS.items() if m <= current_floor <= x]
     best = {'tier': 'empty', 'score': 0.0}
-    for tier, types in templates['ore'].items():
+    for tier, types in templates['block'].items():
         if tier not in allowed: continue
         for state in ['act', 'sha']:
             for t_img in types[state]:
@@ -46,14 +46,14 @@ def run_v17_4_hierarchical():
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
 
     player_t = cv2.imread("templates/player_right.png", 0)
-    ore_tpls = {'ore': {}}
+    block_tpls = {'block': {}}
     for f in os.listdir("templates"):
         if "_" in f and f.endswith(".png") and not f.startswith("background"):
             img = cv2.imread(os.path.join("templates", f), 0)
             if img is not None:
                 tier, state = f.split("_")[0], f.split("_")[1].replace(".png","")
-                if tier not in ore_tpls['ore']: ore_tpls['ore'][tier] = {'act': [], 'sha': []}
-                if state in ['act', 'sha']: ore_tpls['ore'][tier][state].append(cv2.resize(img, (48, 48)))
+                if tier not in block_tpls['block']: block_tpls['block'][tier] = {'act': [], 'sha': []}
+                if state in ['act', 'sha']: block_tpls['block'][tier][state].append(cv2.resize(img, (48, 48)))
 
     files = sorted([f for f in os.listdir(buffer_root) if f.lower().endswith(('.png', '.jpg'))])
     
@@ -64,7 +64,7 @@ def run_v17_4_hierarchical():
     anchor = {
         "num": 1, "idx": 0, "pos": max_loc_init, "img": cv2.imread(os.path.join(buffer_root, files[0])),
         "hud": f1_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]],
-        "ore": get_ore_id_v17_4(f1_gray, 0, 1, ore_tpls),
+        "ore": get_block_id_v17_4(f1_gray, 0, 1, block_tpls),
         "dna": get_grid_dna_v17_4(f1_gray)
     }
     confirmed = []
@@ -102,7 +102,7 @@ def run_v17_4_hierarchical():
             # Commit Anchor
             f_num = anchor['num']
             cv2.imwrite(f"{out_dir}/confirmed/F{f_num:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
-            confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['ore']})
+            confirmed.append({"floor": f_num, "idx": anchor['idx'], "ore": anchor['block']})
             
             # Determine reason for print
             reason = "HUD" if mae > 3.5 else "STEALTH"
@@ -114,13 +114,13 @@ def run_v17_4_hierarchical():
                 "num": target_f, "idx": i, "pos": max_loc, 
                 "img": cv2.imread(os.path.join(buffer_root, files[i])), 
                 "hud": cur_hud.copy(), 
-                "ore": get_ore_id_v17_4(img_gray, slot, target_f, ore_tpls),
+                "ore": get_block_id_v17_4(img_gray, slot, target_f, block_tpls),
                 "dna": cur_dna
             }
 
     # Final Commit
     cv2.imwrite(f"{out_dir}/confirmed/F{anchor['num']:03}_Idx{anchor['idx']:05}.jpg", anchor['img'])
-    confirmed.append({"floor": anchor['num'], "idx": anchor['idx'], "ore": anchor['ore']})
+    confirmed.append({"floor": anchor['num'], "idx": anchor['idx'], "ore": anchor['block']})
     print(f"\n[FINISH] Verified {len(confirmed)} floors.")
 
 if __name__ == "__main__":

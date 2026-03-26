@@ -19,7 +19,7 @@ ROOT_DIR = os.path.abspath(os.path.join(SIM_DIR, '..'))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
-from core.ore import Ore
+from core.block import Block
 
 
 class Floor:
@@ -73,17 +73,17 @@ class FloorGenerator:
             (1,[3, 7, 9, 10, 14, 20, 21])
         ]
 
-    def _create_ore_with_mods(self, ore_id, floor_id, player):
-        """Helper to instantiate an Ore and roll its specific UI modifiers."""
-        ore = Ore(ore_id, floor_id, player)
-        ore.modifiers = {
+    def _create_block_with_mods(self, block_id, floor_id, player):
+        """Helper to instantiate a Block and roll its specific UI modifiers."""
+        block = Block(block_id, floor_id, player)
+        block.modifiers = {
             'exp_multi': player.exp_mod_gain if (random.random() < player.exp_mod_chance) else 1.0,
             'loot_multi': player.loot_mod_gain if (random.random() < player.loot_mod_chance) else 1.0,
             'stamina_gain': player.stamina_mod_gain if (random.random() < player.stamina_mod_chance) else 0.0,
             'speed_active': random.random() < player.speed_mod_chance,
             'speed_gain': player.speed_mod_gain
         }
-        return ore
+        return block
 
     def generate_floor(self, floor_id, player):
         """Builds a 24-slot floor natively matching the C# spawn arrays."""
@@ -96,7 +96,7 @@ class FloorGenerator:
         # --- 2a. EXPLICIT OVERRIDES (Floors 98 and 99) ---
         if floor_id == 98:
             for idx in range(24):
-                grid[idx] = self._create_ore_with_mods('myth3', floor_id, player)
+                grid[idx] = self._create_block_with_mods('myth3', floor_id, player)
             return Floor(floor_id, grid, is_gleaming, gleaming_multi)
             
         if floor_id == 99:
@@ -107,17 +107,17 @@ class FloorGenerator:
                 pattern =['com3', 'rare3', 'epic3', 'leg3', 'myth3', 'div2']
                 
             for idx in range(24):
-                ore_id = pattern[idx % 6] # % 6 causes it to cleanly loop back to 0!
-                grid[idx] = self._create_ore_with_mods(ore_id, floor_id, player)
+                block_id = pattern[idx % 6] # % 6 causes it to cleanly loop back to 0!
+                grid[idx] = self._create_block_with_mods(block_id, floor_id, player)
             return Floor(floor_id, grid, is_gleaming, gleaming_multi)
 
         # --- 2b. ASCENSION 2 BOSS FLOORS ---
         if player.asc2_unlocked and floor_id in self.BOSS_FLOORS:
             rarity, tier = self.BOSS_FLOORS[floor_id]
-            ore_id = f"{self.RARITY_PREFIX[rarity]}{tier}" 
+            block_id = f"{self.RARITY_PREFIX[rarity]}{tier}" 
             
             for idx in range(24):
-                grid[idx] = self._create_ore_with_mods(ore_id, floor_id, player)
+                grid[idx] = self._create_block_with_mods(block_id, floor_id, player)
             return Floor(floor_id, grid, is_gleaming, gleaming_multi)
 
         # 3. Find the correct Spawn Probability Bracket
@@ -150,9 +150,9 @@ class FloorGenerator:
                     if tier == 4 and not player.asc2_unlocked:
                         tier = 3
                     
-                    ore_id = f"{self.RARITY_PREFIX[rarity]}{tier}"
-                    grid[idx] = self._create_ore_with_mods(ore_id, floor_id, player)
-                    break # Stop rolling for this slot, we found our ore!
+                    block_id = f"{self.RARITY_PREFIX[rarity]}{tier}"
+                    grid[idx] = self._create_block_with_mods(block_id, floor_id, player)
+                    break # Stop rolling for this slot, we found our block!
 
         return Floor(floor_id, grid, is_gleaming, gleaming_multi)
 
@@ -178,7 +178,7 @@ if __name__ == "__main__":
     empty_count = 0
     for i, slot in enumerate(floor.grid):
         if slot is not None:
-            print(f"Slot {i}: {slot.ore_id}")
+            print(f"Slot {i}: {slot.block_id}")
         else:
             empty_count += 1
             

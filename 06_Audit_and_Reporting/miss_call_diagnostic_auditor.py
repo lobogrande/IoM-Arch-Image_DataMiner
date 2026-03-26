@@ -38,7 +38,7 @@ def run_v19_2_robust_diagnostic(target_idx):
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     # 2. Robust Template Loading
-    ore_tpls = {}
+    block_tpls = {}
     valid_states = ['act', 'sha'] # The only drawers we have
     
     if not os.path.exists(cfg.TEMPLATE_DIR):
@@ -58,9 +58,9 @@ def run_v19_2_robust_diagnostic(target_idx):
                 raw_tpl = cv2.imread(tpl_path, 0)
                 if raw_tpl is not None:
                     tpl = cv2.resize(raw_tpl, (48, 48))
-                    if tier not in ore_tpls:
-                        ore_tpls[tier] = {'act': [], 'sha': []}
-                    ore_tpls[tier][state].append(tpl)
+                    if tier not in block_tpls:
+                        block_tpls[tier] = {'act': [], 'sha': []}
+                    block_tpls[tier][state].append(tpl)
             else:
                 # Skip things like ui_icon.png or progress_bar.png
                 continue
@@ -83,7 +83,7 @@ def run_v19_2_robust_diagnostic(target_idx):
         print(f"\n[Slot {slot_idx}] Match Scores:")
         
         results = []
-        for tier, states in ore_tpls.items():
+        for tier, states in block_tpls.items():
             for s_key in valid_states:
                 for tpl in states[s_key]:
                     res = cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED)

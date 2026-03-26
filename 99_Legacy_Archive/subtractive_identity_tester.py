@@ -55,7 +55,7 @@ def run_subtractive_tester():
 
     cv2.imwrite(f"Subtractive_Test_F{TARGET_FLOOR}.jpg", raw_img)
     print(f"Saved Subtractive_Test_F{TARGET_FLOOR}.jpg")
-    print("Check if 'D' scores effectively separate ores from floor noise.")
+    print("Check if 'D' scores effectively separate blocks from floor noise.")
 
 if __name__ == "__main__":
     run_subtractive_tester()

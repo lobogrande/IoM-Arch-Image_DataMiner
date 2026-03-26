@@ -77,10 +77,10 @@ def auditor_run(templates):
             img = cv2.imread(os.path.join(BUFFER_DIR, job['frame']))
             if img is None: job_queue.task_done(); continue
             
-            ores, hud = process_ores(img, job['floor'], templates)
+            blocks, hud = process_blocks(img, job['floor'], templates)
             
             with csv_lock: # Atomic write to CSV
-                for s, d in ores.items():
+                for s, d in blocks.items():
                     writer.writerow([job['frame'], job['floor'], s, d])
             
             cv2.imwrite(f"{RECOVERY_DIR}/F{job['floor']}_Audit.jpg", hud)
@@ -110,7 +110,7 @@ def get_bitwise_floor(gray_h, digit_map):
                 unique.append(matches[i]['val'])
     return int("".join(map(str, unique))) if unique else -1
 
-def process_ores(img, floor, templates):
+def process_blocks(img, floor, templates):
     # Standard identification engine
     res = {}; gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     for i in range(24):

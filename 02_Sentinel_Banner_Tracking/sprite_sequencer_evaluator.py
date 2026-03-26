@@ -87,7 +87,7 @@ def run_evaluation():
     weak_events = events[events['duration'] < MIN_STABLE_DURATION]
     print(f"      - Found {len(weak_events)} weak detections (possible false positives).")
 
-    # Check for "Detection Gaps" (possible missed ores)
+    # Check for "Detection Gaps" (possible missed blocks)
     events['gap'] = events['start'] - events['end'].shift(1)
     large_gaps = events[events['gap'] > MAX_EXPECTED_GAP]
     

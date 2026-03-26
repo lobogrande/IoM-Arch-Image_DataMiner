@@ -52,7 +52,7 @@ def run_grid_probe():
     if img is None: return
 
     print("\n--- INITIATING GRID CALIBRATION ---")
-    print("Click the EXACT CENTER of these 4 ores in order:")
+    print("Click the EXACT CENTER of these 4 blocks in order:")
     print("1. Slot 1 (Top-Left corner)")
     print("2. Slot 6 (Top-Right corner)")
     print("3. Slot 19 (Bottom-Left corner)")

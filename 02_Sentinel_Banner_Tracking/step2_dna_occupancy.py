@@ -13,7 +13,7 @@ RUN_ID = os.path.basename(SOURCE_DIR).split('_')[-1]
 INPUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"sprite_homing_run_{RUN_ID}.csv")
 OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"dna_sensor_run_{RUN_ID}.csv")
 
-# --- VALIDATED GRID CONSTANTS (Ore Centers) ---
+# --- VALIDATED GRID CONSTANTS (Block Centers) ---
 ORE0_X, ORE0_Y = 74, 261
 STEP = 59.0
 

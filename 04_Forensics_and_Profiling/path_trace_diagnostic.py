@@ -23,13 +23,13 @@ def run_v24_path_trace(target_idx):
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     # 2. Load Templates
-    ore_tpls = {'ore': {}}
+    block_tpls = {'block': {}}
     for f in os.listdir(cfg.TEMPLATE_DIR):
         if "_" in f and f.endswith(".png") and not f.startswith("background"):
             tier, state = f.split("_")[0], f.split("_")[1].replace(".png","")
             img = cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48))
-            if tier not in ore_tpls['ore']: ore_tpls['ore'][tier] = {'act': [], 'sha': []}
-            if state in ['act', 'sha']: ore_tpls['ore'][tier][state].append(img)
+            if tier not in block_tpls['block']: block_tpls['block'][tier] = {'act': [], 'sha': []}
+            if state in ['act', 'sha']: block_tpls['block'][tier][state].append(img)
 
     print(f"--- Diagnosing Path Audit for Index {target_idx} ({target_file}) ---")
 
@@ -53,8 +53,8 @@ def run_v24_path_trace(target_idx):
         roi_sliver = img_gray[cy-24:cy+24, cx-24:cx-12] # Left 12px
         
         best_sha = 0
-        for tier in ore_tpls['ore']:
-            for t_img in ore_tpls['ore'][tier]['sha']:
+        for tier in block_tpls['block']:
+            for t_img in block_tpls['block'][tier]['sha']:
                 score = cv2.matchTemplate(roi_sliver, t_img[:, :12], cv2.TM_CCOEFF_NORMED).max()
                 best_sha = max(best_sha, score)
         
@@ -70,15 +70,15 @@ def run_v24_path_trace(target_idx):
             cx, cy = int(SLOT1_CENTER[0] + (s_idx * STEP_X)), SLOT1_CENTER[1]
             roi_full = img_gray[cy-24:cy+24, cx-24:cx+24]
             
-            best_ore = 0
-            for tier in ore_tpls['ore']:
+            best_block = 0
+            for tier in block_tpls['block']:
                 for state in ['act', 'sha']:
-                    for t_img in ore_tpls['ore'][tier][state]:
+                    for t_img in block_tpls['block'][tier][state]:
                         score = cv2.matchTemplate(roi_full, t_img, cv2.TM_CCOEFF_NORMED).max()
-                        best_ore = max(best_ore, score)
+                        best_block = max(best_block, score)
 
-            status = "DIRTY" if best_ore > 0.77 else "CLEAN"
-            print(f"  [Slot {s_idx} Full] Best Ore/Sha Match: {best_ore:.4f} -> Result: {status}")
+            status = "DIRTY" if best_block > 0.77 else "CLEAN"
+            print(f"  [Slot {s_idx} Full] Best Block/Sha Match: {best_block:.4f} -> Result: {status}")
             cv2.imwrite(f"{out_dir}/Idx{target_idx}_Slot{s_idx}_FullTile.png", roi_full)
 
     print("\n[FINISH] Diagnostic images saved to 'diagnostic_v24/'")

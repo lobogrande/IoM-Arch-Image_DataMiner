@@ -16,8 +16,8 @@ RUN_ID = os.path.basename(SOURCE_DIR).split('_')[-1]
 BOUNDARIES_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"final_floor_boundaries_run_{RUN_ID}.csv")
 DNA_INVENTORY_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_dna_inventory_run_{RUN_ID}.csv")
 HOMING_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"sprite_homing_run_{RUN_ID}.csv")
-OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_ore_inventory_run_{RUN_ID}.csv")
-VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], f"ore_identification_proofs_run_{RUN_ID}")
+OUT_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_block_inventory_run_{RUN_ID}.csv")
+VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], f"block_identification_proofs_run_{RUN_ID}")
 
 # --- 1. VALIDATED PIXEL CONSTANTS ---
 ORE0_X, ORE0_Y = 74, 261 

@@ -1,5 +1,5 @@
 # ==============================================================================
-# Script: ore_simulator_mockup.py
+# Script: block_simulator_mockup.py
 # Version: 2.1.3
 # Description: Simulates floor generation using Gaussian stats and executes a 
 #              serpentine pathing run-through. Features a fully-mapped Player 
@@ -189,11 +189,11 @@ class Player:
         for ot in['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']:
             for tier in range(1, 5): self.cards[f"{ot}{tier}"] = 0
 
-    def set_card_level(self, ore_id, lvl): self.cards[ore_id] = lvl
+    def set_card_level(self, block_id, lvl): self.cards[block_id] = lvl
 
-    def get_card_bonuses(self, ore_id):
-        if ore_id.endswith('4') and not self.asc2_unlocked: return 1.0, 1.0, 1.0
-        lvl = self.cards.get(ore_id, 0)
+    def get_card_bonuses(self, block_id):
+        if block_id.endswith('4') and not self.asc2_unlocked: return 1.0, 1.0, 1.0
+        lvl = self.cards.get(block_id, 0)
         hp_mult, exp_mult, loot_mult = 1.0, 1.0, 1.0
         if lvl == 1: hp_mult, exp_mult, loot_mult = 0.90, 1.10, 1.10
         elif lvl == 2: hp_mult, exp_mult, loot_mult = 0.80, 1.20, 1.20
@@ -211,9 +211,9 @@ class Player:
         # Replicate Excel CEILING precision
         return math.ceil((arch_bonus * (1.0 + hades_bonus) * 10000) - 1e-9) / 10000.0
 
-    def inf(self, ore_id):
-        if ore_id.endswith('4') and not self.asc2_unlocked: return 0.0
-        if self.cards.get(ore_id, 0) == 4:
+    def inf(self, block_id):
+        if block_id.endswith('4') and not self.asc2_unlocked: return 0.0
+        if self.cards.get(block_id, 0) == 4:
             inf_mult = self.infernal_multiplier
             bases = {
                 'dirt1': (0.1, 4), 'dirt2': (0.12, 4), 'dirt3': (0.08, 4), 'com1': (0.06, 4), 'com2': (0.07, 4), 'com3': (0.08, 4),
@@ -221,8 +221,8 @@ class Player:
                 'leg1': (0.04, 4), 'leg2': (0.05, 4), 'leg3': (40.0, 0), 'myth1': (0.013, 4), 'myth2': (0.008, 4), 'myth3': (0.007, 4),
                 'div1': (0.1, 4), 'div2': (0.0125, 4), 'div3': (1.126, 0)
             }
-            if ore_id in bases:
-                return self._excel_round(bases[ore_id][0] * inf_mult, bases[ore_id][1])
+            if block_id in bases:
+                return self._excel_round(bases[block_id][0] * inf_mult, bases[block_id][1])
         return 0.0
 
     # ==========================================================================
@@ -396,7 +396,7 @@ class Player:
         for stat, val in data.get('base_stats', {}).items(): self.base_stats[stat] = val
         for row, lvl in data.get('internal_upgrades', {}).items(): self.set_upgrade_level(int(row), lvl)
         for row, lvl in data.get('external_upgrades', {}).items(): self.set_external_level(int(row), lvl)
-        for ore_id, lvl in data.get('cards', {}).items(): self.set_card_level(ore_id, lvl)
+        for block_id, lvl in data.get('cards', {}).items(): self.set_card_level(block_id, lvl)
 
     def print_character_sheet(self):
         print("\n" + "="*50)

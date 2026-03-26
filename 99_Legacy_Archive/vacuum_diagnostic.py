@@ -22,7 +22,7 @@ def get_combined_mask(is_text_heavy_slot=False):
     return mask
 
 def load_all_templates():
-    templates = {'ore': {}, 'bg': []}
+    templates = {'block': {}, 'bg': []}
     t_path = "templates"
     for f in os.listdir(t_path):
         img = cv2.imread(os.path.join(t_path, f), 0)
@@ -33,10 +33,10 @@ def load_all_templates():
             parts = f.split("_")
             if len(parts) < 2: continue
             tier, state = parts[0], parts[1].replace(".png", "")
-            if tier not in templates['ore']: templates['ore'][tier] = {'act': [], 'sha': []}
+            if tier not in templates['block']: templates['block'][tier] = {'act': [], 'sha': []}
             if state in ['act', 'sha']:
                 m5 = cv2.getRotationMatrix2D((24, 24), 5, 1.0)
-                templates['ore'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
+                templates['block'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
     return templates
 
 def is_player_present(full_gray, p_right, p_left):
@@ -62,26 +62,26 @@ def get_slot_status(roi_gray, full_img_bgr, rect, mask, templates, prev_bit="0",
     bg_s = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
     
     if is_row1:
-        ore_s = 0.0
-        for tier in templates['ore']:
+        block_s = 0.0
+        for tier in templates['block']:
             for state in ['act', 'sha']:
-                for rots in templates['ore'][tier][state]:
+                for rots in templates['block'][tier][state]:
                     s = cv2.matchTemplate(roi_gray, rots[0], cv2.TM_CCORR_NORMED, mask=mask).max()
-                    if s > ore_s: ore_s = s
+                    if s > block_s: block_s = s
         return "1" if (ore_s - bg_s > 0.065 or bg_s < 0.82) else "0"
 
     x1, y1, x2, y2 = rect
     if is_crosshair_present(full_img_bgr[y1:y2, x1:x2]): return "1"
 
-    ore_s = 0.0
-    for tier in templates['ore']:
+    block_s = 0.0
+    for tier in templates['block']:
         for state in ['act', 'sha']:
-            for rots in templates['ore'][tier][state]:
+            for rots in templates['block'][tier][state]:
                 s = max(cv2.matchTemplate(roi_gray, rots[0], cv2.TM_CCORR_NORMED, mask=mask).max(),
                         cv2.matchTemplate(roi_gray, rots[1], cv2.TM_CCORR_NORMED, mask=mask).max())
-                if s > ore_s: ore_s = s
+                if s > block_s: block_s = s
 
-    delta = ore_s - bg_s
+    delta = block_s - bg_s
     if prev_bit == "0":
         return "1" if (delta > 0.04) else "0"
     else:

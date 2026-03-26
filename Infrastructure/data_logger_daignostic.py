@@ -19,7 +19,7 @@ DIV_FOLDER = "divine_kills"
 AUDIT_FOLDER = "floor_audits"
 
 # Thresholds - Precision Tuned for Haste Speed and Blur
-ORE_THRESH = 0.65  # Lowered to identify moving ores
+ORE_THRESH = 0.65  # Lowered to identify moving blocks
 SHA_THRESH = 0.75  # Lowered to catch shadows during splash flashes
 DIGIT_MATCH_MIN = 0.72 
 X_OVERLAP_LIMIT = 4     
@@ -50,7 +50,7 @@ def load_digit_templates():
                 digits.append((int(f[0]), bin_t))
     return digits
 
-def load_ore_templates():
+def load_block_templates():
     templates = {'act': {}, 'sha': {}}
     if not os.path.exists(cfg.TEMPLATE_DIR): return templates
     for f in os.listdir(cfg.TEMPLATE_DIR):
@@ -66,7 +66,7 @@ def load_ore_templates():
     return templates
 
 digit_temps = load_digit_templates()
-ore_templates = load_ore_templates()
+ore_templates = load_block_templates()
 
 class SlotTracker:
     def __init__(self, i):
@@ -117,8 +117,8 @@ def perform_census(game_gray, floor):
         lx, ly = cx - GAME_ROI['left'], cy - GAME_ROI['top']
         cell = game_gray[max(0, ly-30):ly+30, max(0, lx-30):lx+30]
         
-        found_sha = next((t for t, imgs in ore_templates['sha'].items() if np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > SHA_THRESH), None)
-        found_act = next((t for t, imgs in ore_templates['act'].items() if t in SPAWN_GATES and (SPAWN_GATES[t][0] <= floor <= SPAWN_GATES[t][1]) and np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > ORE_THRESH), None)
+        found_sha = next((t for t, imgs in block_templates['sha'].items() if np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > SHA_THRESH), None)
+        found_act = next((t for t, imgs in block_templates['act'].items() if t in SPAWN_GATES and (SPAWN_GATES[t][0] <= floor <= SPAWN_GATES[t][1]) and np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > ORE_THRESH), None)
         
         if found_sha or found_act:
             count += 1
@@ -171,7 +171,7 @@ with mss.mss() as sct:
                 lx, ly = cx - GAME_ROI['left'], cy - GAME_ROI['top']
                 cell = game_gray[max(0, ly-30):ly+30, max(0, lx-30):lx+30]
                 
-                found_sha = any(np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > SHA_THRESH for imgs in ore_templates['sha'].values())
+                found_sha = any(np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > SHA_THRESH for imgs in block_templates['sha'].values())
 
                 if found_sha:
                     if s.tier:
@@ -183,7 +183,7 @@ with mss.mss() as sct:
                     s.state = "SHADOW"; shadow_count += 1; session_shadows += 1
                 else:
                     if s.state != "ACTIVE":
-                        found_tier = next((t for t, imgs in ore_templates['act'].items() if t in SPAWN_GATES and (SPAWN_GATES[t][0] <= current_floor <= SPAWN_GATES[t][1]) and np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > ORE_THRESH), None)
+                        found_tier = next((t for t, imgs in block_templates['act'].items() if t in SPAWN_GATES and (SPAWN_GATES[t][0] <= current_floor <= SPAWN_GATES[t][1]) and np.max(cv2.matchTemplate(cell, imgs[0], cv2.TM_CCOEFF_NORMED)) > ORE_THRESH), None)
                         if found_tier: s.state = "ACTIVE"; s.tier = found_tier
                     if s.state == "ACTIVE": active_count += 1
 
@@ -219,7 +219,7 @@ with mss.mss() as sct:
 
 # --- SESSION REPORT ---
 print("\n\n" + "="*35 + "\n FINAL SESSION REPORT \n" + "="*35)
-print(f" Total Floors Processed:  {session_floors}\n Total Shadows Counted:   {session_shadows}\n Total Ores Identified:   {len(session_kills)}")
+print(f" Total Floors Processed:  {session_floors}\n Total Shadows Counted:   {session_shadows}\n Total Blocks Identified:   {len(session_kills)}")
 if session_shadows > 0:
     print(f" Session ID Accuracy:     {(len(session_kills)/session_shadows)*100:.1f}%")
 print("\n--- TIER DISTRIBUTION ---")

@@ -66,7 +66,7 @@ def run_auto_discovery():
             best_coords = [(p[0] + side//2, p[1] + int(img_gray.shape[0]*0.2) + side//2) for p in unique_pts]
 
     if not best_coords:
-        print("Discovery Failed: No recognizable ore clusters found.")
+        print("Discovery Failed: No recognizable block clusters found.")
         return
 
     best_coords.sort(key=lambda x: (x[1], x[0])) 
@@ -84,7 +84,7 @@ def run_auto_discovery():
     suggested_y = anchor[1]
 
     # --- GEOMETRIC BACK-CALCULATION ---
-    # If the first ore found isn't in Slot 0, walk it backward to the baseline
+    # If the first block found isn't in Slot 0, walk it backward to the baseline
     while suggested_y > (BASELINE_Y + (final_step * 0.8)):
         print(f"[!] Note: First detection at Y={int(suggested_y)}. Back-calculating to Row 1...")
         suggested_y -= final_step
@@ -120,7 +120,7 @@ def run_auto_discovery():
         print("Action: No code updates required. Proceed directly to Step 1.")
     else:
         print("[!] ALERT: Significant grid shift detected!")
-        print("Action 1: Review the visual check image to ensure purple boxes match ores.")
+        print("Action 1: Review the visual check image to ensure purple boxes match blocks.")
         print("Action 2: Update the ORE0_X, ORE0_Y, and STEP constants in project_config.py.")
     print("="*50)
 

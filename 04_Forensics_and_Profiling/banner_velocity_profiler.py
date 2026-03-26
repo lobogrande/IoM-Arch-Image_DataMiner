@@ -20,7 +20,7 @@ BANNER_TARGETS = [
     {"name": "event_3735_single", "start": 3735, "end": 3782, "is_double": False}
 ]
 
-# Search Window (Ore Grid to Stage ROI)
+# Search Window (Block Grid to Stage ROI)
 Y_MIN, Y_MAX = 40, 480 
 
 def get_banner_y(img_gray, is_double=False):
@@ -29,7 +29,7 @@ def get_banner_y(img_gray, is_double=False):
     Horizontal Projection Profiling (HPP).
     """
     # 1. Calculate row-wise mean intensity
-    # Banners are significantly darker than the ore grid background
+    # Banners are significantly darker than the block grid background
     hpp = np.mean(img_gray, axis=1)
     
     # 2. Isolate the search zone

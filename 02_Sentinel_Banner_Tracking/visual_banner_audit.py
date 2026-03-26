@@ -49,7 +49,7 @@ def run_visual_audit():
     print(f"Sampling started. Output folder: {OUT_BASE}")
 
     # --- CATEGORY 1: Sampling Discarded (Noise) ---
-    # We take 20 samples to check if they are indeed stationary HUD/Ores
+    # We take 20 samples to check if they are indeed stationary HUD/Blocks
     discard_samples = df_discarded.sample(min(20, len(df_discarded)))
     for _, row in discard_samples.iterrows():
         fname = all_files[int(row['frame'])]

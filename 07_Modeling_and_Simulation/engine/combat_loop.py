@@ -37,8 +37,8 @@ class RunState:
         self.total_xp = 0.0
         self.total_frags = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0}
         
-        self.ores_mined = 0
-        self.specific_ores_mined = {} # <--- Specific tracking for Card Farming
+        self.blocks_mined = 0
+        self.specific_blocks_mined = {} # <--- Specific tracking for Card Farming
         self.highest_floor = 1
         
         # --- TELEMETRY DATA ---
@@ -63,27 +63,27 @@ class CombatSimulator:
         self.player = player
         self.generator = FloorGenerator()
 
-    def _process_kill_rewards(self, ore, floor_obj, state: RunState, p_max_sta):
-        """Processes loot, XP, and modifiers when an ore HP hits 0."""
-        xp_yield = ore.xp * ore.modifiers.get('exp_multi', 1.0) * floor_obj.gleaming_multi
+    def _process_kill_rewards(self, block, floor_obj, state: RunState, p_max_sta):
+        """Processes loot, XP, and modifiers when a block HP hits 0."""
+        xp_yield = block.xp * block.modifiers.get('exp_multi', 1.0) * floor_obj.gleaming_multi
         state.total_xp += xp_yield
         
-        loot_yield = ore.frag_amt * ore.modifiers.get('loot_multi', 1.0) * floor_obj.gleaming_multi
-        if ore.frag_type in state.total_frags:
-            state.total_frags[ore.frag_type] += loot_yield
+        loot_yield = block.frag_amt * block.modifiers.get('loot_multi', 1.0) * floor_obj.gleaming_multi
+        if block.frag_type in state.total_frags:
+            state.total_frags[block.frag_type] += loot_yield
             
-        sta_gain = ore.modifiers.get('stamina_gain', 0.0)
+        sta_gain = block.modifiers.get('stamina_gain', 0.0)
         if sta_gain > 0:
             state.stamina = min(p_max_sta, state.stamina + sta_gain)
             
-        if ore.modifiers.get('speed_active', False):
-            state.speed_pool += ore.modifiers.get('speed_gain', 0.0)
+        if block.modifiers.get('speed_active', False):
+            state.speed_pool += block.modifiers.get('speed_gain', 0.0)
             
-        state.ores_mined += 1
+        state.blocks_mined += 1
         
-        # Tracking specific ore tier/type kills
-        ore_id = ore.ore_id
-        state.specific_ores_mined[ore_id] = state.specific_ores_mined.get(ore_id, 0) + 1
+        # Tracking specific block tier/type kills
+        block_id = block.block_id
+        state.specific_blocks_mined[block_id] = state.specific_blocks_mined.get(block_id, 0) + 1
 
 
     def run_simulation(self):
@@ -159,13 +159,13 @@ class CombatSimulator:
             for i, slot_idx in enumerate(PATH_ORDER):
                 if state.stamina <= 0: break
                     
-                target_ore = floor.grid[slot_idx]
-                if target_ore is None or target_ore.hp <= 0: continue
+                target_block = floor.grid[slot_idx]
+                if target_block is None or target_block.hp <= 0: continue
                     
                 state.stamina -= STAMINA_COST_PER_ORE
                 
                 # --- MICRO-TICK COMBAT LOOP ---
-                while target_ore.hp > 0 and state.stamina > 0:
+                while target_block.hp > 0 and state.stamina > 0:
                     
                     is_flurry = skills.is_flurry_active
                     is_enrage = skills.is_enrage_active
@@ -196,14 +196,14 @@ class CombatSimulator:
                             else:
                                 ch_dmg = ch_base_dmg
                                 
-                            ch_eff_armor = max(0, target_ore.armor - p_armor_pen)
+                            ch_eff_armor = max(0, target_block.armor - p_armor_pen)
                             ch_actual_dmg = max(1.0, ch_dmg - ch_eff_armor)
                             
-                            target_ore.hp -= ch_actual_dmg
+                            target_block.hp -= ch_actual_dmg
                             # Note: No Stamina subtracted! Free damage!
                             
-                    if target_ore.hp <= 0:
-                        break  # Ore died to a Crosshair hit, break out of micro-tick loop!
+                    if target_block.hp <= 0:
+                        break  # Block died to a Crosshair hit, break out of micro-tick loop!
                         
                     events = skills.tick(time_passed)
                     if events["stamina_restored"] > 0:
@@ -216,30 +216,30 @@ class CombatSimulator:
                     base_dmg = p_enraged_damage if is_enrage else p_damage
                         
                     # 2. Subtract Effective Armor (Accounting for Armor Pen)
-                    eff_armor = max(0, target_ore.armor - p_armor_pen)
+                    eff_armor = max(0, target_block.armor - p_armor_pen)
                     
                     # 3. Factor in Crit Multipliers, bounded by a minimum of 1 damage
                     actual_dmg = max(1.0, base_dmg - eff_armor) * crit_mult
-                    target_ore.hp -= actual_dmg
+                    target_block.hp -= actual_dmg
                     state.stamina -= STAMINA_COST_PER_HIT
                     
                     # Quake AOE Proc
                     if skills.consume_attack():
                         q_base = base_dmg * p_quake_dmg_to_all # <--- Quake now properly inherits Enrage Damage too!
                         for bg_idx in PATH_ORDER[i+1:]:
-                            bg_ore = floor.grid[bg_idx]
-                            if bg_ore is not None and bg_ore.hp > 0:
+                            bg_block = floor.grid[bg_idx]
+                            if bg_block is not None and bg_block.hp > 0:
                                 q_crit, q_type = roll_crit(is_enrage)
                                 state.hit_counts[q_type] += 1
                                 
-                                bg_eff_armor = max(0, bg_ore.armor - p_armor_pen)
+                                bg_eff_armor = max(0, bg_block.armor - p_armor_pen)
                                 q_dmg = max(1.0, q_base - bg_eff_armor) * q_crit
-                                bg_ore.hp -= q_dmg
-                                if bg_ore.hp <= 0:
-                                    self._process_kill_rewards(bg_ore, floor, state, p_max_sta)
+                                bg_block.hp -= q_dmg
+                                if bg_block.hp <= 0:
+                                    self._process_kill_rewards(bg_block, floor, state, p_max_sta)
                                     
-                if target_ore.hp <= 0:
-                    self._process_kill_rewards(target_ore, floor, state, p_max_sta)
+                if target_block.hp <= 0:
+                    self._process_kill_rewards(target_block, floor, state, p_max_sta)
                 
                 state.record_telemetry()
                     
@@ -247,7 +247,7 @@ class CombatSimulator:
             
         print(f"[ SIMULATION FINISHED ]")
         print(f"Reached Floor: {state.highest_floor}")
-        print(f"Ores Mined:    {state.ores_mined:,}")
+        print(f"Blocks Mined:    {state.blocks_mined:,}")
         print(f"Total XP:      {state.total_xp:,.2f}")
         print(f"Time Taken:    {state.total_time/60:.2f} Minutes")
         

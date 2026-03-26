@@ -1,5 +1,5 @@
-# diag_ore_forensics.py
-# Purpose: Extract hard mathematical profiles from problematic ore slots.
+# diag_block_forensics.py
+# Purpose: Extract hard mathematical profiles from problematic block slots.
 # Focus: Crosshair Color Density, Dirt3 Complexity, and Mod Zone Interference.
 # Version: 1.2 (Target Correction & Saturation Profiling)
 
@@ -28,7 +28,7 @@ DIM = int(48 * TARGET_SCALE)
 ROW4_Y = int(ORE0_Y + (3 * STEP)) + 2
 
 # Output Configuration
-OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
+OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "block_id_audit")
 
 def get_complexity(img):
     """Calculates Laplacian variance as a measure of structural texture."""
@@ -36,7 +36,7 @@ def get_complexity(img):
 
 def analyze_color_vibrancy(roi_bgr):
     """
-    Analyzes HSV space to distinguish between 'Vibrant UI' and 'Muted Ores'.
+    Analyzes HSV space to distinguish between 'Vibrant UI' and 'Muted Blocks'.
     Returns pixel counts and mean saturation for each range.
     """
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)

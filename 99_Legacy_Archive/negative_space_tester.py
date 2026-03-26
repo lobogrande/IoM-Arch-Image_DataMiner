@@ -39,12 +39,12 @@ def run_negative_space_lab():
 
         # Draw Logic
         # If score is HIGH, it's definitely empty.
-        # If score is LOW, it might be an ore (or we need better BG templates)
+        # If score is LOW, it might be an block (or we need better BG templates)
         if best_bg_score > 0.70:
             color = (255, 0, 0) # Blue = Confirmed Empty
             label = f"BG:{best_bg_score:.2f}"
         else:
-            color = (0, 0, 255) # Red = Potential Ore / Unknown
+            color = (0, 0, 255) # Red = Potential Block / Unknown
             label = f"UNK:{best_bg_score:.2f}"
 
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 1)

@@ -177,11 +177,11 @@ class Player:
         for ot in['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']:
             for tier in range(1, 5): self.cards[f"{ot}{tier}"] = 0
 
-    def set_card_level(self, ore_id, lvl): self.cards[ore_id] = lvl
+    def set_card_level(self, block_id, lvl): self.cards[block_id] = lvl
 
-    def get_card_bonuses(self, ore_id):
-        if ore_id.endswith('4') and not self.asc2_unlocked: return 1.0, 1.0, 1.0
-        lvl = self.cards.get(ore_id, 0)
+    def get_card_bonuses(self, block_id):
+        if block_id.endswith('4') and not self.asc2_unlocked: return 1.0, 1.0, 1.0
+        lvl = self.cards.get(block_id, 0)
         hp_mult, exp_mult, loot_mult = 1.0, 1.0, 1.0
         if lvl == 1: hp_mult, exp_mult, loot_mult = 0.90, 1.10, 1.10
         elif lvl == 2: hp_mult, exp_mult, loot_mult = 0.80, 1.20, 1.20
@@ -198,9 +198,9 @@ class Player:
         arch_bonus = 1.0 + (0.04 * self.arch_infernal_cards) + (0.002 * self.total_infernal_cards)
         return math.ceil((arch_bonus * (1.0 + hades_bonus) * 10000) - 1e-9) / 10000.0
 
-    def inf(self, ore_id):
-        if ore_id.endswith('4') and not self.asc2_unlocked: return 0.0
-        if self.cards.get(ore_id, 0) == 4:
+    def inf(self, block_id):
+        if block_id.endswith('4') and not self.asc2_unlocked: return 0.0
+        if self.cards.get(block_id, 0) == 4:
             inf_mult = self.infernal_multiplier
             bases = {
                 'dirt1': (0.1, 4), 'dirt2': (0.12, 4), 'dirt3': (0.08, 4), 'com1': (0.06, 4), 'com2': (0.07, 4), 'com3': (0.08, 4),
@@ -208,8 +208,8 @@ class Player:
                 'leg1': (0.04, 4), 'leg2': (0.05, 4), 'leg3': (40.0, 0), 'myth1': (0.013, 4), 'myth2': (0.008, 4), 'myth3': (0.007, 4),
                 'div1': (0.1, 4), 'div2': (0.0125, 4), 'div3': (1.126, 0)
             }
-            if ore_id in bases:
-                return self._excel_round(bases[ore_id][0] * inf_mult, bases[ore_id][1])
+            if block_id in bases:
+                return self._excel_round(bases[block_id][0] * inf_mult, bases[block_id][1])
         return 0.0
 
     # ==========================================================================
@@ -288,9 +288,9 @@ class Player:
     @property
     def ability_insta_charge(self): return self.w('W11') + self.u('F39') + self.u('F50')
     @property
-    def crosshair_auto_tap(self): return 0.05 + self.u('H48') + self.u('H54') + ((0.02 + 0.01 * self.u('F34')) * self.stat('Div')) + self.inf('rare1')
+    def crosshair_auto_tap(self): return self.w('W17') + self.u('H48') + self.u('H54') + ((0.02 + 0.01 * self.u('F34')) * self.stat('Div')) + self.inf('rare1')
     @property
-    def gold_crosshair_chance(self): return 0.02 + self.u('F48') + (0.005 * self.stat('Luck')) + self.inf('leg2')
+    def gold_crosshair_chance(self): return self.w('W19') + self.u('F48') + (0.005 * self.stat('Luck')) + self.inf('leg2')
     @property
     def gold_crosshair_mult(self): return 3.0 + self.inf('epic1')
 

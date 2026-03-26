@@ -39,7 +39,7 @@ def run_library_profile():
     stats = df.groupby('family')['lifted_complexity'].agg(['min', 'max', 'mean', 'count'])
     print(stats)
     
-    out_path = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit", "template_complexity_map.csv")
+    out_path = os.path.join(cfg.DATA_DIRS["TRACKING"], "block_id_audit", "template_complexity_map.csv")
     df.to_csv(out_path, index=False)
     print(f"\nLibrary map saved to: {out_path}")
 

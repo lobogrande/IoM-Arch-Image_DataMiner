@@ -24,8 +24,8 @@ STEP_X, STEP_Y = 59.1, 59.1
 def get_slot_status_worker(args):
     roi, mask, templates, is_row1 = args
     bg_s = max([cv2.matchTemplate(roi, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
-    ore_s = max([cv2.matchTemplate(roi, ore, cv2.TM_CCORR_NORMED, mask=mask).max() for ore in templates['ore_all']])
-    delta = ore_s - bg_s
+    block_s = max([cv2.matchTemplate(roi, block, cv2.TM_CCORR_NORMED, mask=mask).max() for block in templates['ore_all']])
+    delta = block_s - bg_s
     thresh = 0.08 if is_row1 else 0.05
     return "1" if (delta > thresh or bg_s < 0.83) else "0"
 
@@ -34,15 +34,15 @@ def run_forensic_diagnostics():
     all_files = sorted([f for f in os.listdir(buffer_root) if f.lower().endswith(('.png', '.jpg'))])
     
     # Load Templates
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     for f in os.listdir(cfg.TEMPLATE_DIR):
         if f.startswith('.') or not f.lower().endswith('.png'): continue
         img = cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48))
         if f.startswith("background"): raw_tpls['bg'].append(img)
         elif "_" in f:
             tier = f.split("_")[0]
-            if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = []
-            raw_tpls['ore'][tier].append(img)
+            if tier not in raw_tpls['block']: raw_tpls['block'][tier] = []
+            raw_tpls['block'][tier].append(img)
 
     std_mask = np.zeros((48, 48), dtype=np.uint8)
     cv2.circle(std_mask, (24, 24), 18, 255, -1)
@@ -72,9 +72,9 @@ def run_forensic_diagnostics():
                                           prev_img[ROI_NEW[0]:ROI_NEW[1], ROI_NEW[2]:ROI_NEW[3]]))
             
             # DNA Logic (Simplified for diagnostic)
-            # Use all available ores for the probe
-            all_ores = [img for t in raw_tpls['ore'] for img in raw_tpls['ore'][t]]
-            tpls = {'ore_all': all_ores, 'bg': raw_tpls['bg']}
+            # Use all available blocks for the probe
+            all_blocks = [img for t in raw_tpls['block'] for img in raw_tpls['block'][t]]
+            tpls = {'ore_all': all_blocks, 'bg': raw_tpls['bg']}
             
             dna_tasks = []
             for c in range(24):

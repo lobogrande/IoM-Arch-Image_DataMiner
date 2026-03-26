@@ -16,8 +16,8 @@ def get_pixel(event, x, y, flags, param):
         cv2.imshow("CALIBRATOR", clone)
 
 print("--- GRID CALIBRATOR ---")
-print("1. Click the EXACT CENTER of the Top-Left Ore (Slot 0).")
-print("2. Click the EXACT CENTER of the Bottom-Right Ore (Slot 23).")
+print("1. Click the EXACT CENTER of the Top-Left Block (Slot 0).")
+print("2. Click the EXACT CENTER of the Bottom-Right Block (Slot 23).")
 cv2.imshow("CALIBRATOR", img)
 cv2.setMouseCallback("CALIBRATOR", get_pixel)
 cv2.waitKey(0)

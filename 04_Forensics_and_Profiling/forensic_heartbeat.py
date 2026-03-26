@@ -40,14 +40,14 @@ def run_v63_forensic_heartbeat():
             abs_player_y = max_loc[1] + 200
             
             player_center_x = abs_player_x + 20 # Half of 40px template
-            expected_ore_x = player_center_x + OFFSET_X
+            expected_block_x = player_center_x + OFFSET_X
             
             # 3. TEST DNA AT EXPECTED OFFSET
-            # We are going to sample the exact point the script "thinks" the ore is
-            sample_roi = img_gray[261-5:261+5, int(expected_ore_x)-5:int(expected_ore_x)+5]
+            # We are going to sample the exact point the script "thinks" the block is
+            sample_roi = img_gray[261-5:261+5, int(expected_block_x)-5:int(expected_block_x)+5]
             diff = np.sum(cv2.absdiff(sample_roi, bg_t[0][19:29, 19:29])) / 100
             
             # LOG EVERYTHING TO CONSOLE
-            print(f"Frame {i+1} | Score: {max_val:.3f} | PlayerX: {abs_player_x} | OreX_Target: {expected_ore_x:.1f} | DNA_Diff: {diff:.2f}")
+            print(f"Frame {i+1} | Score: {max_val:.3f} | PlayerX: {abs_player_x} | BlockX_Target: {expected_block_x:.1f} | DNA_Diff: {diff:.2f}")
 
 run_v63_forensic_heartbeat()

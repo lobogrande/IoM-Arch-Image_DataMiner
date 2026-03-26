@@ -24,11 +24,11 @@ def get_slot_scores(roi_gray, mask, templates):
     bg_scores = [cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']]
     bg_max = max(bg_scores) if bg_scores else 0
     
-    # Raw correlation with ores
-    ore_scores = [cv2.matchTemplate(roi_gray, ore, cv2.TM_CCORR_NORMED, mask=mask).max() for ore in templates['active']]
-    ore_max = max(ore_scores) if ore_scores else 0
+    # Raw correlation with blocks
+    block_scores = [cv2.matchTemplate(roi_gray, block, cv2.TM_CCORR_NORMED, mask=mask).max() for block in templates['active']]
+    block_max = max(ore_scores) if block_scores else 0
     
-    return bg_max, ore_max
+    return bg_max, block_max
 
 # --- FORENSIC ENGINE ---
 
@@ -40,7 +40,7 @@ def run_v5_33_shadow_duration_audit():
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
     # Load Templates (Strict Mac-safe Filter)
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     for f in os.listdir("templates"):
         if f.startswith('.') or not f.lower().endswith('.png'): continue
         img = cv2.imread(os.path.join("templates", f), 0)
@@ -50,20 +50,20 @@ def run_v5_33_shadow_duration_audit():
         elif "_" in f:
             tier = f.split("_")[0]
             if any(tier.startswith(t) for t in KNOWN_TIERS):
-                if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = []
-                raw_tpls['ore'][tier].append(img)
+                if tier not in raw_tpls['block']: raw_tpls['block'][tier] = []
+                raw_tpls['block'][tier].append(img)
 
     # Use basic tiers for early diagnostic
     active_list = []
     for tier in ['dirt1', 'com1', 'rare1']:
-        if tier in raw_tpls['ore']: active_list.extend(raw_tpls['ore'][tier])
+        if tier in raw_tpls['block']: active_list.extend(raw_tpls['block'][tier])
     templates = {'active': active_list, 'bg': raw_tpls['bg']}
     
     mask = np.zeros((48, 48), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
 
     print(f"--- Forensic v5.33: Shadow Analysis (Indices {SHADOW_WINDOW[0]}-{SHADOW_WINDOW[1]}) ---")
-    print(f"{'Idx':<6} | {'Slot':<5} | {'BG Score':<10} | {'Ore Score':<10} | {'Delta':<6} | {'Status'}")
+    print(f"{'Idx':<6} | {'Slot':<5} | {'BG Score':<10} | {'Block Score':<10} | {'Delta':<6} | {'Status'}")
     print("-" * 65)
 
     for i in range(SHADOW_WINDOW[0], SHADOW_WINDOW[1] + 1):
@@ -72,8 +72,8 @@ def run_v5_33_shadow_duration_audit():
         for c in range(6):
             x1, y1 = int(SLOT1_CENTER[0] + (c * STEP_X)) - 24, int(SLOT1_CENTER[1]) - 24
             roi = img_gray[y1:y1+48, x1:x1+48]
-            bg, ore = get_slot_scores(roi, mask, templates)
-            delta = ore - bg
+            bg, block = get_slot_scores(roi, mask, templates)
+            delta = block - bg
             
             # Labeling for your visual confirmation
             status = "Shadow?" if (bg > 0.85 and delta < 0.04 and delta > 0.01) else ""
@@ -89,7 +89,7 @@ def run_v5_33_shadow_duration_audit():
         # We just want to see how close triggers naturally occur
         pass # (Data will be collected from your existing run logs)
 
-    print("\n[PLAN] Use the BG/Ore scores from Index 26 to set a strict 'Absolute Zero' for Vacuum.")
+    print("\n[PLAN] Use the BG/Block scores from Index 26 to set a strict 'Absolute Zero' for Vacuum.")
 
 if __name__ == "__main__":
     run_v5_33_shadow_duration_audit()

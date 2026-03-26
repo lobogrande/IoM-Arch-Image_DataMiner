@@ -15,7 +15,7 @@ MANUAL_TARGETS = {
     6:  [16, 19], # Crosshairs
     18: [0],      # Player (should reveal blank)
     30: [1, 15],  # Player and Crosshair
-    43: [1, 7],   # Player and Ore
+    43: [1, 7],   # Player and Block
     67: [2],      # Fairy/Crosshair
     80: [12, 13]  # Crosshair and Fairy
 }
@@ -40,11 +40,11 @@ def get_occupancy_dna(img_gray, bg_templates):
 def run_v62_reconstruction():
     # 1. Asset Loading
     bg_t = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("background")]
-    all_ore_t = []
+    all_block_t = []
     for f in os.listdir(cfg.TEMPLATE_DIR):
         if any(x in f for x in ["background", "negative"]) or not f.endswith('.png'): continue
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
-        if img is not None: all_ore_t.append({'tier': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
+        if img is not None: all_block_t.append({'tier': f.split("_")[0], 'img': cv2.resize(img, (48, 48))})
 
     # 2. Sequence Mapping
     with open(os.path.join(UNIFIED_ROOT, "final_sequence.json"), 'r') as f:
@@ -99,7 +99,7 @@ def run_v62_reconstruction():
                     if np.max(roi) < 240:
                         # Success: Identify what is in this clean spot
                         best_o, best_l = 0, "BLANK"
-                        for t in all_ore_t:
+                        for t in all_block_t:
                             res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED)
                             if res.max() > best_o: best_o, best_l = res.max(), t['tier']
                         

@@ -1,8 +1,8 @@
 # ==============================================================================
-# Script: generate_ore_statistics.py
+# Script: generate_block_statistics.py
 # Version: 1.2.0
 # Description: Ingests run data to calculate Gaussian spawn rates and epoch-based 
-#              ore drop probabilities. Excludes boss floors and normalizes 
+#              block drop probabilities. Excludes boss floors and normalizes 
 #              'likely_empty' values to 'empty'.
 # ==============================================================================
 
@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
 # --- CONFIGURATION ---
-DATA_PATH = os.path.join("..", "Data_02_Tracking_Archive", "floor_ore_inventory_run_*.csv")
+DATA_PATH = os.path.join("..", "Data_02_Tracking_Archive", "floor_block_inventory_run_*.csv")
 OUTPUT_DIR = os.path.dirname(__file__)
 
 # Generate the 24 slot column names (R1_S0 to R4_S5)
@@ -69,16 +69,16 @@ def main():
 
     # --- PROCESS SPAWN RATES (GAUSSIAN MODEL) ---
     print("Calculating Gaussian spawn models...")
-    master_df['total_ores'] = master_df[SLOT_COLS].apply(lambda x: (x != 'empty').sum(), axis=1)
+    master_df['total_blocks'] = master_df[SLOT_COLS].apply(lambda x: (x != 'empty').sum(), axis=1)
 
-    spawn_rates = master_df.groupby('floor_id')['total_ores'].agg(
-        mean_ores='mean',
-        std_ores='std',
-        min_ores='min',
-        max_ores='max'
+    spawn_rates = master_df.groupby('floor_id')['total_blocks'].agg(
+        mean_blocks='mean',
+        std_blocks='std',
+        min_blocks='min',
+        max_blocks='max'
     ).reset_index()
 
-    spawn_rates['std_ores'] = spawn_rates['std_ores'].fillna(0)
+    spawn_rates['std_blocks'] = spawn_rates['std_blocks'].fillna(0)
 
     spawn_csv_path = os.path.join(OUTPUT_DIR, "simulator_spawn_rates.csv")
     spawn_rates.to_csv(spawn_csv_path, index=False)
@@ -86,8 +86,8 @@ def main():
 
     # --- PROCESS DROP TABLES PER EPOCH ---
     print("Calculating drop tables per epoch...")
-    melted_df = master_df.melt(id_vars=['floor_id'], value_vars=SLOT_COLS, var_name='slot', value_name='ore_id')
-    ores_only_df = melted_df[melted_df['ore_id'] != 'empty'].copy()
+    melted_df = master_df.melt(id_vars=['floor_id'], value_vars=SLOT_COLS, var_name='slot', value_name='block_id')
+    blocks_only_df = melted_df[melted_df['block_id'] != 'empty'].copy()
 
     def get_epoch_label(floor):
         for start, end in epochs:
@@ -95,19 +95,19 @@ def main():
                 return f"Floors_{start}_to_{end}"
         return "Unknown"
 
-    ores_only_df['epoch'] = ores_only_df['floor_id'].apply(get_epoch_label)
+    blocks_only_df['epoch'] = blocks_only_df['floor_id'].apply(get_epoch_label)
 
-    epoch_stats = ores_only_df.groupby(['epoch', 'ore_id']).size().reset_index(name='count')
+    epoch_stats = blocks_only_df.groupby(['epoch', 'block_id']).size().reset_index(name='count')
     epoch_totals = epoch_stats.groupby('epoch')['count'].transform('sum')
     epoch_stats['probability_weight'] = epoch_stats['count'] / epoch_totals
 
-    dist_matrix = epoch_stats.pivot(index='epoch', columns='ore_id', values='probability_weight').fillna(0)
+    dist_matrix = epoch_stats.pivot(index='epoch', columns='block_id', values='probability_weight').fillna(0)
     dist_matrix['sort_key'] = dist_matrix.index.str.extract(r'Floors_(\d+)_').astype(int)
     dist_matrix = dist_matrix.sort_values('sort_key').drop(columns=['sort_key'])
 
-    dist_csv_path = os.path.join(OUTPUT_DIR, "simulator_ore_distributions.csv")
+    dist_csv_path = os.path.join(OUTPUT_DIR, "simulator_block_distributions.csv")
     dist_matrix.to_csv(dist_csv_path)
-    print(f"Saved ore distributions to {dist_csv_path}")
+    print(f"Saved block distributions to {dist_csv_path}")
 
     # --- GENERATE JSON FOR SIMULATOR ---
     simulator_config = {}

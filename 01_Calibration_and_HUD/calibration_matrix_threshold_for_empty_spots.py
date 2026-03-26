@@ -24,7 +24,7 @@ SETTINGS = [
 
 def run_calibration_matrix():
     # Load Templates
-    templates = {'ore': {}, 'bg': []}
+    templates = {'block': {}, 'bg': []}
     t_path = cfg.TEMPLATE_DIR
     for f in os.listdir(t_path):
         img = cv2.imread(os.path.join(t_path, f), 0)
@@ -34,8 +34,8 @@ def run_calibration_matrix():
             templates['bg'].append(img)
         else:
             p = f.split("_")
-            if p[0] not in templates['ore']: templates['ore'][p[0]] = {'act': [], 'sha': []}
-            templates['ore'][p[0]][p[1]].append(img)
+            if p[0] not in templates['block']: templates['block'][p[0]] = {'act': [], 'sha': []}
+            templates['block'][p[0]][p[1]].append(img)
 
     run_path = os.path.join(UNIFIED_ROOT, "Run_0")
     with open(os.path.join(run_path, "final_sequence.json"), 'r') as f:
@@ -57,17 +57,17 @@ def run_calibration_matrix():
 
                 bg_score = max([cv2.matchTemplate(roi, t, cv2.TM_CCOEFF_NORMED).max() for t in templates['bg']])
                 
-                best_ore = {'score': 0.0, 'tier': ''}
-                for tier, states in templates['ore'].items():
+                best_block = {'score': 0.0, 'tier': ''}
+                for tier, states in templates['block'].items():
                     for state, imgs in states.items():
                         for t_img in imgs:
                             s = cv2.matchTemplate(roi, t_img, cv2.TM_CCOEFF_NORMED).max()
                             if state == 'sha': s *= 1.03
-                            if s > best_ore['score']:
-                                best_ore = {'score': s, 'tier': tier}
+                            if s > best_block['score']:
+                                best_block = {'score': s, 'tier': tier}
 
                 # Competitive Logic
-                if best_ore['score'] > thresh and (best_ore['score'] - bg_score) > delta_val:
+                if best_block['score'] > thresh and (best_block['score'] - bg_score) > delta_val:
                     cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
             overlay_text = f"Set {name}: Thresh {thresh} / Delta {delta_val}"

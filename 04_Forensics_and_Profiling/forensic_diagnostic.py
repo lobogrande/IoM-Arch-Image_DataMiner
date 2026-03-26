@@ -39,14 +39,14 @@ def get_slot_status_worker(args):
     bg_s = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
     if is_xhair_present(roi_bgr): return "1"
 
-    ore_s = 0.0
+    block_s = 0.0
     for t_list in templates['active']:
         s = cv2.matchTemplate(roi_gray, t_list[0], cv2.TM_CCORR_NORMED, mask=mask).max()
         if not is_row1 and s < 0.85:
             s = max(s, cv2.matchTemplate(roi_gray, t_list[1], cv2.TM_CCORR_NORMED, mask=mask).max())
-        if s > ore_s: ore_s = s
+        if s > block_s: block_s = s
 
-    delta = ore_s - bg_s
+    delta = block_s - bg_s
     is_dirty = (delta > 0.065 if is_row1 else delta > 0.04) or (bg_s < 0.82)
     return "1" if is_dirty else "0"
 
@@ -58,7 +58,7 @@ def run_forensic_dna_audit():
         return
 
     # 1. Load Templates (Biome-filtered for Floor 27)
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     for f in os.listdir(cfg.TEMPLATE_DIR):
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is None: continue
@@ -67,15 +67,15 @@ def run_forensic_dna_audit():
         elif "_" in f and any(f.startswith(tier) for tier in KNOWN_TIERS):
             parts = f.replace(".png", "").split("_")
             tier, state = parts[0], parts[1]
-            if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = {'act': [], 'sha': []}
+            if tier not in raw_tpls['block']: raw_tpls['block'][tier] = {'act': [], 'sha': []}
             m5 = cv2.getRotationMatrix2D((24, 24), 5, 1.0)
-            raw_tpls['ore'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
+            raw_tpls['block'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
 
     # Filter for Biome (Floor 27 usually uses Dirt2/Com2/Rare2)
     active_list = []
     for tier in ['dirt1', 'com1', 'rare1', 'epic1', 'leg1', 'dirt2', 'com2', 'rare2', 'epic2']:
-        if tier in raw_tpls['ore']:
-            for state in ['act', 'sha']: active_list.extend(raw_tpls['ore'][tier][state])
+        if tier in raw_tpls['block']:
+            for state in ['act', 'sha']: active_list.extend(raw_tpls['block'][tier][state])
     runtime_tpls = {'active': active_list, 'bg': raw_tpls['bg']}
 
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
