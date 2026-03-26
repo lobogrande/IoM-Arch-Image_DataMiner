@@ -264,11 +264,11 @@ with st.sidebar:
             
             # Flush ALL widget keys so they resync to the new JSON file!
             for k in list(st.session_state.keys()):
-                if k.startswith(("upg_", "stat_", "ext_", "card_", "set_")):
+                if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
                     del st.session_state[k]
                     
             # Force a clean restart from Line 1 to sync the reordered sidebar
-            st.rerun() 
+            st.rerun()
             
     st.divider()
     
@@ -829,21 +829,10 @@ with tab_sandbox:
         show_crit_details = st.checkbox("Show Detailed Crit Multipliers")
         
     # Build an isolated Sandbox Player Object
-    sandbox_p = Player()
-    sandbox_p.base_stats = p.base_stats.copy()
-    sandbox_p.upgrade_levels = p.upgrade_levels.copy()
-    sandbox_p.upgrades = p.upgrades.copy()
-    sandbox_p.external_levels = p.external_levels.copy()
-    sandbox_p.external = p.external.copy()
-    sandbox_p.cards = p.cards.copy()
-    sandbox_p.asc2_unlocked = p.asc2_unlocked
-    sandbox_p.arch_level = p.arch_level
-    sandbox_p.current_max_floor = p.current_max_floor
-    sandbox_p.hades_idol_level = p.hades_idol_level
-    sandbox_p.total_infernal_cards = p.total_infernal_cards
-    sandbox_p.arch_ability_infernal_bonus = p.arch_ability_infernal_bonus
+    import copy
+    sandbox_p = copy.deepcopy(p)
     
-    # Inject Sandbox Stats
+    # Inject Sandbox Stats into the isolated clone
     for stat in STAT_CAPS.keys():
         if sandbox_p.asc2_unlocked or stat != 'Corr':
             sandbox_p.base_stats[stat] = st.session_state.get(f"sandbox_stat_{stat}", 0)
