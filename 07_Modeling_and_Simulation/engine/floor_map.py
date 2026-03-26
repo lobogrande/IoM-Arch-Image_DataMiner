@@ -51,9 +51,10 @@ class FloorGenerator:
             6:[50, 75, 100, 150]
         }
 
-        # BOSS FLOORS (Ascension 2 Unlocked): Floor ID -> Rarity to spawn as Tier 3 Boss
+        # BOSS FLOORS (Ascension 2 Unlocked): Floor ID -> (Rarity ID, Tier)
         self.BOSS_FLOORS = {
-            80: 0, 95: 1, 110: 2, 125: 3, 135: 4, 140: 5, 149: 6
+            80: (0, 3), 95: (1, 3), 110: (2, 3), 125: (3, 3), 
+            135: (4, 3), 140: (5, 3), 149: (6, 3)
         }
 
         # CHANCE SETS: (Minimum Floor, [1-in-X chances for Dirt -> Divine])
@@ -92,10 +93,28 @@ class FloorGenerator:
         is_gleaming = random.random() < player.gleaming_floor_chance
         gleaming_multi = player.gleaming_floor_multi if is_gleaming else 1.0
 
-        # 2. Check for Ascension 2 Boss Floor Overrides
+        # --- 2a. EXPLICIT OVERRIDES (Floors 98 and 99) ---
+        if floor_id == 98:
+            for idx in range(24):
+                grid[idx] = self._create_ore_with_mods('myth3', floor_id, player)
+            return Floor(floor_id, grid, is_gleaming, gleaming_multi)
+            
+        if floor_id == 99:
+            # The Gauntlet: repeats this exact 6-ore progression 4 times
+            if player.asc2_unlocked:
+                pattern =['com4', 'rare3', 'epic3', 'leg3', 'myth3', 'div2']
+            else:
+                pattern =['com3', 'rare3', 'epic3', 'leg3', 'myth3', 'div2']
+                
+            for idx in range(24):
+                ore_id = pattern[idx % 6] # % 6 causes it to cleanly loop back to 0!
+                grid[idx] = self._create_ore_with_mods(ore_id, floor_id, player)
+            return Floor(floor_id, grid, is_gleaming, gleaming_multi)
+
+        # --- 2b. ASCENSION 2 BOSS FLOORS ---
         if player.asc2_unlocked and floor_id in self.BOSS_FLOORS:
-            rarity = self.BOSS_FLOORS[floor_id]
-            ore_id = f"{self.RARITY_PREFIX[rarity]}3" # Bosses are always Tier 3
+            rarity, tier = self.BOSS_FLOORS[floor_id]
+            ore_id = f"{self.RARITY_PREFIX[rarity]}{tier}" 
             
             for idx in range(24):
                 grid[idx] = self._create_ore_with_mods(ore_id, floor_id, player)
