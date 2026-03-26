@@ -1031,22 +1031,27 @@ with tab_optimizer:
         st.write("*(Optional: Runs automatically on start if skipped)*")
         if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
             with st.spinner("Running 200 micro-simulations to test CPU speed..."):
-                # Construct baseline payload
                 STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                 if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                 
-                payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}}
+                # Create the In-Memory Dictionary Snapshot
+                base_state_dict = {
+                    'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                    'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level
+                }
+                
+                payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_dict': base_state_dict}
                 CPU_CORES = max(1, mp.cpu_count() - 1)
                 
                 with mp.Pool(CPU_CORES) as pool:
                     spd = benchmark_hardware(payload, pool)
                     st.session_state.sims_per_sec = spd
                     
-                    # Calculate profiles
                     budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
                     cap_increase = int(p.u('H45'))
                     caps = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
-                    
                     st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
         
         if st.session_state.sims_per_sec > 0:
@@ -1142,12 +1147,20 @@ with tab_optimizer:
         # REAL ENGINE EXECUTION
         # ==========================================
         else:
+            # Create the In-Memory Dictionary Snapshot for the Engine
+            base_state_dict = {
+                'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level
+            }
+
             # AUTO-BENCHMARK FAILSAFE
             if st.session_state.sims_per_sec == 0:
                 with st.spinner("⏱️ First-time setup: Benchmarking your CPU..."):
                     STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                     if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-                    payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}}
+                    payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_dict': base_state_dict}
                     CPU_CORES = max(1, mp.cpu_count() - 1)
                     with mp.Pool(CPU_CORES) as pool:
                         spd = benchmark_hardware(payload, pool)
@@ -1188,7 +1201,8 @@ with tab_optimizer:
                     best_p1, summary_p1 = run_optimization_phase(
                         "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
                         DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
-                        progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
+                        progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                        base_state_dict=base_state_dict # <--- Passed via memory!
                     )
                     
                     best_p2, summary_p2 = None, None
@@ -1198,7 +1212,8 @@ with tab_optimizer:
                         best_p2, summary_p2 = run_optimization_phase(
                             "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
                             DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
-                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
+                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                            base_state_dict=base_state_dict
                         )
                         
                     if best_p2 and (time.time() - start_time) < time_limit_secs:
@@ -1207,7 +1222,8 @@ with tab_optimizer:
                         best_p3, final_summary = run_optimization_phase(
                             "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
                             DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
-                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs
+                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                            base_state_dict=base_state_dict
                         )
                 
                 best_final = best_p3 or best_p2 or best_p1

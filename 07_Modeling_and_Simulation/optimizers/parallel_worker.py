@@ -25,8 +25,23 @@ def worker_simulate(payload):
     random.seed(os.urandom(4))
     
     p = Player()
-    load_state_from_json(p, JSON_PATH)
     
+    # --- IN-MEMORY STATE RECONSTRUCTION (ZERO DISK I/O) ---
+    state = payload.get('state_dict', {})
+    if state:
+        p.base_stats = state.get('base_stats', {}).copy()
+        p.upgrade_levels = state.get('upgrade_levels', {}).copy()
+        p.external_levels = state.get('external_levels', {}).copy()
+        p.cards = state.get('cards', {}).copy()
+        p.asc2_unlocked = state.get('asc2_unlocked', False)
+        p.arch_level = state.get('arch_level', 1)
+        p.current_max_floor = state.get('current_max_floor', 1)
+        p.hades_idol_level = state.get('hades_idol_level', 0)
+    else:
+        # Fallback for local CLI script testing
+        load_state_from_json(p, JSON_PATH)
+    
+    # Inject the specific stat distribution being tested by the grid search
     for stat_name, val in payload['stats'].items():
         p.base_stats[stat_name] = val
         
@@ -85,7 +100,7 @@ def generate_distributions(stats_list, total_budget, step, bounds=None):
     backtrack(0, 0, {})
     return distributions
 
-def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None, progress_callback=None, global_start_time=None, time_limit_seconds=None):
+def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, iterations, pool, fixed_stats, bounds=None, progress_callback=None, global_start_time=None, time_limit_seconds=None, base_state_dict=None):
     """
     Runs a grid search phase using Successive Halving with live progress tracking.
     """
@@ -108,7 +123,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         r1 = max(1, int(iterations * 0.15))
         r2 = max(1, int(iterations * 0.35))
         r3 = iterations - r1 - r2
-        rounds =[ (r1, 0.20), (r2, 0.10), (r3, 1.0) ]
+        rounds =[(r1, 0.20), (r2, 0.10), (r3, 1.0)]
 
     for round_idx, (run_count, keep_ratio) in enumerate(rounds):
         if len(active_keys) == 0: break
@@ -121,7 +136,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         if len(rounds) > 1:
             print(f"  -> Round {round_idx+1}: Testing {len(active_keys)} builds ({run_count} runs each)...")
             
-        tasks =[{'stats': tracker[k]['dist'], 'fixed_stats': fixed_stats} for k in active_keys for _ in range(run_count)]
+        tasks = [{'stats': tracker[k]['dist'], 'fixed_stats': fixed_stats, 'state_dict': base_state_dict} for k in active_keys for _ in range(run_count)]
         total_tasks = len(tasks)
         chunk_size = max(1, total_tasks // 100)
         
@@ -182,9 +197,19 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     abs_max_chance = (floors.count(abs_max_floor) / len(floors)) if floors else 0
     
     # --- SINGLE DETERMINISTIC PROFILING TRACE ---
-    # Run exactly one predictable simulation of the winner to map the stamina curve
     p_profile = Player()
-    load_state_from_json(p_profile, JSON_PATH)
+    if base_state_dict:
+        p_profile.base_stats = base_state_dict.get('base_stats', {}).copy()
+        p_profile.upgrade_levels = base_state_dict.get('upgrade_levels', {}).copy()
+        p_profile.external_levels = base_state_dict.get('external_levels', {}).copy()
+        p_profile.cards = base_state_dict.get('cards', {}).copy()
+        p_profile.asc2_unlocked = base_state_dict.get('asc2_unlocked', False)
+        p_profile.arch_level = base_state_dict.get('arch_level', 1)
+        p_profile.current_max_floor = base_state_dict.get('current_max_floor', 1)
+        p_profile.hades_idol_level = base_state_dict.get('hades_idol_level', 0)
+    else:
+        load_state_from_json(p_profile, JSON_PATH)
+        
     for k, v in best_dist.items(): p_profile.base_stats[k] = v
     for k, v in fixed_stats.items(): p_profile.base_stats[k] = v
     
