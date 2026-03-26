@@ -156,7 +156,7 @@ class Player:
 
     def u(self, cell): 
         if not self.asc2_unlocked:
-            locked_rows =[17, 19, 34, 46, 52, 55]
+            locked_rows =[19, 27, 34, 46, 52, 55]
             try:
                 if int(cell[1:]) in locked_rows: return 0.0
             except ValueError: pass

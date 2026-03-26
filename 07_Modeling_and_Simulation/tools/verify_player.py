@@ -134,7 +134,7 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
         "cards": cards_out
     }
 
-    asc2_locked_rows =[17, 19, 34, 46, 52, 55]
+    asc2_locked_rows =[19, 27, 34, 46, 52, 55]
 
     # Populate Internal Upgrades
     for k, v in player.upgrade_levels.items():
