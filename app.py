@@ -307,8 +307,8 @@ STAT_CAPS = {
     'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
 }
 
-tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_ore_stats, tab_optimizer = st.tabs([
-    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🧮 Calculated Stats", "🪨 Ore Stats", "🚀 Run Optimizer"
+tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_ore_stats, tab_sandbox, tab_optimizer = st.tabs([
+    "📊 Base Stats", "⬆️ Upgrades", "🃏 Ore Cards", "🧮 Calculated Stats", "🪨 Ore Stats", "🧮 Hit Calculator", "🚀 Run Optimizer"
 ])
 
 # --- TAB 1: BASE STATS ---
@@ -719,7 +719,164 @@ with tab_ore_stats:
             height=600 # Makes the table nice and tall so you don't have to scroll constantly
         )
 
-# --- TAB 6: RUN OPTIMIZER ---
+# --- TAB 6: HIT CALCULATOR (SANDBOX) ---
+with tab_sandbox:
+    st.header("🧮 Ore Hit Calculator (Sandbox)")
+    st.write("Experiment with stat distributions without worrying about your global point budget. Find the exact breakpoints for how many hits it takes to kill specific ores.")
+    
+    # --- SANDBOX SYNC ---
+    if st.button("🔄 Sync from Base Stats", help="Pull your currently saved stat distribution into the sandbox."):
+        for stat in STAT_CAPS.keys():
+            st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
+        st.rerun()
+
+    st.markdown("#### Sandbox Stat Allocation")
+    
+    # We use simple clamping for the sandbox (no global budget limits)
+    def render_sandbox_stat(label, stat_key, col):
+        max_val = int(STAT_CAPS[stat_key])
+        widget_key = f"sandbox_stat_{stat_key}"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = int(p.base_stats.get(stat_key, 0))
+        
+        with col:
+            with st.container(border=True):
+                st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{label}</b><br><small>(Max: {max_val})</small></div>", unsafe_allow_html=True)
+                st.number_input(
+                    f"{label} Sandbox", key=widget_key, step=1, on_change=enforce_caps,
+                    args=(widget_key, 0, max_val, f"Sandbox {label}"), label_visibility="collapsed"
+                )
+
+    col1, col2, col3, col4 = st.columns(4)
+    render_sandbox_stat("Strength", 'Str', col1)
+    render_sandbox_stat("Agility", 'Agi', col1)
+    render_sandbox_stat("Perception", 'Per', col2)
+    render_sandbox_stat("Intelligence", 'Int', col2)
+    render_sandbox_stat("Luck", 'Luck', col3)
+    render_sandbox_stat("Divinity", 'Div', col3)
+    if p.asc2_unlocked:
+        render_sandbox_stat("Corruption", 'Corr', col4)
+
+    st.divider()
+    
+    # --- SANDBOX CALCULATOR LOGIC ---
+    col_floor, col_toggles = st.columns([1, 2])
+    with col_floor:
+        target_floor = st.number_input("Enemy Level (Target Floor):", min_value=1, value=int(p.current_max_floor), step=1, key="sandbox_floor")
+    with col_toggles:
+        show_unreachable = st.checkbox("Show Ores Above Target Floor (e.g. Div3 on Floor 50)")
+        show_crit_details = st.checkbox("Show Detailed Crit Multiplier Damages")
+        
+    # Build an isolated Sandbox Player Object
+    sandbox_p = Player()
+    sandbox_p.base_stats = p.base_stats.copy()
+    sandbox_p.upgrade_levels = p.upgrade_levels.copy()
+    sandbox_p.upgrades = p.upgrades.copy()
+    sandbox_p.external_levels = p.external_levels.copy()
+    sandbox_p.external = p.external.copy()
+    sandbox_p.cards = p.cards.copy()
+    sandbox_p.asc2_unlocked = p.asc2_unlocked
+    sandbox_p.arch_level = p.arch_level
+    sandbox_p.current_max_floor = p.current_max_floor
+    sandbox_p.hades_idol_level = p.hades_idol_level
+    sandbox_p.total_infernal_cards = p.total_infernal_cards
+    sandbox_p.arch_ability_infernal_bonus = p.arch_ability_infernal_bonus
+    
+    # Inject Sandbox Stats
+    for stat in STAT_CAPS.keys():
+        if sandbox_p.asc2_unlocked or stat != 'Corr':
+            sandbox_p.base_stats[stat] = st.session_state.get(f"sandbox_stat_{stat}", 0)
+        
+    # Combat Math Extraction
+    p_dmg = sandbox_p.damage
+    p_enr_dmg = sandbox_p.enraged_damage
+    p_pen = sandbox_p.armor_pen
+    
+    t_reg = 1.0 - sandbox_p.crit_chance
+    t_crit = sandbox_p.crit_chance * (1.0 - sandbox_p.super_crit_chance)
+    t_scrit = sandbox_p.crit_chance * sandbox_p.super_crit_chance * (1.0 - sandbox_p.ultra_crit_chance)
+    t_ucrit = sandbox_p.crit_chance * sandbox_p.super_crit_chance * sandbox_p.ultra_crit_chance
+    
+    c_crit = sandbox_p.crit_dmg_mult
+    c_scrit = c_crit * sandbox_p.super_crit_dmg_mult
+    c_ucrit = c_scrit * sandbox_p.ultra_crit_dmg_mult
+    
+    c_enr_crit = sandbox_p.enraged_crit_dmg_mult
+    c_enr_scrit = c_enr_crit * sandbox_p.super_crit_dmg_mult
+    c_enr_ucrit = c_enr_scrit * sandbox_p.ultra_crit_dmg_mult
+    
+    avg_mult = t_reg*1.0 + t_crit*c_crit + t_scrit*c_scrit + t_ucrit*c_ucrit
+    avg_enr_mult = t_reg*1.0 + t_crit*c_enr_crit + t_scrit*c_enr_scrit + t_ucrit*c_enr_ucrit
+    
+    # Generate the Table
+    sb_table_data =[]
+    for ore_id in cfg.ORE_BASE_STATS.keys():
+        tier = int(ore_id[-1])
+        
+        # Filter Logic based on floor tiers
+        if not show_unreachable:
+            if tier == 2 and target_floor < 50: continue
+            if tier == 3 and target_floor < 100: continue
+            if tier == 4 and target_floor < 150: continue
+        if tier == 4 and not sandbox_p.asc2_unlocked: continue
+            
+        ore_obj = Ore(ore_id, target_floor, sandbox_p)
+        eff_armor = max(0, ore_obj.armor - p_pen)
+        
+        reg_hit = max(1.0, p_dmg - eff_armor)
+        enr_hit = max(1.0, p_enr_dmg - eff_armor)
+        
+        edps = reg_hit * avg_mult
+        enr_edps = enr_hit * avg_enr_mult
+        
+        # Math.ceil mimics Stamina cost per hit
+        max_sta = math.ceil(ore_obj.hp / reg_hit)
+        avg_sta = math.ceil(ore_obj.hp / edps)
+        max_enr_sta = math.ceil(ore_obj.hp / enr_hit)
+        avg_enr_sta = math.ceil(ore_obj.hp / enr_edps)
+        
+        img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{ore_id}.png")
+        img_uri = get_scaled_image_uri(img_path, UI_ORE_TABLE_IMG_WIDTH)
+        
+        row = {
+            "Icon": img_uri,
+            "Block Type": ore_id.capitalize(),
+            "HP": f"{ore_obj.hp:,}",
+            "Eff. Armor": f"{eff_armor:,.0f}",
+            "EDPS": f"{edps:,.0f}",
+            "Enraged EDPS": f"{enr_edps:,.0f}",
+            "Reg": f"{reg_hit:,.0f}"
+        }
+        
+        if show_crit_details:
+            row["Crit"] = f"{reg_hit * c_crit:,.0f}"
+            row["sCrit"] = f"{reg_hit * c_scrit:,.0f}"
+            row["uCrit"] = f"{reg_hit * c_ucrit:,.0f}"
+            
+        row["Max Sta to Kill"] = f"{max_sta:,}"
+        row["Avg Sta to Kill"] = f"{avg_sta:,}"
+        row["Enr. Hit"] = f"{enr_hit:,.0f}"
+        
+        if show_crit_details:
+            row["Enr. Crit"] = f"{enr_hit * c_enr_crit:,.0f}"
+            row["Enr. sCrit"] = f"{enr_hit * c_enr_scrit:,.0f}"
+            row["Enr. uCrit"] = f"{enr_hit * c_enr_ucrit:,.0f}"
+            
+        row["Max Enr. Sta to Kill"] = f"{max_enr_sta:,}"
+        row["Enr. Sta to Kill"] = f"{avg_enr_sta:,}"
+            
+        sb_table_data.append(row)
+        
+    if sb_table_data:
+        st.dataframe(
+            pd.DataFrame(sb_table_data),
+            column_config={"Icon": st.column_config.ImageColumn("Icon", help="Ore Icon")},
+            hide_index=True,
+            use_container_width=True,
+            height=600
+        )
+        
+# --- TAB 7: RUN OPTIMIZER ---
 with tab_optimizer:
     st.header("🚀 Monte Carlo Stat Optimizer")
     st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution. Ensure your total allocated points do not exceed your budget before running.")
