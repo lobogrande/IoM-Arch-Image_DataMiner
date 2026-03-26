@@ -372,7 +372,7 @@ with tab_upgrades:
     sub_internal, sub_external = st.tabs(["Internal Upgrades", "External Upgrades"])
     
     with sub_internal:
-        asc2_locked_rows =[17, 19, 34, 46, 52, 55]
+        asc2_locked_rows =[19, 27, 34, 46, 52, 55]
         
         # 1. Pre-filter active upgrades
         active_upgrades =[]
