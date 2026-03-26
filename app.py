@@ -315,8 +315,8 @@ if __name__ == "__main__":
     # Securely grab the password from .streamlit/secrets.toml (locally) or the Streamlit Dashboard
     try:
         CORRECT_KEY = st.secrets["BETA_KEY"]
-    except FileNotFoundError:
-        st.error("Missing secrets configuration! App locked.")
+    except Exception as e:
+        st.error(f"Missing secrets configuration! App locked. (Error: {e})")
         st.stop()
 
     # Generate a one-way cryptographic hash of the password
@@ -1189,21 +1189,22 @@ if __name__ == "__main__":
                     
                     # Create the In-Memory Dictionary Snapshot
                     base_state_dict = {
-                    'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                    'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
-                }
+                        'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                        'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                        'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                        'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
+                    }
                     
-                payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_file': temp_run_file}
-                
-                # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
-                if sys.platform == "linux":
-                    CPU_CORES = min(2, mp.cpu_count()) 
-                else:
-                    CPU_CORES = max(1, mp.cpu_count() - 1)
+                    # Correctly assigned 'state_dict' instead of the deprecated 'state_file'
+                    payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_dict': base_state_dict}
                     
+                    # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
+                    if sys.platform == "linux":
+                        CPU_CORES = min(2, mp.cpu_count()) 
+                    else:
+                        CPU_CORES = max(1, mp.cpu_count() - 1)
+                        
                     with mp.Pool(CPU_CORES) as pool:
                         spd = benchmark_hardware(payload, pool)
                         st.session_state.sims_per_sec = spd
