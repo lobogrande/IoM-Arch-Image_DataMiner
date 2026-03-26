@@ -71,9 +71,9 @@ def run_v43_diagnostic_scout():
                 # Log why it almost matched
                 if max_val > MATCH_THRESHOLD:
                     if target_state != 2:
-                        pass # Valid template, but no ore to the right
+                        pass # Valid template, but no block to the right
                     elif invalid_left:
-                        pass # Valid template and ore, but player has already mined to the left
+                        pass # Valid template and block, but player has already mined to the left
                     elif frames_since_trigger <= 3:
                         pass # Duplicate frame
                     else:

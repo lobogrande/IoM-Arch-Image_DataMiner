@@ -15,15 +15,15 @@ UNIFIED_ROOT = "Unified_Consensus_Inputs"
 SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
-def create_ore_mask():
+def create_block_mask():
     """Creates a 48x48 mask that ignores the top-right and corners (where icons live)."""
     mask = np.zeros((48, 48), dtype=np.uint8)
-    # We focus on a central circle where the core ore pattern is strongest
+    # We focus on a central circle where the core block pattern is strongest
     cv2.circle(mask, (24, 24), 18, 255, -1) 
     return mask
 
 def run_masked_diagnostic():
-    mask = create_ore_mask()
+    mask = create_block_mask()
     
     # Load Templates
     all_templates = []
@@ -48,7 +48,7 @@ def run_masked_diagnostic():
         
         matches = []
         for t in all_templates:
-            # We use the MASK here to only compare the 'heart' of the ore
+            # We use the MASK here to only compare the 'heart' of the block
             res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
             _, max_val, _, _ = cv2.minMaxLoc(res)
             matches.append((t['name'], max_val))

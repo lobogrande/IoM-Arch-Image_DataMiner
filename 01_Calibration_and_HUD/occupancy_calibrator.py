@@ -14,7 +14,7 @@ SLOT1_CENTER = (74, 261)
 STEP_X, STEP_Y = 59.1, 59.1
 
 # THE NEW GATES (Calibrated for Run 0 Noise)
-D_GATE = 6      # Lowered from 18 to catch 'quiet' ores
+D_GATE = 6      # Lowered from 18 to catch 'quiet' blocks
 O_GATE = 0.75   # Minimum masked template score
 
 def run_calibrated_audit():
@@ -22,12 +22,12 @@ def run_calibrated_audit():
     bg_templates = [cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48)) 
                     for f in os.listdir(cfg.TEMPLATE_DIR) if f.startswith("background")]
     
-    ore_templates = []
+    block_templates = []
     for f in os.listdir(cfg.TEMPLATE_DIR):
         if f.startswith("background"): continue
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is not None:
-            ore_templates.append({'name': f, 'img': cv2.resize(img, (48, 48))})
+            block_templates.append({'name': f, 'img': cv2.resize(img, (48, 48))})
 
     mask = np.zeros((48, 48), dtype=np.uint8)
     cv2.circle(mask, (24, 24), 18, 255, -1)
@@ -57,7 +57,7 @@ def run_calibrated_audit():
             if min_diff > D_GATE:
                 # STAGE 2: Masked Search
                 best_o = 0
-                for t in ore_templates:
+                for t in block_templates:
                     res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
                     _, score, _, _ = cv2.minMaxLoc(res)
                     if score > best_o: best_o = score

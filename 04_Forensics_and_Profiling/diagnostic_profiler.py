@@ -46,15 +46,15 @@ def get_slot_status_v456(roi_gray, full_img_bgr, rect, mask, templates, prev_bit
     # 2. Xhair Check (Restored)
     if is_xhair_present(full_img_bgr[rect[1]:rect[3], rect[0]:rect[2]]): return "1"
 
-    # 3. Ore Check
-    ore_s = 0.0
+    # 3. Block Check
+    block_s = 0.0
     for t_list in templates['active']:
         s = cv2.matchTemplate(roi_gray, t_list[0], cv2.TM_CCORR_NORMED, mask=mask).max()
         if not is_row1 and s < 0.85:
             s = max(s, cv2.matchTemplate(roi_gray, t_list[1], cv2.TM_CCORR_NORMED, mask=mask).max())
-        if s > ore_s: ore_s = s
+        if s > block_s: block_s = s
 
-    delta = ore_s - bg_s
+    delta = block_s - bg_s
     is_dirty = (delta > 0.065 if is_row1 else delta > 0.04) or (bg_s < 0.82)
     
     # Sticky Logic (Restored)
@@ -69,20 +69,20 @@ def run_v5_20_high_fidelity_hybrid():
     os.makedirs(f"{out_dir}/confirmed", exist_ok=True)
     
     p_right, p_left = cv2.imread("templates/player_right.png", 0), cv2.imread("templates/player_left.png", 0)
-    raw_ore_tpls = {'ore': {}, 'bg': []}
+    raw_block_tpls = {'block': {}, 'bg': []}
     
     for f in os.listdir(cfg.TEMPLATE_DIR):
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
         if img is None: continue
         img = cv2.resize(img, (48, 48))
-        if f.startswith("background"): raw_ore_tpls['bg'].append(img)
+        if f.startswith("background"): raw_block_tpls['bg'].append(img)
         elif "_" in f and any(f.startswith(tier) for tier in KNOWN_TIERS):
             parts = f.replace(".png", "").split("_")
             tier, state = parts[0], parts[1]
-            if tier not in raw_ore_tpls['ore']: raw_ore_tpls['ore'][tier] = {'act': [], 'sha': []}
+            if tier not in raw_block_tpls['block']: raw_block_tpls['block'][tier] = {'act': [], 'sha': []}
             if state in ['act', 'sha']:
                 m5 = cv2.getRotationMatrix2D((24, 24), 5, 1.0)
-                raw_ore_tpls['ore'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
+                raw_block_tpls['block'][tier][state].append([img, cv2.warpAffine(img, m5, (48, 48))])
 
     files = sorted([f for f in os.listdir(buffer_root) if f.lower().endswith(('.png', '.jpg'))])
     std_mask, text_mask = get_combined_mask(False), get_combined_mask(True)
@@ -111,9 +111,9 @@ def run_v5_20_high_fidelity_hybrid():
             active_list = []
             allowed = [p for p, (m, x) in cfg.ORE_RESTRICTIONS.items() if m <= confirmed_count <= x]
             for tier in allowed:
-                if tier in raw_ore_tpls['ore']:
-                    for state in ['act', 'sha']: active_list.extend(raw_ore_tpls['ore'][tier][state])
-            runtime_tpls = {'active': active_list, 'bg': raw_ore_tpls['bg']}
+                if tier in raw_block_tpls['block']:
+                    for state in ['act', 'sha']: active_list.extend(raw_block_tpls['block'][tier][state])
+            runtime_tpls = {'active': active_list, 'bg': raw_block_tpls['bg']}
 
             # 2. Calculate DNA with Sticky Bits
             current_dna_bits, row1_clean = [], True

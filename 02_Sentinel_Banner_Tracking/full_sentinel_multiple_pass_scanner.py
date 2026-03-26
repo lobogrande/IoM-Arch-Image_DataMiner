@@ -121,8 +121,8 @@ def auditor_pass(full_map, templates):
             raw = cv2.imread(os.path.join(BUFFER_DIR, frames[c_idx]))
             cv2.imwrite(os.path.join(ev_path, f"F{entry['floor']}_Source.jpg"), raw)
             
-            ores, hud = perform_constrained_census(raw, entry['floor'], templates)
-            for s, t in ores.items(): writer.writerow([entry['name'], entry['floor'], s, t, entry['type']])
+            blocks, hud = perform_constrained_census(raw, entry['floor'], templates)
+            for s, t in blocks.items(): writer.writerow([entry['name'], entry['floor'], s, t, entry['type']])
             
             hud_path = os.path.join(BASE_DIR, "Audit_HUDs")
             if not os.path.exists(hud_path): os.makedirs(hud_path)

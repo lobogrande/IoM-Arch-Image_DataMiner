@@ -53,23 +53,23 @@ UI_EXT_SKILL_TEXT  = 250  # Size of the Skill Description (files ending in _2.pn
 
 # Card Core Alignment
 # X: Negative moves left, Positive moves right. Y: Negative moves up, Positive moves down.
-UI_EXT_CARD_CORE_X_OFFSET = 0
-UI_EXT_CARD_CORE_Y_OFFSET = -4 
+UI_EXT_CARD_CBLOCK_X_OFFSET = 0
+UI_EXT_CARD_CBLOCK_Y_OFFSET = -4 
 
 # --- NEW: CORE SCALING ---
-# Shrinks the inner Ore/Core image BEFORE it gets pasted onto the background.
+# Shrinks the inner Block/Core image BEFORE it gets pasted onto the background.
 # 1.0 = 100% (Original Size), 0.8 = 80%, 0.75 = 75%, etc.
-UI_CARD_CORE_SCALE = 0.7
+UI_CARD_CBLOCK_SCALE = 0.7
 
-# --- ORE CARDS ---
+# --- BLOCK CARDS ---
 # Width of the generated cards in the 4x7 grid
-UI_ORE_CARD_WIDTH = 100
-# Offsets specifically for Ore Card cores
-UI_ORE_CARD_X_OFFSET = 1
-UI_ORE_CARD_Y_OFFSET = -4
+UI_BLOCK_CARD_WIDTH = 100
+# Offsets specifically for Block Card cores
+UI_BLOCK_CARD_X_OFFSET = 1
+UI_BLOCK_CARD_Y_OFFSET = -4
 
-# Width of the ore icons inside the Ore Stats DataFrame table
-UI_ORE_TABLE_IMG_WIDTH = 40
+# Width of the block icons inside the Block Stats DataFrame table
+UI_BLOCK_TABLE_IMG_WIDTH = 40
 # ==============================================================================
 # ==============================================================================
 
@@ -80,7 +80,7 @@ if SIM_DIR not in sys.path:
     sys.path.append(SIM_DIR)
 
 from core.player import Player
-from core.ore import Ore
+from core.block import Block
 from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
 from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_eta_profiles
@@ -171,16 +171,16 @@ def render_centered_image(img_source, target_width):
     """
     st.markdown(html, unsafe_allow_html=True)
 
-def composite_card(bg_path, core_path, x_offset, y_offset):
+def composite_card(bg_path, cblock_path, x_offset, y_offset):
     """Dynamically overlays ANY core asset onto a dynamic background."""
     try:
         bg = Image.open(bg_path).convert("RGBA")
-        fg = Image.open(core_path).convert("RGBA")
+        fg = Image.open(cblock_path).convert("RGBA")
         
         # --- NEW: Scale the inner core down before pasting ---
-        if UI_CARD_CORE_SCALE != 1.0:
-            new_w = max(1, int(fg.width * UI_CARD_CORE_SCALE))
-            new_h = max(1, int(fg.height * UI_CARD_CORE_SCALE))
+        if UI_CARD_CBLOCK_SCALE != 1.0:
+            new_w = max(1, int(fg.width * UI_CARD_CBLOCK_SCALE))
+            new_h = max(1, int(fg.height * UI_CARD_CBLOCK_SCALE))
             fg = fg.resize((new_w, new_h), Image.NEAREST)
         
         # Apply the custom offsets to nudge the core into the perfect spot
@@ -439,8 +439,8 @@ if __name__ == "__main__":
         'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
     }
 
-    tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_ore_stats, tab_sandbox, tab_optimizer = st.tabs([
-        "📊 Base Stats", "⬆️ Upgrades", "🎴 Ore Cards", "📋 Calculated Player Stats", "🪨 Ore Stats", "🧪 Ore Hit Sandbox", "🚀 Run Optimizer"
+    tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_block_stats, tab_sandbox, tab_optimizer = st.tabs([
+        "📊 Base Stats", "⬆️ Upgrades", "🎴 Block Cards", "📋 Calculated Player Stats", "🪨 Block Stats", "🧪 Block Hit Sandbox", "🚀 Run Optimizer"
     ])
 
     # --- TAB 1: BASE STATS ---
@@ -506,7 +506,7 @@ if __name__ == "__main__":
             render_stat("Intelligence", 'Int')
         with col3:
             render_stat("Luck", 'Luck')
-            render_stat("Divinity", 'Div')
+            render_stat("Divine", 'Div')
         with col4:
             if p.asc2_unlocked:
                 render_stat("Corruption", 'Corr')
@@ -602,8 +602,8 @@ if __name__ == "__main__":
                             if tier > 0:
                                 bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{tier}.png")
                                 # Passed the explicit core path and offset here
-                                core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "20_Misc_Arch_Ability_face.png")
-                                comp_img = composite_card(bg_path, core_path, UI_EXT_CARD_CORE_X_OFFSET, UI_EXT_CARD_CORE_Y_OFFSET)
+                                cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "20_Misc_Arch_Ability_face.png")
+                                comp_img = composite_card(bg_path, cblock_path, UI_EXT_CARD_CBLOCK_X_OFFSET, UI_EXT_CARD_CBLOCK_Y_OFFSET)
                                 
                                 if comp_img:
                                     render_centered_image(comp_img, UI_EXT_IMG_CARD)
@@ -647,14 +647,33 @@ if __name__ == "__main__":
                                 key=widget_key, step=1, on_change=update_external_group, args=(widget_key, rows),
                                 label_visibility="collapsed"
                             )
+                            
+                            # --- INFERNAL BONUS DYNAMIC UI ---
+                            # If this is the Arch Ability Card (Row 20) and it is set to Tier 4
+                            if 20 in rows and st.session_state[widget_key] == 4:
+                                st.markdown("<div style='text-align: center; margin-top: 5px; color: #ff4b4b;'><small><b>Infernal Cooldown Bonus %</b></small></div>", unsafe_allow_html=True)
+                                
+                                inf_key = f"ext_inf_{group['id']}"
+                                if inf_key not in st.session_state:
+                                    # Convert decimal to percentage for UI (e.g. -0.125 -> -12.5)
+                                    st.session_state[inf_key] = float(p.arch_ability_infernal_bonus * 100.0)
+                                    
+                                def update_inf(k=inf_key):
+                                    p.arch_ability_infernal_bonus = st.session_state[k] / 100.0
+                                    p.set_external_level(20, 4) # Trigger W20 math refresh!
+                                    
+                                st.number_input(
+                                    "Inf Bonus", max_value=0.0, step=0.1, format="%.2f",
+                                    key=inf_key, on_change=update_inf, label_visibility="collapsed"
+                                )
 
-    # --- TAB 3: ORE CARDS ---
+    # --- TAB 3: BLOCK CARDS ---
     with tab_cards:
         # --- CUSTOM DIV1 HEADER ICON ---
         bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", "1.png")
-        core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "div1.png")
+        cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "div1.png")
         
-        comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_X_OFFSET, UI_ORE_CARD_Y_OFFSET)
+        comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
         if comp_img:
             # Scale down to a crisp header icon size (e.g., 40px wide)
             target_width = 40
@@ -668,12 +687,12 @@ if __name__ == "__main__":
             
             # Inject seamlessly alongside the title text
             icon_html = f'<img src="data:image/png;base64,{encoded}" style="vertical-align: middle; margin-right: 12px; margin-bottom: 6px; border-radius: 4px;">'
-            st.markdown(f"<h3>{icon_html}Ore Card Collection</h3>", unsafe_allow_html=True)
+            st.markdown(f"<h3>{icon_html}Block Card Collection</h3>", unsafe_allow_html=True)
         else:
             # Fallback if assets are missing
-            st.subheader("🎴 Ore Card Collection")
+            st.subheader("🎴 Block Card Collection")
             
-        ore_types =['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
+        block_types =['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
         
         # Loop over the 4 Tiers (Rows)
         for tier_num in range(1, 5):
@@ -682,10 +701,10 @@ if __name__ == "__main__":
             if tier_num == 4 and not p.asc2_unlocked:
                 continue
                 
-            # Create exactly 7 columns for the 7 Ore types
+            # Create exactly 7 columns for the 7 Block types
             cols_cards = st.columns(7)
             
-            for col_idx, o_type in enumerate(ore_types):
+            for col_idx, o_type in enumerate(block_types):
                 card_id = f"{o_type}{tier_num}"
                 widget_key = f"card_{card_id}"
                 
@@ -703,12 +722,12 @@ if __name__ == "__main__":
                         # --- DYNAMIC CARD COMPOSITING ---
                         if user_tier > 0:
                             bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{user_tier}.png")
-                            core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
+                            cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
                             
                             # Passing the new X Offset!
-                            comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_X_OFFSET, UI_ORE_CARD_Y_OFFSET)
+                            comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
                             if comp_img:
-                                render_centered_image(comp_img, UI_ORE_CARD_WIDTH)
+                                render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
                             else:
                                 st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div><br>", unsafe_allow_html=True)
                         else:
@@ -803,54 +822,54 @@ if __name__ == "__main__":
                     st.write(f"**Gleaming Multiplier:** {p.gleaming_floor_multi:,.2f}x")
                     st.write(f"**Infernal Multiplier:** {p.infernal_multiplier:,.4f}x")
 
-    # --- TAB 5: ORE STATS ---
-    with tab_ore_stats:
-        st.subheader("🪨 Ore Compendium")
+    # --- TAB 5: BLOCK STATS ---
+    with tab_block_stats:
+        st.subheader("🪨 Block Compendium")
         
-        col_ore_toggle, col_ore_floor = st.columns([1, 1])
-        with col_ore_toggle:
+        col_block_toggle, col_block_floor = st.columns([1, 1])
+        with col_block_toggle:
             show_modified = st.toggle("Show Modified Stats (Applies player multipliers, cards, and floor scaling)")
         
         target_floor = 1
         if show_modified:
-            with col_ore_floor:
+            with col_block_floor:
                 target_floor = st.number_input("Calculate scaling for Floor Level:", min_value=1, value=int(p.current_max_floor), step=1)
                 
         st.divider()
 
-        FRAG_NAMES = {0: "Dirt", 1: "Common", 2: "Rare", 3: "Epic", 4: "Legendary", 5: "Mythic", 6: "Divinity"}
+        FRAG_NAMES = {0: "Dirt", 1: "Common", 2: "Rare", 3: "Epic", 4: "Legendary", 5: "Mythic", 6: "Divine"}
         table_data =[]
         
-        for ore_id, base in cfg.ORE_BASE_STATS.items():
-            # Hide Tier 4 ores if Asc2 is not unlocked
-            if not p.asc2_unlocked and ore_id.endswith('4'):
+        for block_id, base in cfg.BLOCK_BASE_STATS.items():
+            # Hide Tier 4 blocks if Asc2 is not unlocked
+            if not p.asc2_unlocked and block_id.endswith('4'):
                 continue
                 
-            img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{ore_id}.png")
-            img_uri = get_scaled_image_uri(img_path, UI_ORE_TABLE_IMG_WIDTH)
+            img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{block_id}.png")
+            img_uri = get_scaled_image_uri(img_path, UI_BLOCK_TABLE_IMG_WIDTH)
             frag_name = FRAG_NAMES.get(base.get('ft', 0), "Unknown")
             
             if show_modified:
                 # Feed it into the Layer 2 engine to get exact scaled math
-                ore_obj = Ore(ore_id, target_floor, p)
+                block_obj = Block(block_id, target_floor, p)
                 
                 # Apply Player Armor Penetration to the scaled armor!
-                eff_armor = max(0, ore_obj.armor - p.armor_pen)
+                eff_armor = max(0, block_obj.armor - p.armor_pen)
                 
                 table_data.append({
                     "Icon": img_uri,
-                    "Ore": ore_id.capitalize(),
-                    "HP": f"{ore_obj.hp:,}",
-                    "Eff. Armor": f"{eff_armor:,.0f} (Base: {ore_obj.armor:,})",
-                    "XP Yield": f"{ore_obj.xp:,.2f}",
-                    "Frag Yield": f"{ore_obj.frag_amt:,.3f}",
+                    "Block": block_id.capitalize(),
+                    "HP": f"{block_obj.hp:,}",
+                    "Eff. Armor": f"{eff_armor:,.0f} (Base: {block_obj.armor:,})",
+                    "XP Yield": f"{block_obj.xp:,.2f}",
+                    "Frag Yield": f"{block_obj.frag_amt:,.3f}",
                     "Frag Type": frag_name
                 })
             else:
                 # Just show the raw dictionary values
                 table_data.append({
                     "Icon": img_uri,
-                    "Ore": ore_id.capitalize(),
+                    "Block": block_id.capitalize(),
                     "Base HP": f"{base['hp']:,}",
                     "Base Armor": f"{base['a']:,}",
                     "Base XP": f"{base['xp']:,.2f}",
@@ -864,7 +883,7 @@ if __name__ == "__main__":
             st.dataframe(
                 df,
                 column_config={
-                    "Icon": st.column_config.ImageColumn("Icon", help="Ore Icon"),
+                    "Icon": st.column_config.ImageColumn("Icon", help="Block Icon"),
                 },
                 hide_index=True,
                 width="stretch",
@@ -873,8 +892,8 @@ if __name__ == "__main__":
 
     # --- TAB 6: HIT CALCULATOR (SANDBOX) ---
     with tab_sandbox:
-        st.header("🧪 Ore Hit Sandbox")
-        st.write("Experiment with stat distributions without worrying about your global point budget. Find the exact breakpoints for how many hits it takes to kill specific ores.")
+        st.header("🧪 Block Hit Sandbox")
+        st.write("Experiment with stat distributions without worrying about your global point budget. Find the exact breakpoints for how many hits it takes to kill specific blocks.")
         
         # --- MATH & FORMULAS (MOVED TO TOP) ---
         with st.expander("📚 Math & Formulas Breakdown (Click to expand)"):
@@ -949,7 +968,7 @@ if __name__ == "__main__":
                 render_sandbox_stat("Perception", 'Per', scol1)
                 render_sandbox_stat("Intelligence", 'Int', scol2)
                 render_sandbox_stat("Luck", 'Luck', scol1)
-                render_sandbox_stat("Divinity", 'Div', scol2)
+                render_sandbox_stat("Divine", 'Div', scol2)
                 if p.asc2_unlocked:
                     render_sandbox_stat("Corruption", 'Corr', scol1)
 
@@ -960,9 +979,9 @@ if __name__ == "__main__":
                     st.session_state["sandbox_floor"] = int(p.current_max_floor)
                     
                 target_floor = st.number_input("Target Floor:", min_value=1, step=1, key="sandbox_floor")
-                min_hits = st.number_input("Min Avg Hits to Kill:", min_value=1, value=1, step=1, help="Hides ores that take fewer hits than this.")
+                min_hits = st.number_input("Min Avg Hits to Kill:", min_value=1, value=1, step=1, help="Hides blocks that take fewer hits than this.")
                     
-                show_unreachable = st.checkbox("Show Ores Above Target Floor")
+                show_unreachable = st.checkbox("Show Blocks Above Target Floor")
                 show_crit_details = st.checkbox("Show Detailed Crit Multipliers")
 
         with col_table:
@@ -998,8 +1017,8 @@ if __name__ == "__main__":
             
             # Generate the Table
             sb_table_data =[]
-            for ore_id in cfg.ORE_BASE_STATS.keys():
-                tier = int(ore_id[-1])
+            for block_id in cfg.BLOCK_BASE_STATS.keys():
+                tier = int(block_id[-1])
                 
                 if not show_unreachable:
                     if tier == 2 and target_floor <= 50: continue
@@ -1007,8 +1026,8 @@ if __name__ == "__main__":
                     if tier == 4 and target_floor <= 150: continue
                 if tier == 4 and not sandbox_p.asc2_unlocked: continue
                     
-                ore_obj = Ore(ore_id, target_floor, sandbox_p)
-                eff_armor = max(0, ore_obj.armor - p_pen)
+                block_obj = Block(block_id, target_floor, sandbox_p)
+                eff_armor = max(0, block_obj.armor - p_pen)
                 
                 reg_hit = max(1.0, p_dmg - eff_armor)
                 enr_hit = max(1.0, p_enr_dmg - eff_armor)
@@ -1016,18 +1035,18 @@ if __name__ == "__main__":
                 edps = reg_hit * avg_mult
                 enr_edps = enr_hit * avg_enr_mult
                 
-                max_sta = math.ceil(ore_obj.hp / reg_hit)
-                avg_sta = math.ceil(ore_obj.hp / edps)
-                max_enr_sta = math.ceil(ore_obj.hp / enr_hit)
-                avg_enr_sta = math.ceil(ore_obj.hp / enr_edps)
+                max_sta = math.ceil(block_obj.hp / reg_hit)
+                avg_sta = math.ceil(block_obj.hp / edps)
+                max_enr_sta = math.ceil(block_obj.hp / enr_hit)
+                avg_enr_sta = math.ceil(block_obj.hp / enr_edps)
                 
-                img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{ore_id}.png")
-                img_uri = get_scaled_image_uri(img_path, UI_ORE_TABLE_IMG_WIDTH)
+                img_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{block_id}.png")
+                img_uri = get_scaled_image_uri(img_path, UI_BLOCK_TABLE_IMG_WIDTH)
                 
                 row = {
                     "Icon": img_uri,
-                    "Ore": ore_id.capitalize(),
-                    "HP": int(ore_obj.hp),
+                    "Block": block_id.capitalize(),
+                    "HP": int(block_obj.hp),
                     "Armor": int(eff_armor),
                     "EDPS": int(edps),
                     "Enr EDPS": int(enr_edps),
@@ -1057,21 +1076,21 @@ if __name__ == "__main__":
                 df_sandbox = pd.DataFrame(sb_table_data)
                 
                 # --- EXPLICIT UI FILTERS ---
-                all_ores = df_sandbox["Ore"].unique().tolist()
-                selected_ores = st.multiselect("🔍 Filter by Specific Ores", options=all_ores, default=[], placeholder="Select specific ores to filter...")
+                all_blocks = df_sandbox["Block"].unique().tolist()
+                selected_blocks = st.multiselect("🔍 Filter by Specific Blocks", options=all_blocks, default=[], placeholder="Select specific blocks to filter...")
                     
-                if selected_ores:
-                    df_sandbox = df_sandbox[df_sandbox["Ore"].isin(selected_ores)]
+                if selected_blocks:
+                    df_sandbox = df_sandbox[df_sandbox["Block"].isin(selected_blocks)]
                     
                 if min_hits > 1:
                     df_sandbox = df_sandbox[df_sandbox["Avg Hits"] >= min_hits]
 
-                st.markdown(f"#### 🎯 Target Breakpoints <span style='font-size: 0.6em; color: gray;'>({len(df_sandbox)} Ores Displayed)</span>", unsafe_allow_html=True)
+                st.markdown(f"#### 🎯 Target Breakpoints <span style='font-size: 0.6em; color: gray;'>({len(df_sandbox)} Blocks Displayed)</span>", unsafe_allow_html=True)
                 
                 # --- TOOLTIPS & COMMA FORMATTING ---
                 num_cfg = st.column_config.NumberColumn(format="%,d")
                 col_config = {
-                    "Icon": st.column_config.ImageColumn("Icon", help="Ore Icon"),
+                    "Icon": st.column_config.ImageColumn("Icon", help="Block Icon"),
                     "HP": num_cfg,
                     "Armor": num_cfg,
                     "EDPS": st.column_config.NumberColumn(format="%,d", help="Expected Damage Per Swing (Average over time factoring crits)"),
@@ -1120,7 +1139,7 @@ if __name__ == "__main__":
         col_goal, col_target = st.columns(2)
         with col_goal:
             opt_goal = st.selectbox(
-                "Optimization Target", ["Max Floor Push", "Max EXP Yield", "Fragment Farming", "Ore Card Farming"]
+                "Optimization Target", ["Max Floor Push", "Max EXP Yield", "Fragment Farming", "Block Card Farming"]
             )
         
         with col_target:
@@ -1131,9 +1150,9 @@ if __name__ == "__main__":
                     format_func=lambda x: {0:"Dirt", 1:"Common", 2:"Rare", 3:"Epic", 4:"Legendary", 5:"Mythic", 6:"Divine"}.get(x)
                 )
                 target_metric = f"frag_{frag_tier}_per_min"
-            elif opt_goal == "Ore Card Farming":
-                ore_target = st.text_input("Target Ore ID (e.g., com1, myth3)", value="myth3").lower()
-                target_metric = f"ore_{ore_target}_per_min"
+            elif opt_goal == "Block Card Farming":
+                block_target = st.text_input("Target Block ID (e.g., com1, myth3)", value="myth3").lower()
+                target_metric = f"block_{block_target}_per_min"
             elif opt_goal == "Max EXP Yield":
                 target_metric = "xp_per_min"
             else:
@@ -1170,11 +1189,12 @@ if __name__ == "__main__":
                     
                     # Create the In-Memory Dictionary Snapshot
                     base_state_dict = {
-                        'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                        'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                        'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                        'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level
-                    }
+                    'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                    'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
+                }
                     
                     payload = {'stats': {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}, 'fixed_stats': {}, 'state_dict': base_state_dict}
                     CPU_CORES = max(1, mp.cpu_count() - 1)
@@ -1289,7 +1309,8 @@ if __name__ == "__main__":
                     'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                     'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
                     'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level
+                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
                 }
 
                 # AUTO-BENCHMARK FAILSAFE
@@ -1461,7 +1482,7 @@ if __name__ == "__main__":
                         else:
                             val = final_summary_out[target_metric]
                             rate_1k = (val / 60.0) * 1000.0
-                            metric_str = "Fragments" if "frag" in target_metric else "Kills" if "ore" in target_metric else "EXP"
+                            metric_str = "Fragments" if "frag" in target_metric else "Kills" if "block" in target_metric else "EXP"
                             
                             # Clean, consolidated Banked Time readout
                             st.markdown(f"#### 💰 Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds</span>", unsafe_allow_html=True)
@@ -1474,16 +1495,16 @@ if __name__ == "__main__":
                             st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                             st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
                             
-                            # --- NEW ORE CARD ODDS SECTION ---
-                            if "ore_" in target_metric:
+                            # --- NEW BLOCK CARD ODDS SECTION ---
+                            if "block_" in target_metric:
                                 st.divider()
-                                st.markdown(f"#### 🃏 Ore Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
+                                st.markdown(f"#### 🃏 Block Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
                                 
                                 odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
                                 
-                                # Extract the exact core image needed (e.g., "ore_myth3_per_min" -> "myth3")
-                                target_ore_id = target_metric.replace("ore_", "").replace("_per_min", "")
-                                core_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_ore_id}.png")
+                                # Extract the exact core image needed (e.g., "block_myth3_per_min" -> "myth3")
+                                target_block_id = target_metric.replace("block_", "").replace("_per_min", "")
+                                cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_block_id}.png")
                                 
                                 # Map backgrounds: Base=1(Com), Poly=2(Rare), Infernal=4(Leg)
                                 bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
@@ -1496,9 +1517,9 @@ if __name__ == "__main__":
                                             bg_tier = bg_mapping.get(drop_name, "1")
                                             bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
                                             
-                                            comp_img = composite_card(bg_path, core_path, UI_ORE_CARD_X_OFFSET, UI_ORE_CARD_Y_OFFSET)
+                                            comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
                                             if comp_img:
-                                                render_centered_image(comp_img, UI_ORE_CARD_WIDTH)
+                                                render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
                                             else:
                                                 st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
                                             

@@ -16,7 +16,7 @@ STEP_X, STEP_Y = 59.1, 59.1
 
 def calculate_texture_energy(roi):
     # The Laplacian measures the 'amount of edges' in an image
-    # Ores usually have higher variance (energy) than noisy floor gravel
+    # Blocks usually have higher variance (energy) than noisy floor gravel
     laplacian = cv2.Laplacian(roi, cv2.CV_64F)
     return laplacian.var()
 

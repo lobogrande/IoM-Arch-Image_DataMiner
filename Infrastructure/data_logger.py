@@ -123,7 +123,7 @@ with mss.mss() as sct:
                 fairy_pos = (max_loc[0] + (f_temp.shape[1]//2), max_loc[1] + (f_temp.shape[0]//2))
                 break
 
-        any_ores_on_board = False
+        any_blocks_on_board = False
 
         # 2. PER-SLOT PROCESSING
         for i, (cx, cy) in enumerate(SLOT_COORDS):
@@ -161,7 +161,7 @@ with mss.mss() as sct:
                         s.debug_color = (255, 128, 0) # Orange
                         break
 
-            # Ore Detection
+            # Block Detection
             found_active = False
             max_conf = 0
             for tier, t_imgs in all_templates['act'].items():
@@ -175,7 +175,7 @@ with mss.mss() as sct:
                             s.hits = 0
                         s.debug_color = (0, 255, 0) # Green
                         found_active = True
-                        any_ores_on_board = True
+                        any_blocks_on_board = True
                         
                         # Hit Detection
                         if tier in all_templates['hbar']:
@@ -217,12 +217,12 @@ with mss.mss() as sct:
             cv2.rectangle(debug_canvas, (grid_c*50, grid_r*50), (grid_c*50+48, grid_r*50+48), s.debug_color, -1)
 
         # 3. HIGH-SPEED OCR
-        if any_ores_on_board and not board_is_active:
+        if any_blocks_on_board and not board_is_active:
             h_cap = np.array(sct.grab(HEADER_ROI))
             h_inv = cv2.bitwise_not(cv2.cvtColor(h_cap, cv2.COLOR_BGRA2GRAY))
             current_floor = pytesseract.image_to_string(h_inv, config=TESS_CONFIG).strip()
             board_is_active = True
-        elif not any_ores_on_board:
+        elif not any_blocks_on_board:
             board_is_active = False
 
         cv2.imshow("Board Status (6x4)", debug_canvas)

@@ -14,7 +14,7 @@ ROW1_Y = 249.0
 
 def get_stand_x(slot_id):
     col = slot_id % 6
-    ore_x = ORE0_X + (col * STEP_X)
+    block_x = ORE0_X + (col * STEP_X)
     # Facing Right for 0-5, Left for 11
     return (ore_x - STAND_OFFSET) if slot_id < 6 else (ore_x + STAND_OFFSET)
 

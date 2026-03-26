@@ -80,7 +80,7 @@ def run_v26_home_anchor_audit():
                     is_new_floor = True
 
             # SIGNATURE 2: The Step-Down (Boss Clear fix for 99->100)
-            # Detects massive ore loss during HUD pulse
+            # Detects massive block loss during HUD pulse
             elif count_n >= 22 and count_n1 <= 19 and (hud_pulse > HUD_PULSE_THRES or player_reset):
                 is_new_floor = True
 

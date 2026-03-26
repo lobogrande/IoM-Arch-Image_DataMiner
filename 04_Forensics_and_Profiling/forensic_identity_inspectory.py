@@ -22,7 +22,7 @@ def run_forensic_inspector():
     cv2.circle(mask, (24, 24), 18, 255, -1)
 
     # 1. Load Templates
-    ore_templates = []
+    block_templates = []
     bg_templates = []
     for f in os.listdir(cfg.TEMPLATE_DIR):
         img = cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0)
@@ -31,7 +31,7 @@ def run_forensic_inspector():
         if f.startswith("background"):
             bg_templates.append({'name': f, 'img': img})
         else:
-            ore_templates.append({'name': f, 'img': img})
+            block_templates.append({'name': f, 'img': img})
 
     # 2. Load Floor Image
     run_path = os.path.join(UNIFIED_ROOT, f"Run_{TARGET_RUN}")
@@ -46,13 +46,13 @@ def run_forensic_inspector():
         cx, cy = int(SLOT1_CENTER[0]+(col*STEP_X)), int(SLOT1_CENTER[1]+(row*STEP_Y))
         roi = gray[cy-24:cy+24, cx-24:cx+24]
         
-        # Test Ore Matches (Masked)
-        ore_results = []
-        for t in ore_templates:
+        # Test Block Matches (Masked)
+        block_results = []
+        for t in block_templates:
             res = cv2.matchTemplate(roi, t['img'], cv2.TM_CCORR_NORMED, mask=mask)
             _, score, _, _ = cv2.minMaxLoc(res)
-            ore_results.append((t['name'], score, t['img']))
-        ore_results.sort(key=lambda x: x[1], reverse=True)
+            block_results.append((t['name'], score, t['img']))
+        block_results.sort(key=lambda x: x[1], reverse=True)
 
         # Test BG Matches (Standard - No Mask)
         bg_results = []
@@ -62,25 +62,25 @@ def run_forensic_inspector():
         bg_results.sort(key=lambda x: x[1], reverse=True)
 
         # Create Comparison Strip
-        best_ore_name, best_ore_score, best_ore_img = ore_results[0]
+        best_block_name, best_block_score, best_block_img = block_results[0]
         best_bg_name, best_bg_score, best_bg_img = bg_results[0]
 
         # Annotate images
         roi_color = raw_img[cy-24:cy+24, cx-24:cx+24].copy()
-        ore_vis = cv2.cvtColor(best_ore_img, cv2.COLOR_GRAY2BGR)
+        block_vis = cv2.cvtColor(best_block_img, cv2.COLOR_GRAY2BGR)
         bg_vis = cv2.cvtColor(best_bg_img, cv2.COLOR_GRAY2BGR)
 
         cv2.putText(roi_color, "RAW", (2, 10), 0, 0.3, (0,255,255), 1)
-        cv2.putText(ore_vis, f"ORE:{best_ore_score:.2f}", (2, 10), 0, 0.3, (0,255,0), 1)
+        cv2.putText(ore_vis, f"ORE:{best_block_score:.2f}", (2, 10), 0, 0.3, (0,255,0), 1)
         cv2.putText(bg_vis, f"BG:{best_bg_score:.2f}", (2, 10), 0, 0.3, (255,255,0), 1)
 
-        strip = np.hstack((roi_color, ore_vis, bg_vis))
+        strip = np.hstack((roi_color, block_vis, bg_vis))
         cv2.imwrite(f"Forensic_F{TARGET_FLOOR}_Slot{slot}.png", strip)
         
         print(f"\n[Slot {slot}]")
-        print(f"  Best Ore: {best_ore_score:.4f} ({best_ore_name})")
+        print(f"  Best Block: {best_block_score:.4f} ({best_block_name})")
         print(f"  Best BG : {best_bg_score:.4f} ({best_bg_name})")
-        print(f"  Delta   : {best_ore_score - (1.0 - best_bg_score):.4f}")
+        print(f"  Delta   : {best_block_score - (1.0 - best_bg_score):.4f}")
 
 if __name__ == "__main__":
     run_forensic_inspector()

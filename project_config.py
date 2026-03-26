@@ -97,7 +97,7 @@ ASC_BOSS_DATA = {
 
 # ==============================================================================
 # ORE APPEARANCE RANGES
-# Format: 'ore_id': (min_floor, max_floor)
+# Format: 'block_id': (min_floor, max_floor)
 # ==============================================================================
 ASC_ORE_RESTRICTIONS = {
     "asc1": {
@@ -145,7 +145,7 @@ ORE_RESTRICTIONS = ASC_ORE_RESTRICTIONS["asc1"]
 BOSS_DATA = ASC_BOSS_DATA["asc1"]
 
 
-# Base stats for every ore. 
+# Base stats for every block. 
 # hp = Health, xp = Base XP, a = Armor, ft = Fragment Type (e.g., 0-6), fa = Fragment Amount
 # project_config.py
 
@@ -154,7 +154,7 @@ BOSS_DATA = ASC_BOSS_DATA["asc1"]
 # ft = Fragment Type (0: Dirt, 1: Com, 2: Rare, 3: Epic, 4: Leg, 5: Myth, 6: Div)
 # fa = Fragment Amount
 # ==============================================================================
-ORE_BASE_STATS = {
+BLOCK_BASE_STATS = {
     # ----------------------------------- TIER 1 -----------------------------------
     'dirt1': {'hp': 100,   'hp100': 200,   'hp150': 400,   'xp': 0.05, 'a': 0,   'a100': 0,    'a150': 0,    'ft': 0, 'fa': 0},
     'com1':  {'hp': 250,   'hp100': 500,   'hp150': 1000,  'xp': 0.15, 'a': 5,   'a100': 7.5,  'a150': 7.5,  'ft': 1, 'fa': 0.01},

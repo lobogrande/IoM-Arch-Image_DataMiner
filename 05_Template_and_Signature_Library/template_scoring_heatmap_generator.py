@@ -15,7 +15,7 @@ STEP_X, STEP_Y = 59.1, 59.1
 UNIFIED_ROOT = "Unified_Consensus_Inputs"
 
 def run_truth_finder():
-    # 1. Load ALL Ore Templates into a list
+    # 1. Load ALL Block Templates into a list
     all_templates = []
     t_path = cfg.TEMPLATE_DIR
     for f in os.listdir(t_path):

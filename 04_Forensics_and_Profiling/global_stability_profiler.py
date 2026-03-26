@@ -27,25 +27,25 @@ def get_combined_mask(is_text_heavy_slot=False):
 def slot_worker(args):
     roi, mask, templates = args
     bg_s = max([cv2.matchTemplate(roi, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
-    ore_s = max([cv2.matchTemplate(roi, ore, cv2.TM_CCORR_NORMED, mask=mask).max() for ore in templates['active']])
-    return ore_s - bg_s
+    block_s = max([cv2.matchTemplate(roi, block, cv2.TM_CCORR_NORMED, mask=mask).max() for block in templates['active']])
+    return block_s - bg_s
 
 def run_v5_39_ultra():
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
     # Load Templates (Full Global Set)
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     for f in os.listdir(cfg.TEMPLATE_DIR):
         if f.startswith('.') or not f.lower().endswith('.png'): continue
         img = cv2.resize(cv2.imread(os.path.join(cfg.TEMPLATE_DIR, f), 0), (48, 48))
         if f.startswith("background"): raw_tpls['bg'].append(img)
         elif "_" in f:
             tier = f.split("_")[0]
-            if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = []
-            if len(raw_tpls['ore'][tier]) < 4: raw_tpls['ore'][tier].append(img)
+            if tier not in raw_tpls['block']: raw_tpls['block'][tier] = []
+            if len(raw_tpls['block'][tier]) < 4: raw_tpls['block'][tier].append(img)
 
     active_list = []
-    for t_list in raw_tpls['ore'].values(): active_list.extend(t_list)
+    for t_list in raw_tpls['block'].values(): active_list.extend(t_list)
     templates = {'active': active_list, 'bg': raw_tpls['bg']}
 
     executor = ThreadPoolExecutor(max_workers=24)

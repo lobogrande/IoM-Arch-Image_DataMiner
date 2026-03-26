@@ -35,7 +35,7 @@ def run_full_audit():
         # 1. Header Change (Movement in the Stage number area)
         h_flux = np.mean(cv2.absdiff(header, prev_header)) if prev_header is not None else 0
         
-        # 2. Grid Change (Movement in the ore board)
+        # 2. Grid Change (Movement in the block board)
         g_flux = np.mean(cv2.absdiff(grid, prev_grid)) if prev_grid is not None else 0
         
         # 3. Brightness (Helpful for detecting 'white-out' transitions)

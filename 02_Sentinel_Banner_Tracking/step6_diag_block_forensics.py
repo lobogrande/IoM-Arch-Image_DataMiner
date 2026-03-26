@@ -1,4 +1,4 @@
-# step6_diag_ore_forensics.py
+# step6_diag_block_forensics.py
 # Purpose: Deep mathematical analysis of specific missed identification slots.
 # Version: 2.0 (Architecture Aligned & Step 6 Mirrored)
 

@@ -1,5 +1,5 @@
 # diag_shadow_signal_forensics.py
-# Purpose: Isolate the "Latent Signal" in shadow ores to stop identity-flipping.
+# Purpose: Isolate the "Latent Signal" in shadow blocks to stop identity-flipping.
 # Version: 1.0 (Differential Analysis Pass)
 
 import sys, os, cv2, numpy as np, pandas as pd
@@ -23,7 +23,7 @@ def get_roi(img, col):
     return img[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
 
 def apply_pipelines(roi):
-    """Generates 4 distinct visual interpretations of the ore."""
+    """Generates 4 distinct visual interpretations of the block."""
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape)==3 else roi
     norm = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
     

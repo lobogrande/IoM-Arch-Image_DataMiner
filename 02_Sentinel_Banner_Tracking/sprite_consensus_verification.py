@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
 # --- FINAL CALIBRATED CONSTANTS ---
-ORE0_CENTER_HUD = (72, 255) # The actual pixel center of the first ore
+ORE0_CENTER_HUD = (72, 255) # The actual pixel center of the first block
 STEP = 59.0
 OFFSET = 41.0
 TPL_W, TPL_H = 40, 60
@@ -15,10 +15,10 @@ TPL_W, TPL_H = 40, 60
 def get_player_center(slot_id):
     col = slot_id % 6
     row = 0 if slot_id < 6 else 1
-    # Center of the Ore
+    # Center of the Block
     ocx = ORE0_CENTER_HUD[0] + (col * STEP)
     ocy = ORE0_CENTER_HUD[1] + (row * STEP)
-    # Stand position (Left of ore for S0-5, Right for S11)
+    # Stand position (Left of block for S0-5, Right for S11)
     scx = (ocx - OFFSET) if slot_id < 6 else (ocx + OFFSET)
     return int(scx), int(ocy)
 

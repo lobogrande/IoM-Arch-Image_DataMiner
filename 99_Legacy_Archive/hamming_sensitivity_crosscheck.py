@@ -45,12 +45,12 @@ def get_slot_status_worker(args):
     # Use the high-sensitivity 0.04 threshold found in v5.30
     bg_s = max([cv2.matchTemplate(roi_gray, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
     
-    ore_s = 0.0
+    block_s = 0.0
     for t_img in templates['active']:
         s = cv2.matchTemplate(roi_gray, t_img, cv2.TM_CCORR_NORMED, mask=mask).max()
-        if s > ore_s: ore_s = s
+        if s > block_s: block_s = s
 
-    delta = ore_s - bg_s
+    delta = block_s - bg_s
     return "1" if (delta > 0.04 or bg_s < 0.85) else "0"
 
 # --- FORENSIC ENGINE ---
@@ -61,7 +61,7 @@ def run_hamming_sensitivity_crosscheck():
     files = sorted([f for f in os.listdir(BUFFER_ROOT) if f.lower().endswith(('.png', '.jpg'))])
     
     # 1. LOAD TEMPLATES (Strict Filter)
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     for f in os.listdir("templates"):
         if f.startswith('.') or not f.lower().endswith('.png'): continue
         img = cv2.imread(os.path.join("templates", f), 0)
@@ -71,8 +71,8 @@ def run_hamming_sensitivity_crosscheck():
         elif "_" in f:
             tier = f.split("_")[0]
             if any(tier.startswith(t) for t in KNOWN_TIERS):
-                if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = []
-                raw_tpls['ore'][tier].append(img)
+                if tier not in raw_tpls['block']: raw_tpls['block'][tier] = []
+                raw_tpls['block'][tier].append(img)
 
     executor = ThreadPoolExecutor(max_workers=24)
     std_mask, txt_mask = get_combined_mask(False), get_combined_mask(True)
@@ -82,7 +82,7 @@ def run_hamming_sensitivity_crosscheck():
         allowed = [t for t, (low, high) in ORE_RESTRICTIONS.items() if low <= floor_context <= high]
         active_list = []
         for tier in allowed:
-            if tier in raw_tpls['ore']: active_list.extend(raw_tpls['ore'][tier])
+            if tier in raw_tpls['block']: active_list.extend(raw_tpls['block'][tier])
         
         runtime_tpls = {'active': active_list, 'bg': raw_tpls['bg']}
         tasks = []

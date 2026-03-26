@@ -52,4 +52,4 @@ with mss.mss() as sct:
 
 print(f"\n\nRecording Stopped. Total Frames: {frame_count}")
 print(f"Stored in: {os.path.abspath(BUFFER_DIR)}")
-print("Would you like the 'Auditor' script to scan these files for ores and floors now?")
+print("Would you like the 'Auditor' script to scan these files for blocks and floors now?")

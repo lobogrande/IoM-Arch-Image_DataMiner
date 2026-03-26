@@ -1,7 +1,7 @@
 # ==============================================================================
 # Script: optimizers/opt_card_farming.py
-# Layer 4: Specific Optimizer (Card/Ore Farming)
-# Description: Optimizes stat distribution to maximize kills of a SPECIFIC ore 
+# Layer 4: Specific Optimizer (Card/Block Farming)
+# Description: Optimizes stat distribution to maximize kills of a SPECIFIC block 
 #              type/tier. Displays output in Banked Arch Seconds.
 # ==============================================================================
 

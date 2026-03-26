@@ -1,5 +1,5 @@
-# diag_ore_id_accuracy.py
-# Purpose: Forensic audit of Row 4 ore identification accuracy using DNA-Gated Masked Competitive Logic.
+# diag_block_id_accuracy.py
+# Purpose: Forensic audit of Row 4 block identification accuracy using DNA-Gated Masked Competitive Logic.
 # Version: 3.8 (DNA Bit-Masking & Precision Resolution)
 
 import sys, os, cv2, numpy as np, pandas as pd
@@ -9,7 +9,7 @@ import project_config as cfg
 # CONFIG
 STEP1_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
-OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
+OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "block_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "debug_visuals")
 AI_DIM = 48
 ORE0_X, ORE0_Y = 72, 255
@@ -21,7 +21,7 @@ def get_spatial_mask():
     return mask
 
 def load_all_templates():
-    templates = {'ore': {}, 'bg': []}
+    templates = {'block': {}, 'bg': []}
     t_path = cfg.TEMPLATE_DIR
     if not os.path.exists(t_path): return templates
 
@@ -37,11 +37,11 @@ def load_all_templates():
             parts = f.split("_")
             if len(parts) < 2: continue
             tier, state = parts[0], parts[1]
-            if tier not in templates['ore']: templates['ore'][tier] = {'act': [], 'sha': []}
-            if state in ['act', 'sha']: templates['ore'][tier][state].append({'id': f, 'img': img})
+            if tier not in templates['block']: templates['block'][tier] = {'act': [], 'sha': []}
+            if state in ['act', 'sha']: templates['block'][tier][state].append({'id': f, 'img': img})
     return templates
 
-def run_ore_audit():
+def run_block_audit():
     if not os.path.exists(STEP1_CSV) or not os.path.exists(DNA_CSV):
         print("Error: Required CSV files missing (Step 1 or Step 2 output).")
         return
@@ -65,7 +65,7 @@ def run_ore_audit():
     row4_y = int(ORE0_Y + (3 * STEP))
 
     print(f"--- ORE ID AUDIT v3.8: DNA-GATED COMPETITIVE LOGIC ---")
-    print(f"Active Tiers: {len(templates['ore'])} | Background Templates: {len(templates['bg'])}")
+    print(f"Active Tiers: {len(templates['block'])} | Background Templates: {len(templates['bg'])}")
 
     for _, row in df_sample.iterrows():
         f_idx = row['frame_idx']
@@ -97,21 +97,21 @@ def run_ore_audit():
                 _, val, _, _ = cv2.minMaxLoc(res)
                 if val > best_bg['score']: best_bg = {'id': bg_tpl['id'], 'score': val}
 
-            # 2. Best Ore Identity
-            best_ore = {'tier': 'empty', 'score': 0.0, 'id': 'none'}
-            for tier, states in templates['ore'].items():
+            # 2. Best Block Identity
+            best_block = {'tier': 'empty', 'score': 0.0, 'id': 'none'}
+            for tier, states in templates['block'].items():
                 for state in ['act', 'sha']:
-                    for ore_tpl in states[state]:
-                        res = cv2.matchTemplate(roi, ore_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
+                    for block_tpl in states[state]:
+                        res = cv2.matchTemplate(roi, block_tpl['img'], cv2.TM_CCORR_NORMED, mask=mask)
                         _, score, _, _ = cv2.minMaxLoc(res)
                         if state == 'sha': score *= 1.05
-                        if score > best_ore['score']:
-                            best_ore = {'tier': tier, 'score': score, 'id': ore_tpl['id']}
+                        if score > best_block['score']:
+                            best_block = {'tier': tier, 'score': score, 'id': block_tpl['id']}
 
             # 3. Competitive Logic
             # Higher strictness since we already know the slot is occupied
-            is_valid = (best_ore['score'] > 0.82) and (best_ore['score'] - best_bg['score'] > 0.08)
-            detected = best_ore['tier'] if is_valid else "low_conf_ore"
+            is_valid = (best_block['score'] > 0.82) and (best_block['score'] - best_bg['score'] > 0.08)
+            detected = best_block['tier'] if is_valid else "low_conf_block"
             
             color = (0, 255, 0) if is_valid else (0, 165, 255) # Green for ID, Orange for low-conf
             cv2.rectangle(img_color, (x1, y1), (x1+AI_DIM, y1+AI_DIM), color, 1)
@@ -119,20 +119,20 @@ def run_ore_audit():
 
             results.append({
                 'frame': f_idx, 'slot': col, 'detected': detected,
-                'ore_score': round(best_ore['score'], 4),
+                'ore_score': round(best_block['score'], 4),
                 'bg_score': round(best_bg['score'], 4),
-                'margin': round(best_ore['score'] - best_bg['score'], 4),
-                'ore_id': best_ore['id'], 'bg_id': best_bg['id'], 'source': 'masked_id'
+                'margin': round(best_block['score'] - best_bg['score'], 4),
+                'block_id': best_block['id'], 'bg_id': best_bg['id'], 'source': 'masked_id'
             })
 
         cv2.imwrite(os.path.join(DEBUG_IMG_DIR, f"audit_v38_f{f_idx}.jpg"), img_color)
 
     audit_df = pd.DataFrame(results)
-    audit_df.to_csv(os.path.join(OUT_DIR, "ore_id_v3.8_gated.csv"), index=False)
+    audit_df.to_csv(os.path.join(OUT_DIR, "block_id_v3.8_gated.csv"), index=False)
     
     print("\n--- GATED DETECTION SUMMARY (v3.8) ---")
     print(audit_df['detected'].value_counts())
-    print(f"\n[DONE] Check 'ore_id_v3.8_gated.csv'. 'low_conf_ore' counts should be investigated.")
+    print(f"\n[DONE] Check 'block_id_v3.8_gated.csv'. 'low_conf_block' counts should be investigated.")
 
 if __name__ == "__main__":
-    run_ore_audit()
+    run_block_audit()

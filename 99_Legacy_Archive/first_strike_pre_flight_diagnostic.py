@@ -53,7 +53,7 @@ def get_adaptive_ocr(roi, digit_map):
             if found_digits[i] != found_digits[i-1]: res += found_digits[i]
     return res
 
-def get_ore_consensus(img_gray, slot_idx, templates, mask):
+def get_block_consensus(img_gray, slot_idx, templates, mask):
     cx = int(SLOT1_CENTER[0] + (slot_idx * STEP_X))
     cy = SLOT1_CENTER[1]
     roi = img_gray[cy-24:cy+24, cx-24:cx+24]
@@ -64,34 +64,34 @@ def get_ore_consensus(img_gray, slot_idx, templates, mask):
         bg_res = cv2.matchTemplate(roi, bg_img, cv2.TM_CCOEFF_NORMED).max()
         if bg_res > best_bg_score: best_bg_score = bg_res
 
-    best_ore = {'tier': 'empty', 'score': 0.0}
-    for tier, types in templates['ore'].items():
+    best_block = {'tier': 'empty', 'score': 0.0}
+    for tier, types in templates['block'].items():
         for state in ['act', 'sha']:
             for t_img in types[state]:
                 res = cv2.matchTemplate(roi, t_img, cv2.TM_CCORR_NORMED, mask=mask)
                 _, score, _, _ = cv2.minMaxLoc(res)
-                if score > best_ore['score']:
-                    best_ore = {'tier': tier, 'score': score}
+                if score > best_block['score']:
+                    best_block = {'tier': tier, 'score': score}
 
-    if best_ore['score'] > 0.80 and (best_ore['score'] - best_bg_score > 0.05):
-        return best_ore['tier']
+    if best_block['score'] > 0.80 and (best_block['score'] - best_bg_score > 0.05):
+        return best_block['tier']
     return "empty"
 
 def run_v11_1_audit():
     # Load Assets
     mask = get_spatial_mask()
     player_t = cv2.imread("templates/player_right.png", 0)
-    ore_tpls = {'ore': {}, 'bg': []}
+    block_tpls = {'block': {}, 'bg': []}
     for f in os.listdir("templates"):
         img = cv2.imread(f"templates/{f}", 0)
         if img is None: continue
         img = cv2.resize(img, (48, 48))
-        if f.startswith("background"): ore_tpls['bg'].append(img)
+        if f.startswith("background"): block_tpls['bg'].append(img)
         elif "_" in f:
             parts = f.split("_")
             tier, state = parts[0], parts[1]
-            if tier not in ore_tpls['ore']: ore_tpls['ore'][tier] = {'act': [], 'sha': []}
-            if state in ['act', 'sha']: ore_tpls['ore'][tier][state].append(img)
+            if tier not in block_tpls['block']: block_tpls['block'][tier] = {'act': [], 'sha': []}
+            if state in ['act', 'sha']: block_tpls['block'][tier][state].append(img)
 
     digit_map = {i: [] for i in range(10)}
     for f in os.listdir("digits"):
@@ -110,7 +110,7 @@ def run_v11_1_audit():
         "num": 1, "idx": 0, "slot": 0, "img": cv2.imread(os.path.join(BUFFER_ROOT, files[0])),
         "stage": get_adaptive_ocr(h_roi, digit_map),
         "fingerprint": get_hud_fingerprint(h_roi),
-        "ore": get_ore_consensus(f1_gray, 0, ore_tpls, mask)
+        "ore": get_block_consensus(f1_gray, 0, block_tpls, mask)
     }
 
     confirmed = []
@@ -136,18 +136,18 @@ def run_v11_1_audit():
                     cur_h_roi = img_gray[HEADER_ROI[0]:HEADER_ROI[1], HEADER_ROI[2]:HEADER_ROI[3]]
                     cur_stage = get_adaptive_ocr(cur_h_roi, digit_map)
                     cur_fp = get_hud_fingerprint(cur_h_roi)
-                    cur_ore = get_ore_consensus(img_gray, slot, ore_tpls, mask)
+                    cur_block = get_block_consensus(img_gray, slot, block_tpls, mask)
                     
                     # THE HARDENED REJECTION GATE
                     is_reject = False
-                    if slot == pending['slot'] and cur_ore == pending['ore'] and cur_ore != "empty":
-                        # If Ore matches, verify with OCR OR Fingerprint
+                    if slot == pending['slot'] and cur_block == pending['block'] and cur_block != "empty":
+                        # If Block matches, verify with OCR OR Fingerprint
                         if (cur_stage == pending['stage'] and cur_stage != "") or (cur_fp == pending['fingerprint']):
                             is_reject = True
                     
                     if is_reject:
                         canvas = np.hstack((cv2.resize(pending['img'], (400,500)), cv2.resize(img_bgr, (400,500))))
-                        cv2.putText(canvas, f"REJECT: S:{cur_stage} Ore:{cur_ore}", (10, 40), 0, 0.7, (0,0,255), 2)
+                        cv2.putText(canvas, f"REJECT: S:{cur_stage} Block:{cur_block}", (10, 40), 0, 0.7, (0,0,255), 2)
                         cv2.imwrite(f"{OUT}/rejects/Reject_F{i}.jpg", canvas)
                         continue
 
@@ -156,13 +156,13 @@ def run_v11_1_audit():
                     out_img = pending['img']
                     cx = int(SLOT1_CENTER[0] + (pending['slot'] * STEP_X))
                     cv2.rectangle(out_img, (cx-24, 261-24), (cx+24, 261+24), (0,255,255), 2)
-                    cv2.putText(out_img, f"Ore:{pending['ore']} S:{pending['stage']}", (20, 50), 0, 0.7, (0,255,255), 2)
+                    cv2.putText(out_img, f"Block:{pending['block']} S:{pending['stage']}", (20, 50), 0, 0.7, (0,255,255), 2)
                     cv2.imwrite(f"{OUT}/confirmed/Floor_{f_num:03}_Frame_{pending['idx']:05}.jpg", out_img)
                     
                     confirmed.append({"floor": f_num, "idx": pending['idx'], "stage": pending['stage']})
                     print(f"\n [OK] F{f_num} | S:{pending['stage']} | Frame:{pending['idx']}")
 
-                    pending = {"num": f_num+1, "idx": i, "slot": slot, "img": img_bgr.copy(), "stage": cur_stage, "fingerprint": cur_fp, "ore": cur_ore}
+                    pending = {"num": f_num+1, "idx": i, "slot": slot, "img": img_bgr.copy(), "stage": cur_stage, "fingerprint": cur_fp, "ore": cur_block}
 
     with open("Run_0_FloorMap_v11_1.json", 'w') as f: json.dump(confirmed, f, indent=4)
 

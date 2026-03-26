@@ -11,7 +11,7 @@ TEMPLATE_DIR = cfg.TEMPLATE_DIR
 
 def get_feature_mask():
     mask = np.zeros((48, 48), dtype=np.uint8)
-    # Surgical center-focus (Adjusted to 24x26 heart of the ore)
+    # Surgical center-focus (Adjusted to 24x26 heart of the block)
     cv2.rectangle(mask, (12, 20), (36, 44), 255, -1)
     return mask
 
@@ -33,15 +33,15 @@ def analyze_template_integrity_v52():
     
     for f in raw_files:
         if any(x in f for x in ["background", "negative"]): continue
-        ore_type = f.split("_")[0]
+        block_type = f.split("_")[0]
         img = cv2.imread(os.path.join(TEMPLATE_DIR, f), 0)
         if img is not None:
             # TRANSFORM: Focus on sharp features only
             feature_img = process_for_features(cv2.resize(img, (48, 48)))
-            if ore_type not in groups: groups[ore_type] = []
+            if block_type not in groups: groups[ore_type] = []
             groups[ore_type].append({'name': f, 'img': feature_img})
 
-    ore_types = sorted(groups.keys())
+    block_types = sorted(groups.keys())
     print(f"--- Feature-Emphasized Template Audit (v5.2) ---")
     print(f"[!] Using Edge Detection to isolate gem structures")
 
@@ -64,7 +64,7 @@ def analyze_template_integrity_v52():
 
     # 2. INTRA-CLASS COHESION
     print("\n[2] Checking Internal Structural Consistency...")
-    for ore_type in ore_types:
+    for block_type in block_types:
         t_list = groups[ore_type]
         if len(t_list) < 2: continue
         scores = [cv2.matchTemplate(t_list[i]['img'], t_list[j]['img'], cv2.TM_CCORR_NORMED, mask=mask).max() 

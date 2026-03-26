@@ -21,17 +21,17 @@ def on_click(x, y, button, pressed):
         clicks.append((int(x), int(y)))
         if len(clicks) == 1:
             print(f"Captured Top-Left Center: {clicks[0]}")
-            print("Now, click the CENTER of the BOTTOM-RIGHT ore (Slot 23).")
+            print("Now, click the CENTER of the BOTTOM-RIGHT block (Slot 23).")
         elif len(clicks) == 2:
             print(f"Captured Bottom-Right Center: {clicks[1]}")
             return False # Stop the listener
 
 def calculate_grid(tl, br):
-    # Calculate the total distance between the centers of the corner ores
+    # Calculate the total distance between the centers of the corner blocks
     total_dist_x = br[0] - tl[0]
     total_dist_y = br[1] - tl[1]
     
-    # Calculate the 'stride' (distance between each ore center)
+    # Calculate the 'stride' (distance between each block center)
     # Since there are 3 cols, there are 2 gaps (COLUMNS - 1)
     # Since there are 8 rows, there are 7 gaps (ROWS - 1)
     stride_x = total_dist_x / (COLUMNS - 1)
@@ -47,7 +47,7 @@ def calculate_grid(tl, br):
     return centers
 
 print("--- Interactive 2-Point Calibrator ---")
-print("1. Click the CENTER of the TOP-LEFT ore (Slot 0).")
+print("1. Click the CENTER of the TOP-LEFT block (Slot 0).")
 
 # Start listening for mouse clicks
 with mouse.Listener(on_click=on_click) as listener:
@@ -77,4 +77,4 @@ with mss.mss() as sct:
 
     cv2.imwrite("interactive_grid_check.png", frame)
     print("\nVerification saved as 'interactive_grid_check.png'.")
-    print("Verify if the markers are perfectly centered on the ores.")
+    print("Verify if the markers are perfectly centered on the blocks.")

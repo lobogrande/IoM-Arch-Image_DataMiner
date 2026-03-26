@@ -1,7 +1,7 @@
 # ==============================================================================
 # Script: core/ore.py
 # Version: 1.0.1 (Modular Architecture)
-# Description: Generates a distinct Ore object containing the final calculated 
+# Description: Generates a distinct Block object containing the final calculated 
 #              HP, Armor, XP, and Loot yields based on the floor tier scaling 
 #              and the player's card multipliers.
 # ==============================================================================
@@ -23,18 +23,18 @@ if ROOT_DIR not in sys.path:
 
 import project_config as cfg
 
-class Ore:
-    def __init__(self, ore_id, current_floor, player):
-        self.ore_id = ore_id
+class Block:
+    def __init__(self, block_id, current_floor, player):
+        self.block_id = block_id
         self.current_floor = current_floor
         
         # Pull Base Stats from configuration
-        base = cfg.ORE_BASE_STATS.get(ore_id, None)
+        base = cfg.BLOCK_BASE_STATS.get(block_id, None)
         if not base:
-            raise ValueError(f"Ore ID '{ore_id}' not found in project_config.py!")
+            raise ValueError(f"Block ID '{block_id}' not found in project_config.py!")
 
         # Pull Card Multipliers from the Player engine
-        hp_mult, exp_mult, loot_mult = player.get_card_bonuses(ore_id)
+        hp_mult, exp_mult, loot_mult = player.get_card_bonuses(block_id)
 
         # 1. Determine Floor Scaling for HP and Armor
         if player.asc2_unlocked and current_floor >= 150:
@@ -86,11 +86,11 @@ if __name__ == "__main__":
     p.asc2_unlocked = False
 
     # Test Floor 50 (Base stats)
-    ore_f50 = Ore('rare1', 50, p)
+    block_f50 = Block('rare1', 50, p)
     print(f"--- RARE1 (Poly Card) @ Floor 50 ---")
     print(f"HP: {ore_f50.hp} | Armor: {ore_f50.armor} | XP: {ore_f50.xp:.3f} | Loot: {ore_f50.frag_amt:.3f}")
 
     # Test Floor 101 (Scaled stats)
-    ore_f101 = Ore('rare1', 101, p)
+    block_f101 = Block('rare1', 101, p)
     print(f"\n--- RARE1 (Poly Card) @ Floor 101 ---")
     print(f"HP: {ore_f101.hp} | Armor: {ore_f101.armor} | XP: {ore_f101.xp:.3f} | Loot: {ore_f101.frag_amt:.3f}")

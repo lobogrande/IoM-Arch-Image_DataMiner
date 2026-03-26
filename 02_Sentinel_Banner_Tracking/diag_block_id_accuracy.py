@@ -1,5 +1,5 @@
-# diag_ore_id_accuracy.py
-# Purpose: Forensic Ore Identification with Structural and Physical Constraints.
+# diag_block_id_accuracy.py
+# Purpose: Forensic Block Identification with Structural and Physical Constraints.
 # Version: 13.0 (The Forensic Trinity: Triple-Sensor Fusion & Grain Analysis)
 
 import sys, os, cv2, numpy as np, pandas as pd
@@ -12,7 +12,7 @@ import project_config as cfg
 # CONFIG
 STEP1_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "sprite_homing_run_0.csv")
 DNA_CSV = os.path.join(cfg.DATA_DIRS["TRACKING"], "dna_sensor_final.csv")
-OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "ore_id_audit")
+OUT_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], "block_id_audit")
 DEBUG_IMG_DIR = os.path.join(OUT_DIR, "identity_verification")
 
 # ROI CONSTANTS
@@ -219,7 +219,7 @@ def process_single_frame(frame_data, dna_map, templates, buffer_dir):
                 fused = best_tex # Active remains Texture-Dominant
             
             # v13.0: Grain-Aware Affinity
-            # If the ROI is structurally "crystalline", boost complex ores
+            # If the ROI is structurally "crystalline", boost complex blocks
             affinity = 0.0
             if roi_comp > 450: # Likely faceted
                 if any(k in tier for k in ['rare', 'epic', 'leg', 'myth']): affinity += 0.05
@@ -287,7 +287,7 @@ def run_precision_audit():
     
     if all_results:
         audit_df = pd.DataFrame(all_results)
-        audit_path = os.path.join(OUT_DIR, "ore_id_v13.0_precision.csv")
+        audit_path = os.path.join(OUT_DIR, "block_id_v13.0_precision.csv")
         audit_df.to_csv(audit_path, index=False)
         print(f"\nSaved CSV to: {audit_path}")
         print(f"--- DETECTION SUMMARY ---\n{audit_df['detected'].value_counts()}")

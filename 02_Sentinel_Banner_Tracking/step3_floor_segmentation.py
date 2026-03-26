@@ -17,7 +17,7 @@ VERIFY_DIR = os.path.join(cfg.DATA_DIRS["TRACKING"], f"floor_verification_run_{R
 
 def despeckle_series(series, max_glitch_len=2):
     """
-    A surgical micro-filter to remove 1-to-2 frame falling ore glitches on Row 4.
+    A surgical micro-filter to remove 1-to-2 frame falling block glitches on Row 4.
     If the sequence shifts A -> B -> A within 2 frames, B is overwritten as noise.
     Genuine transitions (A -> B -> C) are preserved.
     """

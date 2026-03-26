@@ -47,8 +47,8 @@ def get_combined_mask(is_text_heavy_slot=False):
 def get_slot_status_worker(args):
     roi, mask, templates, is_row1 = args
     bg_s = max([cv2.matchTemplate(roi, bg, cv2.TM_CCORR_NORMED, mask=mask).max() for bg in templates['bg']])
-    ore_s = max([cv2.matchTemplate(roi, ore, cv2.TM_CCORR_NORMED, mask=mask).max() for ore in templates['ore_all']])
-    delta = ore_s - bg_s
+    block_s = max([cv2.matchTemplate(roi, block, cv2.TM_CCORR_NORMED, mask=mask).max() for block in templates['ore_all']])
+    delta = block_s - bg_s
     thresh = 0.08 if is_row1 else 0.05
     return "1" if (delta > thresh or bg_s < 0.83) else "0"
 
@@ -59,15 +59,15 @@ def run_v5_53_verified_auditor():
     os.makedirs(f"{OUT_DIR}/confirmed", exist_ok=True)
     
     # 1. LOAD TEMPLATES
-    raw_tpls = {'ore': {}, 'bg': []}
+    raw_tpls = {'block': {}, 'bg': []}
     for f in os.listdir("templates"):
         if f.startswith('.') or not f.lower().endswith('.png'): continue
         img = cv2.resize(cv2.imread(os.path.join("templates", f), 0), (48, 48))
         if f.startswith("background"): raw_tpls['bg'].append(img)
         elif "_" in f:
             tier = f.split("_")[0]
-            if tier not in raw_tpls['ore']: raw_tpls['ore'][tier] = []
-            raw_tpls['ore'][tier].append(img)
+            if tier not in raw_tpls['block']: raw_tpls['block'][tier] = []
+            raw_tpls['block'][tier].append(img)
 
     all_files = sorted([f for f in os.listdir(buffer_root) if f.lower().endswith(('.png', '.jpg'))])
     files = all_files[START_INDEX:END_INDEX] if END_INDEX else all_files[START_INDEX:]
@@ -79,9 +79,9 @@ def run_v5_53_verified_auditor():
     
     # Pre-calc DNA for Frame 0
     allowed_start = [t for t, (low, high) in ORE_RESTRICTIONS.items() if low <= START_FLOOR <= high]
-    init_ores = []
-    for t in allowed_start: init_ores.extend(raw_tpls['ore'].get(t, []))
-    init_tpls = {'ore_all': init_ores, 'bg': raw_tpls['bg']}
+    init_blocks = []
+    for t in allowed_start: init_blocks.extend(raw_tpls['block'].get(t, []))
+    init_tpls = {'ore_all': init_blocks, 'bg': raw_tpls['bg']}
     init_dna = []
     for c in range(24):
         r, col = divmod(c, 6)
@@ -117,10 +117,10 @@ def run_v5_53_verified_auditor():
         pixel_move = np.mean(cv2.absdiff(img_gray[200:500, :], last_gray[200:500, :]))
         if (hud_diff > 2.0 or pixel_move > 0.8) and lockout == 0:
             allowed_tiers = [t for t, (low, high) in ORE_RESTRICTIONS.items() if low <= confirmed_count <= high]
-            ore_all = []
+            block_all = []
             for t in allowed_tiers:
-                if t in raw_tpls['ore']: ore_all.extend(raw_tpls['ore'][t])
-            runtime_tpls = {'ore_all': ore_all, 'bg': raw_tpls['bg']}
+                if t in raw_tpls['block']: block_all.extend(raw_tpls['block'][t])
+            runtime_tpls = {'ore_all': block_all, 'bg': raw_tpls['bg']}
 
             tasks, task_indices = [], []
             for c in range(24):

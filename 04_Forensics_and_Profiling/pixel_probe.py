@@ -27,7 +27,7 @@ def run_probe():
     print("2. Click the BOTTOM-RIGHT of the [Stage: XX] number (Header).")
     print("3. Click the TOP-LEFT of the [Dig Site: XX] text (Top of Grid).")
     print("4. Click the BOTTOM-RIGHT of the [Dig Site: XX] text (Top of Grid).")
-    print("5. Click the CENTER of Slot 1 (Top-Left ore slot).")
+    print("5. Click the CENTER of Slot 1 (Top-Left block slot).")
     print("Press 'q' or ESC to exit when you have your numbers.")
 
     params = {'img': img}

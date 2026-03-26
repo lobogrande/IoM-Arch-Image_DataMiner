@@ -1,12 +1,12 @@
 # diag_shape_forensics.py
-# Purpose: Analyze physical silhouettes of ores to verify morphological consistency across all tiers.
+# Purpose: Analyze physical silhouettes of blocks to verify morphological consistency across all tiers.
 # Version: 1.2 (Clipping Detection & Stability Check)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
 
-# Expanded targets to map the "Geometric Soul" of every ore family
+# Expanded targets to map the "Geometric Soul" of every block family
 TARGET_FRAMES = {
     # TIER: [Frame, Slot, State]
     'dirt1': [[121, 0, 'act'], [122, 0, 'sha']],
@@ -23,14 +23,14 @@ DIM = int(48 * 1.20)
 ROW4_Y = int(ORE0_Y + (3 * STEP)) + 2
 
 def get_silhouette(roi_gray):
-    """Extracts a binary mask of the ore using adaptive thresholding."""
+    """Extracts a binary mask of the block using adaptive thresholding."""
     # Light blur to merge small noise into the background
     blurred = cv2.GaussianBlur(roi_gray, (5, 5), 0)
     
     # Otsu thresholding to find the strongest separation point
     _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    # Check central region to determine if we need to invert (ensure ore is white)
+    # Check central region to determine if we need to invert (ensure block is white)
     h, w = mask.shape
     center_region = mask[h//3:2*h//3, w//3:2*w//3]
     if np.mean(center_region) < 127:
@@ -46,7 +46,7 @@ def analyze_shape(mask):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours: return None
     
-    # Pick the largest blob (the ore)
+    # Pick the largest blob (the block)
     cnt = max(contours, key=cv2.contourArea)
     area = cv2.contourArea(cnt)
     

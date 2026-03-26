@@ -40,7 +40,7 @@ def get_silhouette(img_gray):
     """Produces binary geometry map for shape matching."""
     blurred = cv2.GaussianBlur(img_gray, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # Ensure ore (center) is white
+    # Ensure block (center) is white
     if thresh[SIDE_PX//2, SIDE_PX//2] == 0: thresh = cv2.bitwise_not(thresh)
     return thresh
 
@@ -52,7 +52,7 @@ def get_gradient_map(img_gray):
     return cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
 def load_templates():
-    """Loads ore standards and pre-calculates their Trinity blueprints."""
+    """Loads block standards and pre-calculates their Trinity blueprints."""
     res = {}
     t_path = cfg.TEMPLATE_DIR
     for f in os.listdir(t_path):
