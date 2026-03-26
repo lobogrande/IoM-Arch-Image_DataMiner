@@ -1205,7 +1205,10 @@ with tab_optimizer:
 
  # --- MONTE CARLO EXECUTION LOOP ---
     st.divider()
-    dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
+    
+    # Hidden for Production Beta. Change to True if you need to do UI testing later!
+    # dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
+    dev_mode = False
     
     if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
         st.write("---")
