@@ -263,6 +263,21 @@ with st.sidebar:
     st.header("💾 Export Data")
     st.write("Download your current UI configuration.")
     
+    # --- SYNC STATE BEFORE EXPORT ---
+    # Because the sidebar renders before the main tabs, we must explicitly force 
+    # the Player object to adopt the latest widget states before generating the JSON.
+    for k, v in st.session_state.items():
+        if k.startswith("stat_"):
+            stat_name = k.split("_")[1]
+            if stat_name in p.base_stats:
+                p.base_stats[stat_name] = int(v)
+        elif k.startswith("upg_"):
+            try:
+                upg_id = int(k.split("_")[1])
+                p.set_upgrade_level(upg_id, int(v))
+            except ValueError:
+                pass
+
     temp_export = os.path.join(ROOT_DIR, "temp_export.json")
     save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
     with open(temp_export, "r") as f:
