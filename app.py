@@ -876,6 +876,69 @@ if __name__ == "__main__":
         st.write("This is the exact mathematical output derived from your Base Stats, Upgrades, and Cards being fed into the Engine.")
         st.info("💡 **Verification Step:** The best way to ensure the AI gives you perfect results is to verify your inputs! Compare these numbers directly against the stats shown on your in-game Archaeology screen. If they match perfectly, your imported data is correct.")
         
+        with st.expander("🛠️ Stat Troubleshooter (Click here if your UI numbers don't match the game!)", expanded=False):
+            st.markdown("If a stat in the UI is **higher** than your game, you likely entered an upgrade level too high, allocated too many base stats, or forgot to account for an unequipped pet/skin. Select a mismatched stat below to pull up your **exact current inputs** for that formula:")
+            
+            troubleshoot_stat = st.selectbox(
+                "Select mismatched stat:",["(Select a Stat...)", "Damage", "Armor Pen", "Max Stamina", "Crit Chances & Multipliers", "EXP & Fragment Gain", "Mod Chances & Multipliers", "Abilities (Instacharge / Cooldowns)"],
+                label_visibility="collapsed"
+            )
+            
+            if troubleshoot_stat != "(Select a Stat...)":
+                # Hardcoded Dependency Maps based on Player.py formulas
+                TROUBLESHOOT_MAP = {
+                    "Damage": {"stats": ["Str", "Corr", "Div"], "upgs":[9, 15, 20, 25, 32, 34, 36, 47, 49, 51, 52], "exts":["Dino Skin", "Hestia Idol"]},
+                    "Armor Pen": {"stats": ["Per", "Int"], "upgs": [10, 17, 29, 33, 36], "exts": []},
+                    "Max Stamina": {"stats": ["Agi", "Corr"], "upgs":[3, 14, 23, 26, 28, 39, 54], "exts": []},
+                    "Crit Chances & Multipliers": {"stats":["Luck", "Div"], "upgs":[13, 18, 20, 30, 37, 40, 47, 49, 53], "exts":[]},
+                    "EXP & Fragment Gain": {"stats": ["Int", "Per", "Div"], "upgs":[4, 11, 21, 28, 35, 42, 45, 51], "exts": ["Axolotl Skin", "Geoduck Tribute"]},
+                    "Mod Chances & Multipliers": {"stats": ["Luck", "Div", "Corr"], "upgs":[5, 14, 16, 23, 24, 26, 33, 35, 38, 40, 43, 44, 48, 50, 52, 53, 54, 55], "exts": ["Archaeology Bundle"]},
+                    "Abilities (Instacharge / Cooldowns)": {"stats": ["Int", "Div"], "upgs":[18, 22, 29, 31, 32, 39, 50], "exts":["Arch Ability Card", "Avada Keda- Skill", "Block Bonker Skill"]}
+                }
+                
+                data = TROUBLESHOOT_MAP[troubleshoot_stat]
+                
+                # Dynamically extract all live external upgrade values
+                ext_vals = {}
+                for group in cfg.EXTERNAL_UI_GROUPS:
+                    ext_vals[group['name']] = int(p.external_levels.get(group['rows'][0], 0))
+                
+                t_col1, t_col2, t_col3 = st.columns(3)
+                
+                with t_col1:
+                    st.markdown("##### 📊 Base Stats")
+                    for s in data["stats"]:
+                        if s == 'Corr' and not p.asc2_unlocked: continue
+                        val = int(p.base_stats.get(s, 0))
+                        st.markdown(f"**{s}:** `{val}`")
+                        
+                with t_col2:
+                    st.markdown("##### ⬆️ Internal Upgrades")
+                    asc2_locked_rows =[19, 27, 34, 46, 52, 55]
+                    for u in data["upgs"]:
+                        if not p.asc2_unlocked and u in asc2_locked_rows: continue
+                        name = p.UPGRADE_DEF.get(u, [f"Upg {u}"])[0]
+                        val = int(p.upgrade_levels.get(u, 0))
+                        st.markdown(f"**{name}:** `{val}`")
+                        
+                with t_col3:
+                    st.markdown("##### 🌟 External Upgrades")
+                    if not data["exts"]:
+                        st.markdown("*(None apply)*")
+                    else:
+                        for e in data["exts"]:
+                            val = ext_vals.get(e, 0)
+                            st.markdown(f"**{e}:** `{val}`")
+                            
+                # Add conditional warning for common traps
+                if troubleshoot_stat == "Damage":
+                    st.warning("💡 **Tip:** Did you accidentally input levels for Dino Skin when you actually have Axolotl equipped in-game?")
+                elif troubleshoot_stat == "Armor Pen":
+                    st.warning("💡 **Tip:** Make sure your Intelligence matches exactly! The percentage-based scaling causes massive variations.")
+                elif troubleshoot_stat == "EXP & Fragment Gain":
+                    st.warning("💡 **Tip:** Don't forget to check your 'Total Infernal Cards' global input in the External Upgrades tab!")
+                    
+        st.divider()
         col_calc_1, col_calc_2, col_calc_3 = st.columns(3)
         
         with col_calc_1:
