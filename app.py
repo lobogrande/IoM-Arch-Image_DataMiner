@@ -1418,11 +1418,10 @@ if __name__ == "__main__":
         if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
             st.write("---")
             
-            # Clean up any stale ROI data from previous runs
-            if "roi_stat_results" in st.session_state:
-                del st.session_state["roi_stat_results"]
-            if "roi_upg_results" in st.session_state:
-                del st.session_state["roi_upg_results"]
+            # Clean up any stale ROI or Synthesis data from previous runs
+            if "roi_stat_results" in st.session_state: del st.session_state["roi_stat_results"]
+            if "roi_upg_results" in st.session_state: del st.session_state["roi_upg_results"]
+            if "synthesis_result" in st.session_state: del st.session_state["synthesis_result"]
             
             # ==========================================
             # DEV MODE INTERCEPT (Instant UI Testing)
@@ -2056,14 +2055,42 @@ if __name__ == "__main__":
                                         st.session_state.opt_results["best_final"] = final_meta_dist
                                         st.session_state.opt_results["final_summary_out"] = synth_summary
                                         st.session_state.opt_results["chart_hill_labels"] =["History Average", "🧬 Polished Meta-Build"]
-                                        st.session_state.opt_results["chart_hill_scores"] = [avg_history_score, best_data['sum_t'] / 75.0]
+                                        st.session_state.opt_results["chart_hill_scores"] =[avg_history_score, best_data['sum_t'] / 75.0]
                                         st.session_state.opt_results["chart_hist"] = dict(Counter(best_data['floors']))
+                                        
+                                        # Save locally so we can display it right below the button!
+                                        st.session_state.synthesis_result = final_meta_dist
                                         
                                         st.rerun()
 
                         with col_synth2:
                             if st.button("🗑️ Clear History (Visible Targets)", use_container_width=True):
                                 st.session_state.run_history =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
+                                st.rerun()
+                                
+                        # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
+                        if "synthesis_result" in st.session_state:
+                            st.success("✅ Synthesis Complete! The main charts above have been updated to reflect this build.")
+                            st.markdown("### 🧬 Synthesized Meta-Build Output")
+                            
+                            synth_stat_cols = st.columns(len(st.session_state.synthesis_result))
+                            for idx, (stat_name, allocated_pts) in enumerate(st.session_state.synthesis_result.items()):
+                                with synth_stat_cols[idx]:
+                                    with st.container(border=True):
+                                        img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
+                                        if os.path.exists(img_path):
+                                            render_centered_image(img_path, 250) 
+                                        else:
+                                            st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
+                                        
+                                        current_val = int(st.session_state.get(f"stat_{stat_name}", p.base_stats.get(stat_name, 0)))
+                                        delta = int(allocated_pts) - current_val
+                                        st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
+                            
+                            if st.button("✨ Apply Meta-Build to UI", use_container_width=True, key="apply_meta_build_btn"):
+                                for k, v in st.session_state.synthesis_result.items():
+                                    st.session_state[f"stat_{k}"] = int(v)
+                                    p.base_stats[k] = int(v)
                                 st.rerun()
 
             # ==========================================
