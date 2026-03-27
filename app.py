@@ -718,18 +718,18 @@ if __name__ == "__main__":
             
         block_types =['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']
         
-        # Loop over the 4 Tiers (Rows)
-        for tier_num in range(1, 5):
-            
-            # --- ASC2 LOCK LOGIC: Completely hide the 4th row to prevent spoilers ---
-            if tier_num == 4 and not p.asc2_unlocked:
-                continue
+        # Build the ordered list: Type then Tier
+        ordered_card_ids =[]
+        for o_type in block_types:
+            for tier_num in range(1, 5):
+                ordered_card_ids.append(f"{o_type}{tier_num}")
                 
-            # Create exactly 7 columns for the 7 Block types
-            cols_cards = st.columns(7)
+        # Loop over the cards in chunks of 9 columns
+        for row_start in range(0, len(ordered_card_ids), 9):
+            chunk = ordered_card_ids[row_start:row_start+9]
+            cols_cards = st.columns(9)
             
-            for col_idx, o_type in enumerate(block_types):
-                card_id = f"{o_type}{tier_num}"
+            for col_idx, card_id in enumerate(chunk):
                 widget_key = f"card_{card_id}"
                 
                 current_lvl = int(p.cards.get(card_id, 0))
