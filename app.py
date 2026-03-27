@@ -876,6 +876,30 @@ if __name__ == "__main__":
         st.write("This is the exact mathematical output derived from your Base Stats, Upgrades, and Cards being fed into the Engine.")
         st.info("💡 **Verification Step:** The best way to ensure the AI gives you perfect results is to verify your inputs! Compare these numbers directly against the stats shown on your in-game Archaeology screen. If they match perfectly, your imported data is correct.")
         
+        with st.expander("🛠️ Stat Troubleshooter (Click here if your UI numbers don't match the game!)", expanded=False):
+            st.markdown("If a stat in the UI is **higher** than your game, you likely entered an upgrade level too high, allocated too many base stats, or forgot to account for an unequipped pet/skin. Select a mismatched stat below to see exactly which inputs control it:")
+            
+            troubleshoot_stat = st.selectbox(
+                "Select mismatched stat:",["(Select a Stat...)", "Damage", "Armor Pen", "Max Stamina", "Crit Chances & Multipliers", "EXP & Fragment Gain", "Mod Chances & Multipliers", "Abilities (Instacharge / Cooldowns)"],
+                label_visibility="collapsed"
+            )
+            
+            if troubleshoot_stat == "Damage":
+                st.markdown("- **Base Stats:** Strength, Corruption (if Asc2), Divinity (via Upg 34)\n- **Flat Damage Upgrades:** 9, 15, 20, 25, 32, 49\n- **Damage % Multiplier Upgrades:** 25, 36, 47, 51, 52\n- **External:** Dino Skin, Hestia Idol\n\n*(💡 **Tip:** Did you accidentally input levels for Dino Skin when you actually have Axolotl equipped in-game?)*")
+            elif troubleshoot_stat == "Armor Pen":
+                st.markdown("- **Base Stats:** Perception (Flat Pen), Intelligence (% Pen Multiplier)\n- **Internal Upgrades:** 10, 17, 29, 33, 36\n\n*(💡 **Tip:** Make sure your Intelligence Base Stat matches exactly, as the % scaling can cause wild variations!)*")
+            elif troubleshoot_stat == "Max Stamina":
+                st.markdown("- **Base Stats:** Agility, Corruption (Reduces Max Sta)\n- **Internal Upgrades:** 14, 23, 26, 28, 39, 54")
+            elif troubleshoot_stat == "Crit Chances & Multipliers":
+                st.markdown("- **Base Stats:** Luck, Divinity (Super Crit Chance)\n- **Crit Chance Upgrades:** 13 (Base), 20, 37 (Super), 37, 49 (Ultra)\n- **Crit Damage Upgrades:** 13, 18 (Enrage), 30, 40, 47, 53")
+            elif troubleshoot_stat == "EXP & Fragment Gain":
+                st.markdown("- **Base Stats:** Intelligence (EXP), Perception (Frags), Divinity (EXP/Frags)\n- **EXP Upgrades:** 4, 11, 21, 28, 35, 45, 51\n- **Fragment Upgrades:** 21, 42\n- **External:** Axolotl Skin, Geoduck Tribute, Total Infernal Cards (Global)")
+            elif troubleshoot_stat == "Mod Chances & Multipliers":
+                st.markdown("- **Base Stats:** Luck, Divinity, Corruption (Multipliers)\n- **Chance Upgrades:** 14, 23, 24, 26, 33, 35, 38, 40, 43, 44, 50, 54\n- **Multiplier Upgrades:** 5, 16, 52, 53, 55\n- **External:** Archaeology Bundle (Golden Crosshair)")
+            elif troubleshoot_stat == "Abilities (Instacharge / Cooldowns)":
+                st.markdown("- **Base Stats:** Intelligence (Cooldowns), Divinity (Instacharge)\n- **Cooldown Upgrades:** 18, 22, 29, 31, 32\n- **Instacharge Upgrades:** 39, 50\n- **External:** Arch Ability Card, Avada Kedavra Skill, Block Bonker Skill")
+                
+        st.divider()
         col_calc_1, col_calc_2, col_calc_3 = st.columns(3)
         
         with col_calc_1:
