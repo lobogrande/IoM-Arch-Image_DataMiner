@@ -2073,7 +2073,7 @@ if __name__ == "__main__":
                                                 "avg_metrics": {} 
                                             }
                                             
-                                            meta_score = best_data['max']
+                                            meta_score = abs_max
                                             chart_label = "🏆 Verified God-Build"
                                             
                                         else:
