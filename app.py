@@ -1614,7 +1614,8 @@ if __name__ == "__main__":
                     "Include": True,
                     "Target": target_metric,
                     "Metric Score": round(final_summary_out.get(target_metric, 0), 2),
-                    "Avg Floor": round(final_summary_out.get("avg_floor", 0), 2)
+                    "Avg Floor": round(final_summary_out.get("avg_floor", 0), 2),
+                    "Max Floor": int(final_summary_out.get("abs_max_floor", 0))
                 }
                 history_entry.update(best_final) # Add the stats to the dictionary
                 st.session_state.run_history.append(history_entry)
@@ -1936,8 +1937,10 @@ if __name__ == "__main__":
                         st.write("*(Check the **Include** box to mix runs into your Meta-Build. Power Users: Mix runs from DIFFERENT targets to create Hybrid Builds!)*")
                         
                         df_history = pd.DataFrame(visible_history)
-                        cols = ['Include', 'Target', 'Metric Score', 'Avg Floor']
-                        cols += [c for c in df_history.columns if c not in cols]
+                        cols =['Include', 'Target', 'Metric Score', 'Avg Floor', 'Max Floor']
+                        # Safe fallback in case old history rows don't have Max Floor yet
+                        if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
+                        cols +=[c for c in df_history.columns if c not in cols]
                         df_history = df_history[cols]
                         
                         edited_df = st.data_editor(
@@ -1966,20 +1969,26 @@ if __name__ == "__main__":
                                     st.error("⚠️ You must leave at least 1 run checked to synthesize!")
                                 else:
                                     with st.spinner("Calculating seed, mapping neighborhood, and running deep Gradient Polish..."):
-                                        stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor"]]
+                                        stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor"]]
                                         
-                                        # 1. Calculate the starting Seed (Average)
+                                        # 1. BIFURCATED SEED GENERATION
                                         seed_dist = {}
-                                        for s in stat_keys:
-                                            seed_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
-                                            
-                                        target_budget = sum(valid_runs[-1][s] for s in stat_keys)
-                                        current_budget = sum(seed_dist.values())
-                                        
-                                        diff = target_budget - current_budget
-                                        if diff != 0:
-                                            max_stat = max(stat_keys, key=lambda k: seed_dist[k])
-                                            seed_dist[max_stat] += diff
+                                        if run_target_metric == "highest_floor":
+                                            # PEAK VARIANCE (Max Floor): Averages destroy extreme builds. 
+                                            # Find the absolute best God Run in history and use it as the mutation seed.
+                                            best_run = max(valid_runs, key=lambda r: r.get("Max Floor", 0))
+                                            for s in stat_keys: seed_dist[s] = best_run[s]
+                                        else:
+                                            # CONSISTENCY (Yield/XP): Averaging mathematically centers the plateau.
+                                            for s in stat_keys:
+                                                seed_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
+                                                
+                                            target_budget = sum(valid_runs[-1][s] for s in stat_keys)
+                                            current_budget = sum(seed_dist.values())
+                                            diff = target_budget - current_budget
+                                            if diff != 0:
+                                                max_stat = max(stat_keys, key=lambda k: seed_dist[k])
+                                                seed_dist[max_stat] += diff
                                             
                                         # 2. Generate Local Neighborhood (All valid 1-point swaps)
                                         cap_increase = int(p.u('H45'))
@@ -2049,19 +2058,28 @@ if __name__ == "__main__":
                                             "avg_metrics": {} 
                                         }
                                         
-                                        same_target_runs = [r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
+                                        # Chart mapping logic: Feed Absolute Max Floor into the chart if pushing
+                                        if run_target_metric == "highest_floor":
+                                            same_target_runs = [r.get("Max Floor", r["Metric Score"]) for r in valid_runs if r.get("Target") == run_target_metric]
+                                            meta_score = synth_summary["abs_max_floor"]
+                                            chart_label = "Highest God Run"
+                                        else:
+                                            same_target_runs = [r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
+                                            meta_score = best_data['sum_t'] / 75.0
+                                            chart_label = "History Average"
+                                            
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
                                         st.session_state.opt_results["best_final"] = final_meta_dist
                                         st.session_state.opt_results["final_summary_out"] = synth_summary
-                                        st.session_state.opt_results["chart_hill_labels"] =["History Average", "🧬 Polished Meta-Build"]
-                                        st.session_state.opt_results["chart_hill_scores"] =[avg_history_score, best_data['sum_t'] / 75.0]
+                                        st.session_state.opt_results["chart_hill_labels"] =[chart_label, "🧬 Polished Meta-Build"]
+                                        st.session_state.opt_results["chart_hill_scores"] =[avg_history_score, meta_score]
                                         st.session_state.opt_results["chart_hist"] = dict(Counter(best_data['floors']))
                                         
                                         # Save locally with telemetry so we can chart it below the button!
                                         st.session_state.synthesis_result = {
                                             "stats": final_meta_dist,
-                                            "meta_score": best_data['sum_t'] / 75.0,
+                                            "meta_score": meta_score,
                                             "history_scores": same_target_runs,
                                             "metric_name": run_target_metric
                                         }
