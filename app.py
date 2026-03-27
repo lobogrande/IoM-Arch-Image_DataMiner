@@ -1125,7 +1125,7 @@ if __name__ == "__main__":
         st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution. Ensure your total allocated points do not exceed your budget before running.")
 
         # --- PROJECTION DISCLAIMER ---
-        st.warning(
+        disclaimer_text = (
             "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
             "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
             "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
@@ -1134,6 +1134,12 @@ if __name__ == "__main__":
             "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
             "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
         )
+        
+        # Append the specific warning if Asc2 is checked
+        if p.asc2_unlocked:
+            disclaimer_text += "\n\n🌌 **Ascension 2 Note:** Because Asc2 unlocks the *Corruption* stat, the AI must search an entire extra dimension of math. Optimizations will naturally take longer to compute than Asc1 runs!"
+            
+        st.warning(disclaimer_text)
 
         # --- GOAL SELECTION ---
         col_goal, col_target = st.columns(2)
@@ -1365,7 +1371,8 @@ if __name__ == "__main__":
                     ui_prog_bar = st.progress(0, text="Booting up engine cores...")
                     def st_progress_callback(phase_name, r_idx, r_total, task_idx, task_total):
                         pct = min(100, max(0, int((task_idx / task_total) * 100)))
-                        ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims completed)")
+                        elapsed_now = time.time() - start_time
+                        ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims) | ⏱️ Elapsed: {elapsed_now:.1f}s / {time_limit_mins}m limit")
                     
                     time_limit_secs = time_limit_mins * 60
                     
