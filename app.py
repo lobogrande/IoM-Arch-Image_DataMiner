@@ -1698,6 +1698,7 @@ if __name__ == "__main__":
             if run_target_metric != "highest_floor" or dev_mode: tab_list.append("🃏 Card Drops")
             if show_loot: tab_list.append("🎒 Loot Breakdown")
             if show_wall: tab_list.append("🧱 The Wall")
+            tab_list.append("📚 Run History")
             
             ui_tabs = st.tabs(tab_list)
             tab_idx = 0
