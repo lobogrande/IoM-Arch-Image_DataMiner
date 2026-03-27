@@ -1994,142 +1994,110 @@ if __name__ == "__main__":
                                         EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in stat_keys}
 
                                         # ==========================================================
-                                        # BIFURCATED SYNTHESIS LOGIC
+                                        # UNIFIED MULTI-SEED TOURNAMENT SYNTHESIS
                                         # ==========================================================
+                                        candidates =[]
+                                        # 1. Guarantee the original runs are in the tournament pool
+                                        for r in valid_runs:
+                                            dist = {s: r[s] for s in stat_keys}
+                                            if dist not in candidates: candidates.append(dist)
+                                            
+                                        # 2. Add the Average Build
+                                        avg_dist = {}
+                                        for s in stat_keys: avg_dist[s] = int(round(sum(r[s] for r in valid_runs) / len(valid_runs)))
+                                        diff = sum(valid_runs[-1][s] for s in stat_keys) - sum(avg_dist.values())
+                                        if diff != 0: avg_dist[max(stat_keys, key=lambda k: avg_dist[k])] += diff
+                                        if avg_dist not in candidates: candidates.append(avg_dist)
+                                        
+                                        # 3. Multi-Seed Wide Mutation: +/- 1 and +/- 2 around EVERY checked run AND the Average Build!
+                                        base_dists = [ {s: r[s] for s in stat_keys} for r in valid_runs ] + [avg_dist]
+                                        for base_dist in base_dists:
+                                            for radius in [1, 2]:
+                                                for s_from in stat_keys:
+                                                    if base_dist[s_from] >= radius and not st.session_state.get(f"lock_check_{s_from}", False):
+                                                        for s_to in stat_keys:
+                                                            if s_from != s_to and base_dist[s_to] <= EFFECTIVE_CAPS[s_to] - radius and not st.session_state.get(f"lock_check_{s_to}", False):
+                                                                neighbor = base_dist.copy()
+                                                                neighbor[s_from] -= radius
+                                                                neighbor[s_to] += radius
+                                                                if neighbor not in candidates:
+                                                                    candidates.append(neighbor)
+                                                                    
+                                        # TOURNAMENT ROUND 1: 50 runs each
+                                        r1_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50)]
+                                        with mp.Pool(CPU_CORES) as pool:
+                                            res1 = pool.map(worker_simulate, r1_args)
+                                            
+                                        build_res = {}
+                                        for args, r in zip(r1_args, res1):
+                                            b_id = args['_b_id']
+                                            if b_id not in build_res: build_res[b_id] = {'sum_t': 0.0, 'sum_f': 0, 'floors':[]}
+                                            
+                                            t_val = float(r.get(run_target_metric, 0.0))
+                                            f_val = r.get("highest_floor", 0)
+                                            
+                                            build_res[b_id]['sum_t'] += t_val
+                                            build_res[b_id]['sum_f'] += f_val
+                                            build_res[b_id]['floors'].append(f_val)
+                                            
+                                        # SORTING LOGIC FOR ROUND 1: Ceiling Consistency vs Metric Average
+                                        def get_ceiling_score(floors, count=3):
+                                            sorted_f = sorted(floors)
+                                            return sum(sorted_f[-count:]) / float(count) if floors else 0
+                                            
                                         if run_target_metric == "highest_floor":
-                                            # PEAK VARIANCE: Multi-Seed Genetic Tournament
-                                            candidates = []
-                                            for r in valid_runs:
-                                                dist = {s: r[s] for s in stat_keys}
-                                                if dist not in candidates: candidates.append(dist)
-                                                
-                                            # Add the Average Build
-                                            avg_dist = {}
-                                            for s in stat_keys: avg_dist[s] = int(round(sum(r[s] for r in valid_runs) / len(valid_runs)))
-                                            diff = sum(valid_runs[-1][s] for s in stat_keys) - sum(avg_dist.values())
-                                            if diff != 0: avg_dist[max(stat_keys, key=lambda k: avg_dist[k])] += diff
-                                            if avg_dist not in candidates: candidates.append(avg_dist)
-                                            
-                                            # Multi-Seed Wide Mutation: Test +/- 1 AND +/- 2 around EVERY checked run!
-                                            for r in valid_runs:
-                                                base_dist = {s: r[s] for s in stat_keys}
-                                                for radius in [1, 2]:
-                                                    for s_from in stat_keys:
-                                                        if base_dist[s_from] >= radius and not st.session_state.get(f"lock_check_{s_from}", False):
-                                                            for s_to in stat_keys:
-                                                                if s_from != s_to and base_dist[s_to] <= EFFECTIVE_CAPS[s_to] - radius and not st.session_state.get(f"lock_check_{s_to}", False):
-                                                                    neighbor = base_dist.copy()
-                                                                    neighbor[s_from] -= radius
-                                                                    neighbor[s_to] += radius
-                                                                    if neighbor not in candidates:
-                                                                        candidates.append(neighbor)
-                                                                        
-                                            # TOURNAMENT ROUND 1: 50 runs each
-                                            r1_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50)]
-                                            with mp.Pool(CPU_CORES) as pool:
-                                                res1 = pool.map(worker_simulate, r1_args)
-                                                
-                                            build_res = {}
-                                            for args, r in zip(r1_args, res1):
-                                                b_id = args['_b_id']
-                                                if b_id not in build_res: build_res[b_id] = {'floors':[]}
-                                                build_res[b_id]['floors'].append(r.get("highest_floor", 0))
-                                                
-                                            # SORTING LOGIC: Ceiling Consistency
-                                            # Average of the Top 3 (Round 1) and Top 5 (Round 2) floors achieved. 
-                                            # Completely eliminates inferior builds that win via a single 1-in-500 fluke.
-                                            def get_ceiling_score(floors, count=3):
-                                                sorted_f = sorted(floors)
-                                                return sum(sorted_f[-count:]) / float(count) if floors else 0
-                                                
                                             top5_ids = sorted(build_res.keys(), key=lambda k: get_ceiling_score(build_res[k]['floors'], 3), reverse=True)[:5]
-                                            
-                                            # TOURNAMENT ROUND 2: 450 runs on top 5
-                                            r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in top5_ids for _ in range(450)]
-                                            with mp.Pool(CPU_CORES) as pool:
-                                                res2 = pool.map(worker_simulate, r2_args)
-                                                
-                                            for args, r in zip(r2_args, res2):
-                                                b_id = args['_b_id']
-                                                build_res[b_id]['floors'].append(r.get("highest_floor", 0))
-                                                
-                                            best_b_id = sorted(top5_ids, key=lambda k: get_ceiling_score(build_res[k]['floors'], 5), reverse=True)[0]
-                                            
-                                            best_data = build_res[best_b_id]
-                                            final_meta_dist = dict(best_b_id)
-                                            
-                                            abs_max = max(best_data['floors'])
-                                            avg_f = sum(best_data['floors']) / 500.0
-                                            
-                                            synth_summary = {
-                                                run_target_metric: abs_max,
-                                                "avg_floor": avg_f,
-                                                "abs_max_floor": abs_max,
-                                                "abs_max_chance": best_data['floors'].count(abs_max) / 500.0,
-                                                "floors": best_data['floors'],
-                                                "worst_val": min(best_data['floors']),
-                                                "avg_val": avg_f,
-                                                "runner_up_val": 0,
-                                                "avg_metrics": {} 
-                                            }
-                                            
-                                            meta_score = abs_max
-                                            chart_label = "🏆 Verified God-Build"
-                                            
                                         else:
-                                            # CONSISTENCY: Average + Neighborhood Polish (75 runs)
-                                            seed_dist = {}
-                                            for s in stat_keys: seed_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
-                                            diff = sum(valid_runs[-1][s] for s in stat_keys) - sum(seed_dist.values())
-                                            if diff != 0: seed_dist[max(stat_keys, key=lambda k: seed_dist[k])] += diff
+                                            top5_ids = sorted(build_res.keys(), key=lambda k: build_res[k]['sum_t'], reverse=True)[:5]
+                                        
+                                        # TOURNAMENT ROUND 2: 450 runs on top 5
+                                        r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in top5_ids for _ in range(450)]
+                                        with mp.Pool(CPU_CORES) as pool:
+                                            res2 = pool.map(worker_simulate, r2_args)
                                             
-                                            neighbors = [seed_dist]
-                                            for s_from in stat_keys:
-                                                if seed_dist[s_from] > 0 and not st.session_state.get(f"lock_check_{s_from}", False):
-                                                    for s_to in stat_keys:
-                                                        if s_from != s_to and seed_dist[s_to] < EFFECTIVE_CAPS[s_to] and not st.session_state.get(f"lock_check_{s_to}", False):
-                                                            neighbor = seed_dist.copy()
-                                                            neighbor[s_from] -= 1
-                                                            neighbor[s_to] += 1
-                                                            if neighbor not in neighbors: neighbors.append(neighbor)
-                                                            
-                                            verify_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in neighbors for _ in range(75)]
+                                        for args, r in zip(r2_args, res2):
+                                            b_id = args['_b_id']
                                             
-                                            with mp.Pool(CPU_CORES) as pool:
-                                                res_list = pool.map(worker_simulate, verify_args)
-                                                
-                                            build_results = {}
-                                            for args, r in zip(verify_args, res_list):
-                                                b_id = args['_b_id']
-                                                if b_id not in build_results: build_results[b_id] = {'sum_t': 0, 'sum_f': 0, 'floors': []}
-                                                build_results[b_id]['sum_t'] += float(r.get(run_target_metric, 0.0))
-                                                build_results[b_id]['sum_f'] += r.get("highest_floor", 0)
-                                                build_results[b_id]['floors'].append(r.get("highest_floor", 0))
-                                                
-                                            best_b_id = sorted(build_results.keys(), key=lambda k: (build_results[k]['sum_t'], build_results[k]['sum_f']), reverse=True)[0]
-                                            best_data = build_results[best_b_id]
-                                            final_meta_dist = dict(best_b_id)
+                                            t_val = float(r.get(run_target_metric, 0.0))
+                                            f_val = r.get("highest_floor", 0)
                                             
-                                            synth_summary = {
-                                                run_target_metric: best_data['sum_t'] / 75.0,
-                                                "avg_floor": best_data['sum_f'] / 75.0,
-                                                "abs_max_floor": max(best_data['floors']) if best_data['floors'] else 0,
-                                                "abs_max_chance": (best_data['floors'].count(max(best_data['floors'])) / 75.0) if best_data['floors'] else 0,
-                                                "floors": best_data['floors'],
-                                                "worst_val": min((d['sum_t']/75.0) for d in build_results.values()),
-                                                "avg_val": best_data['sum_t'] / 75.0,
-                                                "runner_up_val": sorted([d['sum_t']/75.0 for d in build_results.values()], reverse=True)[1] if len(build_results)>1 else best_data['sum_t']/75.0,
-                                                "avg_metrics": {} 
-                                            }
+                                            build_res[b_id]['sum_t'] += t_val
+                                            build_res[b_id]['sum_f'] += f_val
+                                            build_res[b_id]['floors'].append(f_val)
                                             
-                                            meta_score = best_data['sum_t'] / 75.0
-                                            chart_label = "🧬 Polished Meta-Build"
+                                        # SORTING LOGIC FOR ROUND 2
+                                        if run_target_metric == "highest_floor":
+                                            best_b_id = sorted(top5_ids, key=lambda k: get_ceiling_score(build_res[k]['floors'], 5), reverse=True)[0]
+                                        else:
+                                            best_b_id = sorted(top5_ids, key=lambda k: build_res[k]['sum_t'], reverse=True)[0]
+                                            
+                                        best_data = build_res[best_b_id]
+                                        final_meta_dist = dict(best_b_id)
+                                        
+                                        abs_max = max(best_data['floors'])
+                                        avg_f = best_data['sum_f'] / 500.0
+                                        
+                                        synth_summary = {
+                                            run_target_metric: abs_max if run_target_metric == "highest_floor" else best_data['sum_t'] / 500.0,
+                                            "avg_floor": avg_f,
+                                            "abs_max_floor": abs_max,
+                                            "abs_max_chance": best_data['floors'].count(abs_max) / 500.0,
+                                            "floors": best_data['floors'],
+                                            "worst_val": 0,
+                                            "avg_val": avg_f,
+                                            "runner_up_val": 0,
+                                            "avg_metrics": {} 
+                                        }
 
                                         # Chart mapping logic
                                         if run_target_metric == "highest_floor":
                                             same_target_runs =[r.get("Max Floor", r["Metric Score"]) for r in valid_runs if r.get("Target") == run_target_metric]
+                                            meta_score = abs_max
+                                            chart_label = "🏆 Verified God-Build"
                                         else:
-                                            same_target_runs = [r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
+                                            same_target_runs =[r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
+                                            meta_score = best_data['sum_t'] / 500.0
+                                            chart_label = "🧬 Polished Meta-Build"
                                             
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
