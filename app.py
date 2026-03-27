@@ -1275,7 +1275,24 @@ if __name__ == "__main__":
         # --- HARDWARE BENCHMARKING & ETA ---
         if "sims_per_sec" not in st.session_state:
             st.session_state.sims_per_sec = 0
-            st.session_state.eta_profiles = {}
+
+        # --- LIVE ETA RECALCULATION ---
+        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+        
+        DYNAMIC_BUDGET = int(sum(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE))
+        cap_increase = int(p.u('H45'))
+        EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
+        
+        eta_bounds = {}
+        for s in STATS_TO_OPTIMIZE:
+            if st.session_state.get(f"lock_check_{s}", False):
+                val = int(st.session_state.get(f"lock_val_{s}", 0))
+                eta_bounds[s] = (val, val)
+            else:
+                eta_bounds[s] = (0, EFFECTIVE_CAPS[s])
+                
+        live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
         with st.expander("🧠 How does the AI Optimizer work? (Click to read)"):
             st.markdown("""
@@ -1321,11 +1338,7 @@ if __name__ == "__main__":
                     with mp.Pool(CPU_CORES) as pool:
                         spd = benchmark_hardware(payload, pool)
                         st.session_state.sims_per_sec = spd
-                        
-                        budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
-                        cap_increase = int(p.u('H45'))
-                        caps = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
-                        st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
+                        st.rerun() # Force UI to immediately refresh with the new speed!
             
             if st.session_state.sims_per_sec > 0:
                 st.success(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second")
@@ -1371,13 +1384,15 @@ if __name__ == "__main__":
                 🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.
             """
             
-            if st.session_state.eta_profiles:
-                prof_key = next(k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice))
-                prof_data = st.session_state.eta_profiles[prof_key]
+            if st.session_state.sims_per_sec > 0:
+                prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
+                prof_data = live_eta_profiles[prof_key]
                 
                 # Append the ETA inside the dynamic box
                 preview_html += f"<br><br>⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>"
-            
+            else:
+                preview_html += "<br><br>⏱️ <b>Estimated Time:</b> Awaiting Benchmark..."
+                
             preview_html += "</div>"
             st.markdown(preview_html, unsafe_allow_html=True)
 
@@ -1448,14 +1463,12 @@ if __name__ == "__main__":
                         with mp.Pool(CPU_CORES) as pool:
                             spd = benchmark_hardware(payload, pool)
                             st.session_state.sims_per_sec = spd
-                            budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
-                            cap_increase = int(p.u('H45'))
-                            caps = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
-                            st.session_state.eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, budget, caps, spd)
+                            # Recalculate live profiles now that we have a speed
+                            live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, spd)
 
-                prof_key = next((k for k in st.session_state.eta_profiles.keys() if k.startswith(depth_choice)), None)
+                prof_key = next((k for k in live_eta_profiles.keys() if k.startswith(depth_choice)), None)
                 if prof_key:
-                    prof_data = st.session_state.eta_profiles[prof_key]
+                    prof_data = live_eta_profiles[prof_key]
                     step_size = prof_data['step']
                     st.info(f"⏱️ **Running {depth_choice} Search:** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
 

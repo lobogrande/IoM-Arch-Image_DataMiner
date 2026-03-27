@@ -275,14 +275,13 @@ def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     
     return test_iterations / elapsed if elapsed > 0 else 1
 
-def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=25, iter_p2=50, iter_p3=100):
-    """Calculates ETAs dynamically scaled to batch-processing Culling Factors."""
+def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, iter_p2=50, iter_p3=100):
+    """Calculates ETAs dynamically based on constrained bounds and lock checks."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
         "Deep (Step: 5)": {"step": 5}
     }
-    bounds = {s: (0, caps[s]) for s in stats_list}
     
     for name, data in profiles.items():
         step_1 = data["step"]
@@ -291,24 +290,32 @@ def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=25, iter
         
         # 1. Exact Phase 1 Builds
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
-        p1_sims = p1_builds * iter_p1 * 0.25
+        p1_sims = p1_builds * iter_p1 * 0.23  # Successive halving math average
         
-        # 2. Exact Phase 2 & 3 Builds (No artificial bloat multipliers)
-        mock_bounds_p2 = {s: (-step_1, step_1) for s in stats_list}
+        # 2. Exact Phase 2 & 3 Builds (Accounting for Locked Stats)
+        mock_bounds_p2 = {}
+        mock_bounds_p3 = {}
+        for s in stats_list:
+            if bounds[s][0] == bounds[s][1]: # The stat is locked
+                mock_bounds_p2[s] = (0, 0)
+                mock_bounds_p3[s] = (0, 0)
+            else:
+                mock_bounds_p2[s] = (-step_1, step_1)
+                mock_bounds_p3[s] = (-p3_radius, p3_radius)
+                
         p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2))
-        p2_sims = p2_builds * iter_p2 * 0.25
+        p2_sims = p2_builds * iter_p2 * 0.23
         
-        mock_bounds_p3 = {s: (-p3_radius, p3_radius) for s in stats_list}
         p3_builds = len(generate_distributions(stats_list, 0, 1, mock_bounds_p3))
-        p3_sims = p3_builds * iter_p3 * 0.25
+        p3_sims = p3_builds * iter_p3 * 0.23
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
         total_simulations = p1_sims + p2_sims + p3_sims
         
         # --- BATCH CULLING FACTOR ---
-        # Maps the pure-baseline benchmark to the high-efficiency chunked reality of grid search.
-        # A factor of 6.0 perfectly aligns 40-50 sims/sec hardware to ~2-minute execution times.
-        CULLING_FACTOR = 6.0
+        # A single map() benchmark has massive overhead. Chunked imap() is ~10x faster.
+        # Adjusted from 6.0 to 12.0 based on real-world Asc2 locked hardware profiling.
+        CULLING_FACTOR = 12.0
         effective_sims_sec = max(1, sims_per_second) * CULLING_FACTOR
         
         estimated_seconds = total_simulations / effective_sims_sec
