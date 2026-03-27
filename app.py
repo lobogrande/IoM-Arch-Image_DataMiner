@@ -314,11 +314,22 @@ if __name__ == "__main__":
             padding: 0.75rem !important;
         }
         
-        /* 5. Mathematically center text by stripping Streamlit's asymmetric clear-button padding */[data-testid="stNumberInput"] input {
+        /* 5. Make the Number Input a CSS Container for responsive centering */[data-testid="stNumberInput"] {
+            container-type: inline-size;
+        }
+        
+        /* 6. Strip default padding and center the text inside the input area */[data-testid="stNumberInput"] input {
             text-align: center !important;
             padding-left: 0 !important;
             padding-right: 0 !important;
             margin: 0 !important;
+        }
+        
+        /* 7. When wide enough for +/- buttons (~48px right), pad the left by 48px to find the true center! */
+        @container (min-width: 120px) {
+            [data-testid="stNumberInput"] input {
+                padding-left: 60px !important;
+            }
         }
         </style>
     """, unsafe_allow_html=True)
