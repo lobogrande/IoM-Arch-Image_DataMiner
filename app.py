@@ -1419,7 +1419,7 @@ if __name__ == "__main__":
         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
         
-        DYNAMIC_BUDGET = int(sum(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE))
+        DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
         cap_increase = int(p.u('H45'))
         EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
         
@@ -1455,7 +1455,10 @@ if __name__ == "__main__":
                             'total_infernal_cards': p.total_infernal_cards
                         }
                         
-                        bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                        # --- GUARANTEED STRESS-TEST BENCHMARK ---
+                        # We must test a "Glass Cannon" (High Str/Agi). If the user left their UI on 0 stats,
+                        # the benchmark will run instantly and provide a fake 10,000 sims/sec speed.
+                        bench_budget = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
                         bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
                         
                         if bench_budget > 0:
@@ -1606,7 +1609,7 @@ if __name__ == "__main__":
                         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         
-                        bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                        bench_budget = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
                         bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
                     
                         # Dump budget into Damage and Stamina to ensure it reaches deep floors
@@ -1637,10 +1640,8 @@ if __name__ == "__main__":
                     start_time = time.time()
                     STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                     if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-                    DYNAMIC_BUDGET = int(sum(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE))
+                    DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
                     FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}
-                    cap_increase = int(p.u('H45'))
-                    EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
                     
                     # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
                     if sys.platform == "linux":
