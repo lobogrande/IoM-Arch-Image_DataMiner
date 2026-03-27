@@ -1275,6 +1275,7 @@ if __name__ == "__main__":
         # dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
         dev_mode = False
         
+        st.caption("⚠️ **Note:** Do not change tabs or click other widgets while the engine is running, or it will abort the simulation!")
         if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
             st.write("---")
             
@@ -1428,248 +1429,283 @@ if __name__ == "__main__":
                                 chart_loot[name] = val
 
             # ==========================================
-            # UI RESULTS TELEMETRY (DYNAMIC RENDER)
+            # SAVE TO SESSION STATE FOR PERSISTENCE
             # ==========================================
             if best_final and final_summary_out:
-                if elapsed >= time_limit_secs:
-                    st.warning(f"⚠️ **Time Limit Reached!** Optimization safely aborted early at {elapsed:.1f} seconds. Showing the best build found so far.")
-                else:
-                    st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
-                
-                st.markdown("### 🏆 Optimal Stat Build")
-                st.write("*(Green/Red numbers show changes from your current UI allocation)*")
-                
-                stat_cols = st.columns(len(best_final))
-                for idx, (stat_name, allocated_pts) in enumerate(best_final.items()):
-                    with stat_cols[idx]:
-                        with st.container(border=True):
-                            img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
-                            if os.path.exists(img_path):
-                                render_centered_image(img_path, 250) 
-                            else:
-                                st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
-                            
-                            current_val = int(st.session_state.get(f"stat_{stat_name}", p.base_stats.get(stat_name, 0)))
-                            delta = int(allocated_pts) - current_val
-                            st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
-                
-                if st.button("✨ Apply Build to UI", use_container_width=True):
-                    for k, v in best_final.items():
-                        st.session_state[f"stat_{k}"] = int(v)
-                        p.base_stats[k] = int(v)
-                    st.rerun()
-
-                st.divider()
-
-                # ==========================================
-                # ADVANCED ANALYTICS DASHBOARD (TABS)
-                # ==========================================
-                st.markdown("### 📊 Advanced Analytics Dashboard")
-                tab_list =["📈 Performance"]
-                # Show Loot for any farming/EXP mode, Show Wall strictly for Floor Pushing
-                show_loot = (target_metric != "highest_floor" or dev_mode)
-                show_wall = (target_metric == "highest_floor" or dev_mode)
-                
-                if show_loot: tab_list.append("🎒 Loot Breakdown")
-                if show_wall: tab_list.append("🧱 The Wall")
-                
-                ui_tabs = st.tabs(tab_list)
-                tab_idx = 0
-                
-                # --- TAB 1: PERFORMANCE & CONFIDENCE ---
-                with ui_tabs[tab_idx]:
-                    tab_idx += 1
-                    perf_col1, perf_col2 = st.columns([1, 1.5])
-                    
-                    with perf_col1:
-                        if target_metric == "highest_floor":
-                            st.markdown("#### 🏆 Push Potential")
-                            
-                            # Use the specific telemetry calculated in parallel_worker.py
-                            abs_max = final_summary_out.get("abs_max_floor", final_summary_out.get(target_metric, 0))
-                            abs_chance = final_summary_out.get("abs_max_chance", 0) * 100
-                            avg_flr = final_summary_out.get("avg_floor", final_summary_out.get(target_metric, 0))
-                            
-                            st.metric("Absolute Max Floor (God Run)", f"Floor {abs_max:,.0f}")
-                            st.metric("God Run Probability", f"{abs_chance:.1f}%")
-                            st.metric("Average Consistency Floor", f"Floor {avg_flr:,.1f}")
-                        else:
-                            val = final_summary_out[target_metric]
-                            rate_1k = (val / 60.0) * 1000.0
-                            metric_str = "Fragments" if "frag" in target_metric else "Kills" if "block" in target_metric else "EXP"
-                            
-                            # Clean, consolidated Banked Time readout
-                            st.markdown(f"#### 💰 Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds</span>", unsafe_allow_html=True)
-                            st.metric("Yield", f"{rate_1k:,.1f}", label_visibility="collapsed")
-                            
-                            st.divider()
-                            
-                            # Clean, consolidated Real-Time readout
-                            # Clean, consolidated Real-Time readout
-                            st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
-                            st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
-                            
-                            # --- NEW BLOCK CARD ODDS SECTION ---
-                            if "block_" in target_metric:
-                                st.divider()
-                                st.markdown(f"#### 🃏 Block Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
-                                
-                                odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
-                                
-                                # Extract the exact core image needed (e.g., "block_myth3_per_min" -> "myth3")
-                                target_block_id = target_metric.replace("block_", "").replace("_per_min", "")
-                                cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_block_id}.png")
-                                
-                                # Map backgrounds: Base=1(Com), Poly=2(Rare), Infernal=4(Leg)
-                                bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
-                                
-                                cols_cards = st.columns(3)
-                                for idx, (drop_name, base_odds) in enumerate(odds.items()):
-                                    with cols_cards[idx]:
-                                        with st.container(border=True):
-                                            # --- RENDER DYNAMIC CARD ---
-                                            bg_tier = bg_mapping.get(drop_name, "1")
-                                            bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
-                                            
-                                            comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
-                                            if comp_img:
-                                                render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
-                                            else:
-                                                st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
-                                            
-                                            st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
-                                            st.divider()
-                                            
-                                            # --- MATH & YIELDS ---
-                                            if val > 0:
-                                                kills_50 = 0.693 * base_odds
-                                                kills_90 = 2.302 * base_odds
-                                                
-                                                def format_time(req_kills):
-                                                    rt_mins = req_kills / val
-                                                    rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
-                                                    arch_secs = req_kills / (val / 60.0)
-                                                    arch_1k = arch_secs / 1000.0
-                                                    return rt_str, arch_1k
-
-                                                rt_50, bk_50 = format_time(kills_50)
-                                                rt_90, bk_90 = format_time(kills_90)
-                                                
-                                                st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
-                                                st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
-                                            else:
-                                                st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
-
-                            st.divider()
-                            
-                            avg_flr = final_summary_out.get("avg_floor", 0)
-                            st.markdown(f"#### 🧱 Average Death<br><span style='font-size: 0.9em; color: gray;'>Floor reached per run</span>", unsafe_allow_html=True)
-                            st.metric("Avg Floor", f"Floor {avg_flr:,.1f}", label_visibility="collapsed")
-
-                    with perf_col2:
-                        # Streamlit Markdown header completely fixes the Plotly overlap bug
-                        st.markdown(
-                            "#### AI Convergence (Hill Climb) "
-                            "<span title='This chart shows how the AI narrowed down the best build across the 3 optimization phases. "
-                            "An upward curve means the engine successfully found significantly better builds as it zoomed in. "
-                            "A flat line means Phase 1 already hit the near-perfect build.' "
-                            "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
-                            unsafe_allow_html=True
-                        )
-                        df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score": chart_hill_scores})
-                        fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True)
-                        fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
-                        fig_hill.update_layout(margin=dict(l=10, r=20, t=10, b=20), height=200)
-                        st.plotly_chart(fig_hill, use_container_width=True)
-                        
-                        # Streamlit Markdown header
-                        st.markdown(
-                            "#### Engine Confidence Analysis "
-                            "<span title='Compares the Optimal build against the Worst, Average, and Runner-Up builds tested. "
-                            "A large gap between Optimal and Average proves your stats highly impact this target. A small gap between Runner-Up and Optimal "
-                            "shows the AI fine-tuned the absolute perfect micro-adjustments.' "
-                            "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
-                            unsafe_allow_html=True
-                        )
-                        df_conf = pd.DataFrame({
-                            "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
-                            "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[target_metric]]
-                        })
-                        fig_conf = px.bar(
-                            df_conf, x="Performance", y="Build Category", orientation='h', text_auto='.3s', color="Build Category",
-                            color_discrete_map={"Worst Tested": "#ff4b4b", "Average": "#ffa229", "Runner-Up": "#6495ED", "🏆 Optimal": "#4CAF50"}
-                        )
-                        fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200)
-                        st.plotly_chart(fig_conf, use_container_width=True)
-                # --- TAB 2: COLLATERAL LOOT (BAR CHART) ---
-                if show_loot:
-                    with ui_tabs[tab_idx]:
-                        tab_idx += 1
-                        st.markdown("#### Collateral Loot Distribution")
-                        st.write("On average, each minute of simulated combat yields the following collateral rewards alongside your target:")
-                        
-                        total_loot = sum(chart_loot.values()) if chart_loot else 1
-                        df_loot = pd.DataFrame(list(chart_loot.items()), columns=['Loot Tier', 'Amount'])
-                        df_loot['Label'] = df_loot['Amount'].apply(lambda x: f"{x:,.1f}  ({(x/total_loot)*100:.1f}%)")
-                        
-                        fig_loot = px.bar(
-                            df_loot, x='Loot Tier', y='Amount', text='Label', color='Loot Tier',
-                            color_discrete_sequence=px.colors.qualitative.Pastel
-                        )
-                        fig_loot.update_traces(textposition='outside')
-                        fig_loot.update_layout(showlegend=False, margin=dict(t=20, b=20), height=400)
-                        st.plotly_chart(fig_loot, use_container_width=True)
-
-                # --- TAB 3: THE WALL (HISTOGRAM) ---
-                if show_wall:
-                    with ui_tabs[tab_idx]:
-                        tab_idx += 1
-                        st.markdown("#### Death Distribution (The Brick Wall)")
-                        st.write("Out of the simulations run on the optimal build, this is exactly where your character died. High spikes indicate a hard scaling wall (usually enemy armor).")
-                        
-                        df_hist = pd.DataFrame(list(chart_hist.items()), columns=['Floor', 'Deaths'])
-                        # Sort the dataframe by Floor numerically so the x-axis reads chronologically
-                        df_hist['Floor'] = pd.to_numeric(df_hist['Floor'])
-                        df_hist = df_hist.sort_values(by='Floor')
-                        
-                        fig_hist = px.bar(df_hist, x='Floor', y='Deaths', text='Deaths')
-                        fig_hist.update_traces(marker_color='#ff4b4b', textposition='outside')
-                        fig_hist.update_layout(margin=dict(t=20, b=20), height=400, xaxis_type='category')
-                        st.plotly_chart(fig_hist, use_container_width=True)
-
-                        # --- STAMINA PLOT (NEW) ---
-                        if "stamina_trace" in final_summary_out:
-                            st.divider()
-                            st.markdown("#### Stamina Depletion Trace (Sample Run)")
-                            st.write("A simulated look at how your stamina drains floor-by-floor. Hover over the line to see your exact remaining stamina at the end of each floor.")
-                            
-                            # We still receive the granular arrays from the engine...
-                            trace_floors = final_summary_out["stamina_trace"]["floor"]
-                            trace_stamina = final_summary_out["stamina_trace"]["stamina"]
-                            
-                            df_stam = pd.DataFrame({
-                                "Floor": trace_floors,
-                                "Stamina": trace_stamina
-                            })
-                            
-                            # ...but we use Pandas to extract ONLY the final stamina value for each floor!
-                            # This guarantees a strictly ascending X-axis and completely fixes the diagonal line bugs.
-                            df_grouped = df_stam.groupby("Floor", as_index=False).last()
-                            
-                            fig_stam = px.line(
-                                df_grouped, 
-                                x="Floor", 
-                                y="Stamina",
-                                hover_data={"Floor": True, "Stamina": ":,.0f"}
-                            )
-                            # Fill area under the curve
-                            fig_stam.update_traces(line_color="#ffa229", fill='tozeroy', fillcolor="rgba(255, 162, 41, 0.2)")
-                            fig_stam.update_layout(
-                                margin=dict(t=20, b=20), 
-                                height=300,
-                                xaxis_title="Floor Level"
-                            )
-                            st.plotly_chart(fig_stam, use_container_width=True)
-
+                st.session_state.opt_results = {
+                    "best_final": best_final,
+                    "final_summary_out": final_summary_out,
+                    "elapsed": elapsed,
+                    "time_limit_secs": time_limit_secs,
+                    "run_target_metric": target_metric,
+                    "worst_val": worst_val,
+                    "avg_val": avg_val,
+                    "runner_up_val": runner_up_val,
+                    "chart_hill_scores": chart_hill_scores,
+                    "chart_hill_labels": chart_hill_labels,
+                    "chart_hist": chart_hist,
+                    "chart_loot": chart_loot,
+                    "show_loot": (target_metric != "highest_floor" or dev_mode),
+                    "show_wall": (target_metric == "highest_floor" or dev_mode)
+                }
             else:
                 st.error("Optimization failed or aborted before a single build could be tested.")
+
+        # ==========================================
+        # UI RESULTS TELEMETRY (PERSISTENT RENDER)
+        # ==========================================
+        # Because this is OUTSIDE the st.button() block, it will survive tab changes!
+        if "opt_results" in st.session_state:
+            res = st.session_state.opt_results
+            
+            best_final = res["best_final"]
+            final_summary_out = res["final_summary_out"]
+            elapsed = res["elapsed"]
+            time_limit_secs = res["time_limit_secs"]
+            run_target_metric = res["run_target_metric"]
+            worst_val = res["worst_val"]
+            avg_val = res["avg_val"]
+            runner_up_val = res["runner_up_val"]
+            chart_hill_scores = res["chart_hill_scores"]
+            chart_hill_labels = res["chart_hill_labels"]
+            chart_hist = res["chart_hist"]
+            chart_loot = res["chart_loot"]
+            show_loot = res["show_loot"]
+            show_wall = res["show_wall"]
+
+            if elapsed >= time_limit_secs:
+                st.warning(f"⚠️ **Time Limit Reached!** Optimization safely aborted early at {elapsed:.1f} seconds. Showing the best build found so far.")
+            else:
+                st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
+            
+            st.markdown("### 🏆 Optimal Stat Build")
+            st.write("*(Green/Red numbers show changes from your current UI allocation)*")
+            
+            stat_cols = st.columns(len(best_final))
+            for idx, (stat_name, allocated_pts) in enumerate(best_final.items()):
+                with stat_cols[idx]:
+                    with st.container(border=True):
+                        img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
+                        if os.path.exists(img_path):
+                            render_centered_image(img_path, 250) 
+                        else:
+                            st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
+                        
+                        current_val = int(st.session_state.get(f"stat_{stat_name}", p.base_stats.get(stat_name, 0)))
+                        delta = int(allocated_pts) - current_val
+                        st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
+            
+            if st.button("✨ Apply Build to UI", use_container_width=True):
+                for k, v in best_final.items():
+                    st.session_state[f"stat_{k}"] = int(v)
+                    p.base_stats[k] = int(v)
+                st.rerun()
+
+            st.divider()
+
+            # ==========================================
+            # ADVANCED ANALYTICS DASHBOARD (TABS)
+            # ==========================================
+            st.markdown("### 📊 Advanced Analytics Dashboard")
+            tab_list =["📈 Performance"]
+            
+            if show_loot: tab_list.append("🎒 Loot Breakdown")
+            if show_wall: tab_list.append("🧱 The Wall")
+            
+            ui_tabs = st.tabs(tab_list)
+            tab_idx = 0
+            
+            # --- TAB 1: PERFORMANCE & CONFIDENCE ---
+            with ui_tabs[tab_idx]:
+                tab_idx += 1
+                perf_col1, perf_col2 = st.columns([1, 1.5])
+                
+                with perf_col1:
+                    if run_target_metric == "highest_floor":
+                        st.markdown("#### 🏆 Push Potential")
+                        
+                        # Use the specific telemetry calculated in parallel_worker.py
+                        abs_max = final_summary_out.get("abs_max_floor", final_summary_out.get(run_target_metric, 0))
+                        abs_chance = final_summary_out.get("abs_max_chance", 0) * 100
+                        avg_flr = final_summary_out.get("avg_floor", final_summary_out.get(run_target_metric, 0))
+                        
+                        st.metric("Absolute Max Floor (God Run)", f"Floor {abs_max:,.0f}")
+                        st.metric("God Run Probability", f"{abs_chance:.1f}%")
+                        st.metric("Average Consistency Floor", f"Floor {avg_flr:,.1f}")
+                    else:
+                        val = final_summary_out[run_target_metric]
+                        rate_1k = (val / 60.0) * 1000.0
+                        metric_str = "Fragments" if "frag" in run_target_metric else "Kills" if "block" in run_target_metric else "EXP"
+                        
+                        # Clean, consolidated Banked Time readout
+                        st.markdown(f"#### 💰 Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds</span>", unsafe_allow_html=True)
+                        st.metric("Yield", f"{rate_1k:,.1f}", label_visibility="collapsed")
+                        
+                        st.divider()
+                        
+                        # Clean, consolidated Real-Time readout
+                        st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
+                        st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
+                        
+                        # --- NEW BLOCK CARD ODDS SECTION ---
+                        if "block_" in run_target_metric:
+                            st.divider()
+                            st.markdown(f"#### 🃏 Block Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
+                            
+                            odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
+                            
+                            # Extract the exact core image needed (e.g., "block_myth3_per_min" -> "myth3")
+                            target_block_id = run_target_metric.replace("block_", "").replace("_per_min", "")
+                            cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_block_id}.png")
+                            
+                            # Map backgrounds: Base=1(Com), Poly=2(Rare), Infernal=4(Leg)
+                            bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
+                            
+                            cols_cards = st.columns(3)
+                            for idx, (drop_name, base_odds) in enumerate(odds.items()):
+                                with cols_cards[idx]:
+                                    with st.container(border=True):
+                                        # --- RENDER DYNAMIC CARD ---
+                                        bg_tier = bg_mapping.get(drop_name, "1")
+                                        bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
+                                        
+                                        comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
+                                        if comp_img:
+                                            render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                                        else:
+                                            st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
+                                        
+                                        st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
+                                        st.divider()
+                                        
+                                        # --- MATH & YIELDS ---
+                                        if val > 0:
+                                            kills_50 = 0.693 * base_odds
+                                            kills_90 = 2.302 * base_odds
+                                            
+                                            def format_time(req_kills):
+                                                rt_mins = req_kills / val
+                                                rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
+                                                arch_secs = req_kills / (val / 60.0)
+                                                arch_1k = arch_secs / 1000.0
+                                                return rt_str, arch_1k
+
+                                            rt_50, bk_50 = format_time(kills_50)
+                                            rt_90, bk_90 = format_time(kills_90)
+                                            
+                                            st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
+                                            st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
+                                        else:
+                                            st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
+
+                        st.divider()
+                        
+                        avg_flr = final_summary_out.get("avg_floor", 0)
+                        st.markdown(f"#### 🧱 Average Death<br><span style='font-size: 0.9em; color: gray;'>Floor reached per run</span>", unsafe_allow_html=True)
+                        st.metric("Avg Floor", f"Floor {avg_flr:,.1f}", label_visibility="collapsed")
+
+                with perf_col2:
+                    # Streamlit Markdown header completely fixes the Plotly overlap bug
+                    st.markdown(
+                        "#### AI Convergence (Hill Climb) "
+                        "<span title='This chart shows how the AI narrowed down the best build across the 3 optimization phases. "
+                        "An upward curve means the engine successfully found significantly better builds as it zoomed in. "
+                        "A flat line means Phase 1 already hit the near-perfect build.' "
+                        "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
+                        unsafe_allow_html=True
+                    )
+                    df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score": chart_hill_scores})
+                    fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True)
+                    fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
+                    fig_hill.update_layout(margin=dict(l=10, r=20, t=10, b=20), height=200)
+                    st.plotly_chart(fig_hill, use_container_width=True)
+                    
+                    # Streamlit Markdown header
+                    st.markdown(
+                        "#### Engine Confidence Analysis "
+                        "<span title='Compares the Optimal build against the Worst, Average, and Runner-Up builds tested. "
+                        "A large gap between Optimal and Average proves your stats highly impact this target. A small gap between Runner-Up and Optimal "
+                        "shows the AI fine-tuned the absolute perfect micro-adjustments.' "
+                        "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
+                        unsafe_allow_html=True
+                    )
+                    df_conf = pd.DataFrame({
+                        "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
+                        "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[run_target_metric]]
+                    })
+                    fig_conf = px.bar(
+                        df_conf, x="Performance", y="Build Category", orientation='h', text_auto='.3s', color="Build Category",
+                        color_discrete_map={"Worst Tested": "#ff4b4b", "Average": "#ffa229", "Runner-Up": "#6495ED", "🏆 Optimal": "#4CAF50"}
+                    )
+                    fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200)
+                    st.plotly_chart(fig_conf, use_container_width=True)
+
+            # --- TAB 2: COLLATERAL LOOT (BAR CHART) ---
+            if show_loot:
+                with ui_tabs[tab_idx]:
+                    tab_idx += 1
+                    st.markdown("#### Collateral Loot Distribution")
+                    st.write("On average, each minute of simulated combat yields the following collateral rewards alongside your target:")
+                    
+                    total_loot = sum(chart_loot.values()) if chart_loot else 1
+                    df_loot = pd.DataFrame(list(chart_loot.items()), columns=['Loot Tier', 'Amount'])
+                    df_loot['Label'] = df_loot['Amount'].apply(lambda x: f"{x:,.1f}  ({(x/total_loot)*100:.1f}%)")
+                    
+                    fig_loot = px.bar(
+                        df_loot, x='Loot Tier', y='Amount', text='Label', color='Loot Tier',
+                        color_discrete_sequence=px.colors.qualitative.Pastel
+                    )
+                    fig_loot.update_traces(textposition='outside')
+                    fig_loot.update_layout(showlegend=False, margin=dict(t=20, b=20), height=400)
+                    st.plotly_chart(fig_loot, use_container_width=True)
+
+            # --- TAB 3: THE WALL (HISTOGRAM) ---
+            if show_wall:
+                with ui_tabs[tab_idx]:
+                    tab_idx += 1
+                    st.markdown("#### Death Distribution (The Brick Wall)")
+                    st.write("Out of the simulations run on the optimal build, this is exactly where your character died. High spikes indicate a hard scaling wall (usually enemy armor).")
+                    
+                    df_hist = pd.DataFrame(list(chart_hist.items()), columns=['Floor', 'Deaths'])
+                    # Sort the dataframe by Floor numerically so the x-axis reads chronologically
+                    df_hist['Floor'] = pd.to_numeric(df_hist['Floor'])
+                    df_hist = df_hist.sort_values(by='Floor')
+                    
+                    fig_hist = px.bar(df_hist, x='Floor', y='Deaths', text='Deaths')
+                    fig_hist.update_traces(marker_color='#ff4b4b', textposition='outside')
+                    fig_hist.update_layout(margin=dict(t=20, b=20), height=400, xaxis_type='category')
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+                    # --- STAMINA PLOT (NEW) ---
+                    if "stamina_trace" in final_summary_out:
+                        st.divider()
+                        st.markdown("#### Stamina Depletion Trace (Sample Run)")
+                        st.write("A simulated look at how your stamina drains floor-by-floor. Hover over the line to see your exact remaining stamina at the end of each floor.")
+                        
+                        # We still receive the granular arrays from the engine...
+                        trace_floors = final_summary_out["stamina_trace"]["floor"]
+                        trace_stamina = final_summary_out["stamina_trace"]["stamina"]
+                        
+                        df_stam = pd.DataFrame({
+                            "Floor": trace_floors,
+                            "Stamina": trace_stamina
+                        })
+                        
+                        # ...but we use Pandas to extract ONLY the final stamina value for each floor!
+                        # This guarantees a strictly ascending X-axis and completely fixes the diagonal line bugs.
+                        df_grouped = df_stam.groupby("Floor", as_index=False).last()
+                        
+                        fig_stam = px.line(
+                            df_grouped, 
+                            x="Floor", 
+                            y="Stamina",
+                            hover_data={"Floor": True, "Stamina": ":,.0f"}
+                        )
+                        # Fill area under the curve
+                        fig_stam.update_traces(line_color="#ffa229", fill='tozeroy', fillcolor="rgba(255, 162, 41, 0.2)")
+                        fig_stam.update_layout(
+                            margin=dict(t=20, b=20), 
+                            height=300,
+                            xaxis_title="Floor Level"
+                        )
+                        st.plotly_chart(fig_stam, use_container_width=True)
