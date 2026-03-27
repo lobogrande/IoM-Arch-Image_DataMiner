@@ -323,10 +323,21 @@ def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, it
         p3_sims = get_expected_runs(p3_builds, iter_p3)
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
-        total_simulations = p1_sims + p2_sims + p3_sims
         
-        effective_sims_sec = max(1.0, float(sims_per_second))
-        estimated_seconds = total_simulations / effective_sims_sec
+        # --- SURVIVAL WEIGHTING ---
+        # The benchmark measures a "Heavy" build (Floor 150+). 
+        # In grid search, most combinations are garbage and die instantly, taking a fraction of the time.
+        # We weight the simulations by their expected survival time relative to the benchmark.
+        weighted_p1 = p1_sims * 0.15 # 85% of Phase 1 builds die instantly
+        weighted_p2 = p2_sims * 0.60 # Phase 2 builds are closer to optimal
+        weighted_p3 = p3_sims * 1.00 # Phase 3 builds take the full benchmark time
+        
+        total_weighted_sims = weighted_p1 + weighted_p2 + weighted_p3
+        
+        # Add a 1.25x batching efficiency multiplier for multiprocessing imap chunking
+        effective_sims_sec = max(1.0, float(sims_per_second)) * 1.25
+        
+        estimated_seconds = total_weighted_sims / effective_sims_sec
         
         if estimated_seconds < 60:
             time_str = f"~{int(estimated_seconds)} seconds"
