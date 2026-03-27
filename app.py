@@ -1377,104 +1377,94 @@ if __name__ == "__main__":
             
             with col_bench:
                 st.write("#### 1. Hardware Benchmark")
-            st.write("*(Optional: Runs automatically on start if skipped)*")
-            if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
-                with st.spinner("Running 200 micro-simulations to test CPU speed..."):
-                    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
-                    if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-                    
-                    # Create the In-Memory Dictionary Snapshot
-                    base_state_dict = {
-                        'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                        'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                        'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                        'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
-                        'total_infernal_cards': p.total_infernal_cards
-                    }
-                    
-                    # --- GUARANTEED STRESS-TEST BENCHMARK ---
-                    # We must test a "Glass Cannon" (High Str/Agi). If the user left their UI on 0 stats,
-                    # the benchmark will run instantly and provide a fake 10,000 sims/sec speed.
-                    bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
-                    bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
-                    
-                    # Dump budget into Damage and Stamina to ensure it reaches deep floors
-                    if bench_budget > 0:
-                        bench_stats['Str'] = min(99, bench_budget)
-                        if 'Agi' in bench_stats:
-                            bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
-                            
-                    payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
-                    
-                    # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
-                    if sys.platform == "linux":
-                        CPU_CORES = min(2, mp.cpu_count()) 
-                    else:
-                        CPU_CORES = max(1, mp.cpu_count() - 1)
+                st.write("*(Optional: Runs automatically on start if skipped)*")
+                if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
+                    with st.spinner("Running 200 micro-simulations to test CPU speed..."):
+                        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                        if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         
-                    with mp.Pool(CPU_CORES) as pool:
-                        spd = benchmark_hardware(payload, pool)
-                        st.session_state.sims_per_sec = spd
-                        st.rerun() # Force UI to immediately refresh with the new speed!
-            
-            if st.session_state.sims_per_sec > 0:
-                st.success(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second")
-            else:
-                st.info("Awaiting Benchmark...")
-
-        with col_prof:
-            st.write("#### 2. Search Depth (Initial Step Size)")
-            
-            # Transparent labels that show exactly what the knob is doing
-            depth_labels = {
-                "Fast": "Fast (Step 15) - Best for quick checks",
-                "Standard": "Standard (Step 10) - Recommended balance",
-                "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
-            }
-            
-            depth_choice = st.radio(
-                "Select Search Depth", 
-                options=list(depth_labels.keys()), 
-                index=1, # Explicitly default to "Standard"
-                format_func=lambda x: depth_labels[x],
-                horizontal=False, 
-                label_visibility="collapsed"
-            )
-
-            st.divider()
-            st.write("#### 3. Execution Time Limit")
-            time_limit_mins = st.slider(
-                "Safely abort and return best build if time exceeds:", 
-                min_value=1, max_value=30, value=5, step=1, format="%d mins"
-            )
-            
-            # Derive the exact steps that will be used based on the choice
-            step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
-            step_2 = max(2, step_1 // 3)
-            step_3 = 1
-            
-            # Build the dynamic preview box
-            preview_html = f"""
-            <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
-                <b>Engine Execution Plan:</b><br>
-                🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
-                🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
-                🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.
-            """
-            
-            if st.session_state.sims_per_sec > 0:
-                prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
-                prof_data = live_eta_profiles[prof_key]
+                        base_state_dict = {
+                            'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                            'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                            'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                            'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                            'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                            'total_infernal_cards': p.total_infernal_cards
+                        }
+                        
+                        bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                        bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
+                        
+                        if bench_budget > 0:
+                            bench_stats['Str'] = min(99, bench_budget)
+                            if 'Agi' in bench_stats:
+                                bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
+                                
+                        payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
+                        
+                        if sys.platform == "linux":
+                            CPU_CORES = min(2, mp.cpu_count()) 
+                        else:
+                            CPU_CORES = max(1, mp.cpu_count() - 1)
+                            
+                        with mp.Pool(CPU_CORES) as pool:
+                            spd = benchmark_hardware(payload, pool)
+                            st.session_state.sims_per_sec = spd
+                            st.rerun() 
                 
-                # Append the ETA inside the dynamic box
-                preview_html += f"<br><br>⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>"
-            else:
-                preview_html += "<br><br>⏱️ <b>Estimated Time:</b> Awaiting Benchmark..."
+                if st.session_state.sims_per_sec > 0:
+                    st.success(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second")
+                else:
+                    st.info("Awaiting Benchmark...")
+
+            with col_prof:
+                st.write("#### 2. Search Depth (Initial Step Size)")
                 
-            preview_html += "</div>"
-            st.markdown(preview_html, unsafe_allow_html=True)
-            
+                depth_labels = {
+                    "Fast": "Fast (Step 15) - Best for quick checks",
+                    "Standard": "Standard (Step 10) - Recommended balance",
+                    "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
+                }
+                
+                depth_choice = st.radio(
+                    "Select Search Depth", 
+                    options=list(depth_labels.keys()), 
+                    index=1,
+                    format_func=lambda x: depth_labels[x],
+                    horizontal=False, 
+                    label_visibility="collapsed"
+                )
+
+                st.divider()
+                st.write("#### 3. Execution Time Limit")
+                time_limit_mins = st.slider(
+                    "Safely abort and return best build if time exceeds:", 
+                    min_value=1, max_value=30, value=5, step=1, format="%d mins"
+                )
+                
+                step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
+                step_2 = max(2, step_1 // 3)
+                step_3 = 1
+                
+                preview_html = f"""
+                <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
+                    <b>Engine Execution Plan:</b><br>
+                    🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
+                    🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
+                    🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.
+                """
+                
+                if st.session_state.sims_per_sec > 0:
+                    prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
+                    prof_data = live_eta_profiles[prof_key]
+                    preview_html += f"<br><br>⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>"
+                else:
+                    preview_html += "<br><br>⏱️ <b>Estimated Time:</b> Awaiting Benchmark..."
+                    
+                preview_html += "</div>"
+                st.markdown(preview_html, unsafe_allow_html=True)
+
+            # --- UN-INDENTED EXPLANATION TEXT ---
             st.divider()
             st.markdown("""
             **🧠 How does the AI Optimizer work?**
