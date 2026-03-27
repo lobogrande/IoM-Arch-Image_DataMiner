@@ -1256,24 +1256,26 @@ if __name__ == "__main__":
         st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution. Ensure your total allocated points do not exceed your budget before running.")
 
         # --- PROJECTION DISCLAIMER ---
-        disclaimer_text = (
-            "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
-            "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
-            "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
-            "**The Reality Check #1:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
-            "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
-            "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
-            "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
-            "**The Reality Check #2:** The engine calculates **100% Theoretical Efficiency**. In the Python simulator, 0.000 seconds pass between killing an ore and hitting the next one. "
-            "In the actual live game, minor animation delays, frame drops, and tick-rate transitions consume fractions of a second. "
-            "Because of this 'Animation Lag', you should expect your actual real-world Yields (XP/Frags) to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
-        )
+        with st.expander("⚠️ Important Disclaimer regarding Projections (Click to read)"):
+            disclaimer_text = (
+                "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
+                "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
+                "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
+                "**The Reality Check #1:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
+                "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
+                "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
+                "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
+                "**The Reality Check #2:** The engine calculates **100% Theoretical Efficiency**. In the Python simulator, 0.000 seconds pass between killing an ore and hitting the next one. "
+                "In the actual live game, minor animation delays, frame drops, and tick-rate transitions consume fractions of a second. "
+                "Because of this 'Animation Lag', you should expect your actual real-world Yields (XP/Frags) to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
+            )
         
-        # Append the specific warning if Asc2 is checked
-        if p.asc2_unlocked:
-            disclaimer_text += "\n\n🌌 **Ascension 2 Note:** Because Asc2 unlocks the *Corruption* stat, the AI must search an entire extra dimension of math. Optimizations will naturally take longer to compute than Asc1 runs!"
+            # Append the specific warning if Asc2 is checked
+            if p.asc2_unlocked:
+                disclaimer_text += "\n\n🌌 **Ascension 2 Note:** Because Asc2 unlocks the *Corruption* stat, the AI must search an entire extra dimension of math. Optimizations will naturally take longer to compute than Asc1 runs!"
             
-        st.warning(disclaimer_text)
+    
+            st.warning(disclaimer_text)
 
         # --- GOAL SELECTION ---
         col_goal, col_target = st.columns(2)
@@ -1364,22 +1366,22 @@ if __name__ == "__main__":
                 
         live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
-        with st.expander("🧠 How does the AI Optimizer work? (Click to read)"):
+        with st.expander("⚙️ Engine Tuning & Hardware Benchmark (Optional)", expanded=False):
             st.markdown("""
-            **1. The 3-Phase "Zoom-In" Grid Search:**
-            Testing every possible stat combination point-by-point would require millions of simulations and take days. Instead, we "zoom in":
-            * **Phase 1 (Coarse):** We cast a wide net across your entire stat budget in large leaps (e.g., leaps of 10 points) to find the general neighborhood of the optimal build.
-            * **Phase 2 (Fine):** We draw a tight box around the Phase 1 winner and test smaller leaps (e.g., leaps of 3 points).
-            * **Phase 3 (Exact):** We draw a final box around the Phase 2 winner and test *every single point* (leaps of 1) to find the mathematical peak.
+            **🧠 How does the AI Optimizer work?**
+            Testing every stat combination point-by-point would take days. Instead, we "zoom in":
+            * **Phase 1 (Coarse):** Casts a wide net across your stat budget in large leaps.
+            * **Phase 2 (Fine):** Draws a tight box around the Phase 1 winner and tests smaller leaps.
+            * **Phase 3 (Exact):** Pinpoints the mathematical peak by testing every single point in that final box.
             
-            **2. Successive Halving (Early Culling):**
-            During each phase, we don't test bad builds thoroughly. We test all builds briefly (15 runs), immediately delete the bottom 80% of performers, test the survivors a bit more (35 runs), and reserve the heaviest testing purely for the top contenders.
+            *(The engine also uses "Successive Halving" to quickly delete bad builds after testing them briefly, saving enormous amounts of time).*
             """)
+            st.divider()
 
-        col_bench, col_prof = st.columns([1, 1.5])
-        
-        with col_bench:
-            st.write("#### 1. Hardware Benchmark")
+            col_bench, col_prof = st.columns([1, 1.5])
+            
+            with col_bench:
+                st.write("#### 1. Hardware Benchmark")
             st.write("*(Optional: Runs automatically on start if skipped)*")
             if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
                 with st.spinner("Running 200 micro-simulations to test CPU speed..."):
@@ -1737,7 +1739,19 @@ if __name__ == "__main__":
                 st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
             
             st.markdown("### 🏆 Optimal Stat Build")
-            st.write("*(Green/Red numbers show changes from your current UI allocation)*")
+            
+            # --- ELI5 DYNAMIC SUMMARY ---
+            if run_target_metric == "highest_floor":
+                eli5_target = f"highest mathematical probability to reach **Floor {final_summary_out.get('abs_max_floor', 0):,.0f}**"
+            elif "frag" in run_target_metric:
+                eli5_target = "absolute highest **Fragment Farming** yields"
+            elif "block" in run_target_metric:
+                eli5_target = "absolute highest **Block Card Farming** yields"
+            else:
+                eli5_target = "absolute highest **EXP/min** yields"
+                
+            st.info(f"🔥 **Simulation Complete!** The AI determined that shifting your stats to the distribution below gives you the {eli5_target}.")
+            st.write("<small>*(Green/Red numbers show changes from your current UI allocation)*</small>", unsafe_allow_html=True)
             
             stat_cols = st.columns(len(best_final))
             for idx, (stat_name, allocated_pts) in enumerate(best_final.items()):
