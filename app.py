@@ -932,7 +932,7 @@ if __name__ == "__main__":
                             
                 # Add conditional warning for common traps
                 if troubleshoot_stat == "Damage":
-                    st.warning("💡 **Tip:** Did you accidentally input levels for Dino Skin when you actually have Axolotl equipped in-game?")
+                    st.warning("💡 **Tip:** Did you accidentally input Axolotl levels for Dino Skin levels?")
                 elif troubleshoot_stat == "Armor Pen":
                     st.warning("💡 **Tip:** Make sure your Intelligence matches exactly! The percentage-based scaling causes massive variations.")
                 elif troubleshoot_stat == "EXP & Fragment Gain":
