@@ -1980,7 +1980,7 @@ if __name__ == "__main__":
                     if not visible_history:
                         st.info("No runs match the selected filters. Run the optimizer to build history.")
                     else:
-                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. Power Users: Mix runs from DIFFERENT targets to create Hybrid Builds!)*")
+                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button below!)*")
                         
                         df_history = pd.DataFrame(visible_history)
                         cols =['Include', 'Target', 'Metric Score', 'Avg Floor', 'Max Floor']
@@ -2174,8 +2174,18 @@ if __name__ == "__main__":
                                         st.rerun()
 
                         with col_synth2:
-                            if st.button("🗑️ Clear History (Visible Targets)", use_container_width=True):
-                                st.session_state.run_history =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
+                            if st.button("🗑️ Delete Unchecked Runs", use_container_width=True, help="Permanently deletes any visible runs that do NOT have their 'Include' box checked."):
+                                # 1. Preserve runs that are currently hidden by the target filter
+                                hidden_runs =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
+                                
+                                # 2. Preserve only the visible runs that the user left CHECKED
+                                kept_visible_runs =[]
+                                for i, row in edited_df.iterrows():
+                                    if row["Include"]:
+                                        kept_visible_runs.append(visible_history[i])
+                                        
+                                # 3. Overwrite history (Unchecked runs are dropped into the void)
+                                st.session_state.run_history = hidden_runs + kept_visible_runs
                                 st.rerun()
                                 
                         # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
