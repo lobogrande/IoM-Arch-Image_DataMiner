@@ -1371,17 +1371,8 @@ if __name__ == "__main__":
         live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
         with st.expander("⚙️ Engine Tuning & Hardware Benchmark (Optional)", expanded=False):
-            st.markdown("""
-            **🧠 How does the AI Optimizer work?**
-            Testing every stat combination point-by-point would take days. Instead, we "zoom in":
-            * **Phase 1 (Coarse):** Casts a wide net across your stat budget in large leaps.
-            * **Phase 2 (Fine):** Draws a tight box around the Phase 1 winner and tests smaller leaps.
-            * **Phase 3 (Exact):** Pinpoints the mathematical peak by testing every single point in that final box.
             
-            *(The engine also uses "Successive Halving" to quickly delete bad builds after testing them briefly, saving enormous amounts of time).*
-            """)
-            st.divider()
-
+            # Keep the interactive controls at the absolute top
             col_bench, col_prof = st.columns([1, 1.5])
             
             with col_bench:
@@ -1445,6 +1436,7 @@ if __name__ == "__main__":
             depth_choice = st.radio(
                 "Select Search Depth", 
                 options=list(depth_labels.keys()), 
+                index=1, # Explicitly default to "Standard"
                 format_func=lambda x: depth_labels[x],
                 horizontal=False, 
                 label_visibility="collapsed"
@@ -1482,6 +1474,17 @@ if __name__ == "__main__":
                 
             preview_html += "</div>"
             st.markdown(preview_html, unsafe_allow_html=True)
+            
+            st.divider()
+            st.markdown("""
+            **🧠 How does the AI Optimizer work?**
+            Testing every stat combination point-by-point would take days. Instead, we "zoom in":
+            * **Phase 1 (Coarse):** Casts a wide net across your stat budget in large leaps.
+            * **Phase 2 (Fine):** Draws a tight box around the Phase 1 winner and tests smaller leaps.
+            * **Phase 3 (Exact):** Pinpoints the mathematical peak by testing every single point in that final box.
+            
+            *(The engine also uses "Successive Halving" to quickly delete bad builds after testing them briefly, saving enormous amounts of time).*
+            """)
 
     # --- MONTE CARLO EXECUTION LOOP ---
         st.divider()
@@ -1489,6 +1492,9 @@ if __name__ == "__main__":
         # Hidden for Production Beta. Change to True if you need to do UI testing later!
         # dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
         dev_mode = False
+        
+        # --- ACTIVE SETTINGS TRANSPARENCY ---
+        st.info(f"⚙️ **Active Settings:** {depth_choice} Search Depth | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
         
         st.caption("⚠️ **Note:** Do not change tabs or click other widgets while the engine is running, or it will abort the simulation!")
         if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
