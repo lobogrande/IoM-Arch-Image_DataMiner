@@ -35,6 +35,7 @@ def worker_simulate(payload):
         p.current_max_floor = state.get('current_max_floor', 1)
         p.hades_idol_level = state.get('hades_idol_level', 0)
         p.arch_ability_infernal_bonus = state.get('arch_ability_infernal_bonus', 0.0)
+        p.total_infernal_cards = state.get('total_infernal_cards', 0)
         
         # PROPERLY RE-APPLY UPGRADES USING SETTERS SO MATH TRIGGERS!
         for upg_id, lvl in state.get('upgrade_levels', {}).items():
@@ -217,6 +218,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         p_profile.current_max_floor = base_state_dict.get('current_max_floor', 1)
         p_profile.hades_idol_level = base_state_dict.get('hades_idol_level', 0)
         p_profile.arch_ability_infernal_bonus = base_state_dict.get('arch_ability_infernal_bonus', 0.0)
+        p_profile.total_infernal_cards = base_state_dict.get('total_infernal_cards', 0)
         for upg_id, lvl in base_state_dict.get('upgrade_levels', {}).items():
             p_profile.set_upgrade_level(upg_id, lvl)
         for ext_id, lvl in base_state_dict.get('external_levels', {}).items():

@@ -571,6 +571,19 @@ if __name__ == "__main__":
                         p.set_upgrade_level(upg_id, st.session_state[widget_key])
 
         with sub_external:
+            # --- TOTAL INFERNAL CARDS INPUT ---
+            col_inf_tog, _ = st.columns([1, 2])
+            with col_inf_tog:
+                if "set_total_inf" not in st.session_state:
+                    st.session_state["set_total_inf"] = int(p.total_infernal_cards)
+                    
+                p.total_infernal_cards = st.number_input(
+                    "Total Infernal Cards (Global)", 
+                    min_value=0, step=1, key="set_total_inf",
+                    help="Sum of all Tier 4 cards you own across all minigames (Mining, Fishing, etc). Used for the Infernal Multiplier."
+                )
+            st.divider()
+
             # UI TWEAK: Create the full array of columns
             cols_all = st.columns(UI_EXT_COL_RATIO)
             
@@ -1230,7 +1243,8 @@ if __name__ == "__main__":
                         'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
                         'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                         'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
+                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                        'total_infernal_cards': p.total_infernal_cards
                     }
                     
                     # Correctly assigned 'state_dict' instead of the deprecated 'state_file'
@@ -1354,7 +1368,8 @@ if __name__ == "__main__":
                     'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
                     'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                     'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
+                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                    'total_infernal_cards': p.total_infernal_cards
                 }
 
                 # AUTO-BENCHMARK FAILSAFE
@@ -1798,7 +1813,8 @@ if __name__ == "__main__":
                                 'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
                                 'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                 'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                                'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
+                                'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                                'total_infernal_cards': p.total_infernal_cards
                             }
                             
                             roi_pool_args =[]
@@ -1869,7 +1885,8 @@ if __name__ == "__main__":
                                         'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
                                         'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                         'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus
+                                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                                        'total_infernal_cards': p.total_infernal_cards
                                     }
                                     
                                     # Increment the specific upgrade
