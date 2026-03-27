@@ -491,7 +491,7 @@ if __name__ == "__main__":
             with st.container(border=True):
                 st.markdown("### 👋 Welcome to the Optimizer!")
                 st.write("If you are new here, follow these 3 steps to get started:")
-                st.markdown("1. **Input your Stats & Upgrades:** Use the tabs below, or click a **Preset Build** to auto-fill realistic data.\n2. **Select your Goal:** Go to the **Run Optimizer** tab and choose your target.\n3. **Run the Engine:** Let the Monte Carlo simulations find your perfect mathematical build.")
+                st.markdown("1. **Input your Stats & Upgrades:** Use the first 3 tabs above, import your own json player data, or click a **Preset Build** to auto-fill realistic data.\n2. **Select your Goal:** Go to the **Run Optimizer** tab and choose your target.\n3. **Run the Engine:** Let the Monte Carlo simulations find your perfect mathematical build.")
                 
                 st.divider()
                 st.markdown("#### 🚀 Quick Start: Load a Preset Build")
@@ -572,8 +572,9 @@ if __name__ == "__main__":
                 st.session_state[widget_key] = safe_val
                 
             with st.container(border=True):
-                # Centered Title
-                st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{label}</b><br><small>(Max: {max_val})</small></div>", unsafe_allow_html=True)
+                # Centered Title with Native Browser Tooltip
+                tooltip_text = STAT_TIPS.get(stat_key, "")
+                st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><span title='{tooltip_text}' style='cursor: help;'><b>{label}</b> ℹ️</span><br><small>(Max: {max_val})</small></div>", unsafe_allow_html=True)
                 
                 # Centered Image
                 img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_key.lower()}.png")
@@ -582,12 +583,11 @@ if __name__ == "__main__":
                 else:
                     st.markdown("<div style='text-align: center; color: gray;'><br><small>(Icon Missing)</small><br><br></div>", unsafe_allow_html=True)
                 
-                # Number Input with Contextual Tooltip
+                # Number Input
                 st.number_input(
                     f"{label} (Max: {max_val})",
                     key=widget_key, step=1, on_change=enforce_stat_caps,
                     args=(widget_key, stat_key, 0, max_val, label),
-                    help=STAT_TIPS.get(stat_key, ""),
                     label_visibility="collapsed"
                 )
             p.base_stats[stat_key] = st.session_state[widget_key]
