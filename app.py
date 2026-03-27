@@ -1905,6 +1905,91 @@ if __name__ == "__main__":
                         )
                         st.plotly_chart(fig_stam, use_container_width=True)
 
+            # --- TAB: RUN HISTORY & SYNTHESIS ---
+            with ui_tabs[tab_idx]:
+                st.markdown("#### 📚 Run History")
+                st.write("Because the combat math is highly balanced, high-level optimizations often land on a 'Plateau' where wildly different builds perform identically. Track your runs here to spot these patterns.")
+                
+                if "run_history" in st.session_state and st.session_state.run_history:
+                    df_history = pd.DataFrame(st.session_state.run_history)
+                    st.dataframe(df_history, hide_index=True, use_container_width=True)
+                    
+                    st.divider()
+                    st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
+                    st.write("Smooth out Monte Carlo RNG noise. This algorithm averages the builds in your history, corrects for budget constraints, and runs a deep verification test to find the true mathematical center of the plateau.")
+                    
+                    col_synth1, col_synth2 = st.columns(2)
+                    with col_synth1:
+                        if st.button("🧬 Synthesize & Verify Meta-Build", use_container_width=True):
+                            with st.spinner("Synthesizing and running deep verification..."):
+                                history = st.session_state.run_history
+                                stat_keys =[k for k in history[0].keys() if k not in ["Metric Score", "Avg Floor"]]
+                                
+                                # 1. Average the stats
+                                meta_dist = {}
+                                for s in stat_keys:
+                                    meta_dist[s] = int(round(sum(run[s] for run in history) / len(history)))
+                                    
+                                # 2. Fix budget drift caused by rounding
+                                target_budget = sum(history[-1][s] for s in stat_keys)
+                                current_budget = sum(meta_dist.values())
+                                
+                                diff = target_budget - current_budget
+                                if diff != 0:
+                                    # Adjust the stat with the highest allocation to absorb the rounding error
+                                    max_stat = max(stat_keys, key=lambda k: meta_dist[k])
+                                    meta_dist[max_stat] += diff
+                                
+                                # 3. Reconstruct payload for verification
+                                synth_state_dict = {
+                                    'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                                    'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                                    'total_infernal_cards': p.total_infernal_cards
+                                }
+                                
+                                verify_args =[{'stats': meta_dist, 'fixed_stats': {}, 'state_dict': synth_state_dict} for _ in range(200)]
+                                
+                                if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
+                                else: CPU_CORES = max(1, mp.cpu_count() - 1)
+                                
+                                with mp.Pool(CPU_CORES) as pool:
+                                    res_list = pool.map(worker_simulate, verify_args)
+                                
+                                # 4. Aggregate Synthesis Results
+                                sum_target = sum(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list)
+                                sum_floor = sum(r.get("highest_floor", 0) for r in res_list)
+                                floors =[r.get("highest_floor", 0) for r in res_list]
+                                
+                                # Package it exactly like a Phase 3 result!
+                                synth_summary = {
+                                    run_target_metric: sum_target / 200.0,
+                                    "avg_floor": sum_floor / 200.0,
+                                    "abs_max_floor": max(floors) if floors else 0,
+                                    "abs_max_chance": (floors.count(max(floors)) / len(floors)) if floors else 0,
+                                    "floors": floors,
+                                    "worst_val": min(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list),
+                                    "avg_val": sum_target / 200.0,
+                                    "runner_up_val": sum_target / 200.0, # N/A for synthesis
+                                    "avg_metrics": {} # Simplified for synthesis
+                                }
+                                
+                                # Overwrite the session state and trigger a UI reload to display the Meta-Build!
+                                st.session_state.opt_results["best_final"] = meta_dist
+                                st.session_state.opt_results["final_summary_out"] = synth_summary
+                                st.session_state.opt_results["chart_hill_labels"] = ["Average Build", "🧬 Synthesized Meta-Build"]
+                                st.session_state.opt_results["chart_hill_scores"] = [sum(r["Metric Score"] for r in history)/len(history), sum_target / 200.0]
+                                st.session_state.opt_results["chart_hist"] = dict(Counter(floors))
+                                
+                                st.rerun()
+
+                    with col_synth2:
+                        if st.button("🗑️ Clear History", use_container_width=True):
+                            st.session_state.run_history = list()
+                            st.rerun()
+
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
             # ==========================================
