@@ -1231,22 +1231,44 @@ if __name__ == "__main__":
         st.divider()
 
         # --- NEW: STAT LOCKING ---
-        st.markdown("#### 🔒 Lock Stats (Optional)")
-        st.write("Locking a stat to its current value drastically reduces the search space, resulting in much faster simulations.")
-        
-        # Build available stats list
-        available_stats =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
-        if p.asc2_unlocked: available_stats.append('Corr')
-        
-        if "locked_stats" not in st.session_state:
-            st.session_state.locked_stats =[]
+        with st.expander("🔒 Stat Constraints / Locking (Optional)", expanded=False):
+            st.write("Locking a stat to a specific value drastically reduces the multidimensional search space, resulting in much faster simulations. Points used here share your global budget.")
             
-        locked_stats = st.multiselect(
-            "Select stats to freeze at their current UI allocation:", 
-            options=available_stats,
-            default=st.session_state.locked_stats,
-            key="locked_stats"
-        )
+            def render_lock_stat(label, stat_key, col):
+                max_val = int(STAT_CAPS.get(stat_key, 99))
+                check_key = f"lock_check_{stat_key}"
+                val_key = f"lock_val_{stat_key}"
+                
+                if check_key not in st.session_state: st.session_state[check_key] = False
+                if val_key not in st.session_state: st.session_state[val_key] = int(p.base_stats.get(stat_key, 0))
+                
+                with col:
+                    with st.container(border=True):
+                        st.markdown(f"<div style='text-align: center; margin-bottom: 5px; font-size: 0.9em;'><b>{label}</b></div>", unsafe_allow_html=True)
+                        
+                        img_path_small = os.path.join(ROOT_DIR, "assets", "stats_small", f"{stat_key.lower()}.png")
+                        img_path_large = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_key.lower()}.png")
+                        if os.path.exists(img_path_small):
+                            render_centered_image(img_path_small, 40)
+                        elif os.path.exists(img_path_large):
+                            render_centered_image(img_path_large, 40)
+                            
+                        # Controls
+                        st.checkbox("Lock Value:", key=check_key)
+                        st.number_input(
+                            f"Val##{stat_key}", key=val_key, min_value=0, max_value=max_val, step=1,
+                            label_visibility="collapsed", disabled=not st.session_state[check_key]
+                        )
+
+            lcol1, lcol2, lcol3, lcol4 = st.columns(4)
+            render_lock_stat("Strength", 'Str', lcol1)
+            render_lock_stat("Agility", 'Agi', lcol2)
+            render_lock_stat("Perception", 'Per', lcol3)
+            render_lock_stat("Intelligence", 'Int', lcol4)
+            render_lock_stat("Luck", 'Luck', lcol1)
+            render_lock_stat("Divine", 'Div', lcol2)
+            if p.asc2_unlocked:
+                render_lock_stat("Corruption", 'Corr', lcol3)
 
         st.divider()
 
@@ -1466,8 +1488,8 @@ if __name__ == "__main__":
                         # Apply Stat Locks to Phase 1 bounds
                         bounds_p1 = {}
                         for s in STATS_TO_OPTIMIZE:
-                            if s in st.session_state.locked_stats:
-                                val = int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)))
+                            if st.session_state.get(f"lock_check_{s}", False):
+                                val = int(st.session_state.get(f"lock_val_{s}", 0))
                                 bounds_p1[s] = (val, val)
                             else:
                                 bounds_p1[s] = (0, EFFECTIVE_CAPS[s])
@@ -1484,7 +1506,7 @@ if __name__ == "__main__":
                             bounds_p2 = {}
                             step_2 = max(2, step_size // 3)
                             for s in STATS_TO_OPTIMIZE:
-                                if s in st.session_state.locked_stats:
+                                if st.session_state.get(f"lock_check_{s}", False):
                                     bounds_p2[s] = bounds_p1[s]
                                 else:
                                     bounds_p2[s] = (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size))
@@ -1500,7 +1522,7 @@ if __name__ == "__main__":
                             bounds_p3 = {}
                             p3_radius = min(2, step_2) 
                             for s in STATS_TO_OPTIMIZE:
-                                if s in st.session_state.locked_stats:
+                                if st.session_state.get(f"lock_check_{s}", False):
                                     bounds_p3[s] = bounds_p1[s]
                                 else:
                                     bounds_p3[s] = (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius))
