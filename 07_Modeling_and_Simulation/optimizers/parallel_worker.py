@@ -275,49 +275,57 @@ def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     
     return test_iterations / elapsed if elapsed > 0 else 1
 
+def get_expected_runs(builds, max_iter):
+    """Exactly calculates the number of runs executed through Successive Halving drops."""
+    if builds <= 20 or max_iter <= 10: return builds * max_iter
+    r1 = max(1, int(max_iter * 0.15))
+    r2 = max(1, int(max_iter * 0.35))
+    r3 = max_iter - r1 - r2
+    runs = builds * r1
+    b2 = max(3, int(builds * 0.20))
+    runs += b2 * r2
+    b3 = max(3, int(b2 * 0.10))
+    runs += b3 * r3
+    return runs
+
 def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, iter_p2=50, iter_p3=100):
-    """Calculates ETAs dynamically based on constrained bounds and lock checks."""
+    """Calculates ETAs dynamically based on exact Halving runs and Positive-Shifted coordinates."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
         "Deep (Step: 5)": {"step": 5}
     }
     
+    # Identify mathematically "free" stats (unlocked)
+    free_stats =[s for s in stats_list if bounds[s][0] != bounds[s][1]]
+    num_free = len(free_stats)
+    
     for name, data in profiles.items():
         step_1 = data["step"]
         step_2 = max(2, step_1 // 3)
         p3_radius = min(2, step_2)
         
-        # 1. Exact Phase 1 Builds
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
-        p1_sims = p1_builds * iter_p1 * 0.23  # Successive halving math average
+        p1_sims = get_expected_runs(p1_builds, iter_p1)
         
-        # 2. Exact Phase 2 & 3 Builds (Accounting for Locked Stats)
-        mock_bounds_p2 = {}
-        mock_bounds_p3 = {}
-        for s in stats_list:
-            if bounds[s][0] == bounds[s][1]: # The stat is locked
-                mock_bounds_p2[s] = (0, 0)
-                mock_bounds_p3[s] = (0, 0)
-            else:
-                mock_bounds_p2[s] = (-step_1, step_1)
-                mock_bounds_p3[s] = (-p3_radius, p3_radius)
-                
-        p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2))
-        p2_sims = p2_builds * iter_p2 * 0.23
-        
-        p3_builds = len(generate_distributions(stats_list, 0, 1, mock_bounds_p3))
-        p3_sims = p3_builds * iter_p3 * 0.23
+        # Positive-Shifted Bounds: Instead of testing (-10 to 10) summing to 0, 
+        # we test (0 to 20) summing to 10*num_free. This prevents the recursive generator from clipping!
+        if num_free > 0:
+            p2_mock_bounds = {s: (0, 2 * step_1) for s in free_stats}
+            p2_builds = len(generate_distributions(free_stats, num_free * step_1, step_2, p2_mock_bounds))
+            
+            p3_mock_bounds = {s: (0, 2 * p3_radius) for s in free_stats}
+            p3_builds = len(generate_distributions(free_stats, num_free * p3_radius, 1, p3_mock_bounds))
+        else:
+            p2_builds, p3_builds = 0, 0
+            
+        p2_sims = get_expected_runs(p2_builds, iter_p2)
+        p3_sims = get_expected_runs(p3_builds, iter_p3)
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
         total_simulations = p1_sims + p2_sims + p3_sims
         
-        # --- BATCH CULLING FACTOR ---
-        # A single map() benchmark has massive overhead. Chunked imap() is ~10x faster.
-        # Adjusted from 6.0 to 12.0 based on real-world Asc2 locked hardware profiling.
-        CULLING_FACTOR = 12.0
-        effective_sims_sec = max(1, sims_per_second) * CULLING_FACTOR
-        
+        effective_sims_sec = max(1.0, float(sims_per_second))
         estimated_seconds = total_simulations / effective_sims_sec
         
         if estimated_seconds < 60:
