@@ -469,7 +469,7 @@ if __name__ == "__main__":
                 data=export_json_str,
                 file_name="player_state.json",
                 mime="application/json",
-                use_container_width=True
+                width="stretch"
             )
 
 
@@ -524,17 +524,17 @@ if __name__ == "__main__":
                     st.rerun()
 
                 with col_p1:
-                    if st.button("🌱 Load Early-Game Build\n(Asc 1, Floor 40)", use_container_width=True):
+                    if st.button("🌱 Load Early-Game Build\n(Asc 1, Floor 40)", width="stretch"):
                         early_game = {"settings": {"asc2_unlocked": False, "arch_level": 45, "current_max_floor": 40, "base_damage_const": 10, "total_infernal_cards": 0, "arch_ability_infernal_bonus": 0.0}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 0, "Luck": 20, "Div": 10}, "internal_upgrades": {"3 - Gem Stamina": 25, "4 - Gem Exp": 12, "5 - Gem Loot": 12, "9 - Flat Damage": 15, "10 - Armor Pen.": 15, "11 - Exp. Gain": 15, "12 - Stat Points": 3, "13 - Crit Chance/Damage": 12, "14 - Max Sta/Sta Mod Chance": 12, "15 - Flat Damage": 8, "16 - Loot Mod Gain": 6, "17 - Unlock Fairy/Armor Pen": 6, "18 - Enrage&Crit Dmg/Enrage Cooldown": 5, "20 - Flat Dmg/Super Crit Chance": 5, "21 - Exp Gain/Fragment Gain": 4, "22 - Flurry Sta Gain/Flurr Cooldown": 4, "23 - Max Sta/Sta Mod Gain": 4, "24 - All Mod Chances": 3, "25 - Flat Dmg/Damage Up": 0, "26 - Max Sta/Mod Chance": 0, "28 - Exp Gain/Max Sta": 3, "29 - Armor Pen/Ability Cooldowns": 3, "30 - Crit Dmg/Super Crit Dmg": 3, "31 - Quake Atks/Cooldown": 3, "32 - Flat Dmg/Enrage Cooldown": 0, "33 - Mod Chance/Armor Pen": 0, "35 - Exp Gain/Mod Ch.": 0, "36 - Damage Up/Armor Pen": 0, "37 - Super Crit/Ultra Crit Chance": 0, "38 - Exp Mod Gain/Chance": 0, "39 - Ability Insta Chance/Max Sta": 0, "40 - Ultra Crit Dmg/Sta Mod Chance": 0, "41 - Poly Card Bonus": 0, "42 - Frag Gain Mult": 0, "43 - Sta Mod Gain": 0, "44 - All Mod Chances": 0, "45 - Exp Gain/All Stat Cap Inc.": 0, "47 - Damage Up/Crit Dmg Up": 0, "48 - Gold Crosshair Chance/Auto-Tap Chance": 0, "49 - Flat Dmg/Ultra Crit Chance": 0, "50 - Ability Insta Chance/Sta Mod Chance": 0, "51 - Dmg Up/Exp Gain": 0, "53 - Super Crit Dmg/Exp Mod Gain": 0, "54 - Max Sta/Crosshair Auto-Tap Chance": 0}, "external_upgrades": {"Hestia Idol": 0, "Axolotl Skin": 9, "Dino Skin": 9, "Geoduck Tribute": 750, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 0, "Ascension Bundle": 0, "Arch Ability Card": 3}, "cards": {"dirt1": 3, "dirt2": 2, "dirt3": 2, "com1": 3, "com2": 2, "com3": 2, "rare1": 3, "rare2": 2, "rare3": 2, "epic1": 2, "epic2": 2, "epic3": 2, "leg1": 2, "leg2": 2, "leg3": 2, "myth1": 2, "myth2": 2, "myth3": 2, "div1": 2, "div2": 0, "div3": 0}}
                         apply_preset(early_game)
                         
                 with col_p2:
-                    if st.button("🌌 Load Late-Game Build\n(Asc 2, Floor 158)", use_container_width=True):
+                    if st.button("🌌 Load Late-Game Build\n(Asc 2, Floor 158)", width="stretch"):
                         late_game = {"settings": {"asc2_unlocked": True, "arch_level": 99, "current_max_floor": 158, "base_damage_const": 10, "hades_idol_level": 129, "total_infernal_cards": 303, "arch_ability_infernal_bonus": -0.1509}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 29, "Luck": 30, "Div": 15, "Corr": 15}, "internal_upgrades": {"3 - Gem Stamina": 50, "4 - Gem Exp": 25, "5 - Gem Loot": 25, "9 - Flat Damage": 25, "10 - Armor Pen.": 25, "11 - Exp. Gain": 25, "12 - Stat Points": 5, "13 - Crit Chance/Damage": 25, "14 - Max Sta/Sta Mod Chance": 20, "15 - Flat Damage": 20, "16 - Loot Mod Gain": 10, "17 - Unlock Fairy/Armor Pen": 15, "18 - Enrage&Crit Dmg/Enrage Cooldown": 15, "19 - Gleaming Floor Chance": 30, "20 - Flat Dmg/Super Crit Chance": 25, "21 - Exp Gain/Fragment Gain": 20, "22 - Flurry Sta Gain/Flurr Cooldown": 10, "23 - Max Sta/Sta Mod Gain": 5, "24 - All Mod Chances": 30, "25 - Flat Dmg/Damage Up": 5, "26 - Max Sta/Mod Chance": 5, "27 - Unlock Ability Fairy/Loot Mod Gain": 20, "28 - Exp Gain/Max Sta": 15, "29 - Armor Pen/Ability Cooldowns": 10, "30 - Crit Dmg/Super Crit Dmg": 20, "31 - Quake Atks/Cooldown": 10, "32 - Flat Dmg/Enrage Cooldown": 5, "33 - Mod Chance/Armor Pen": 5, "34 - Buff Divinity[Div Stats Up]": 5, "35 - Exp Gain/Mod Ch.": 5, "36 - Damage Up/Armor Pen": 20, "37 - Super Crit/Ultra Crit Chance": 20, "38 - Exp Mod Gain/Chance": 20, "39 - Ability Insta Chance/Max Sta": 20, "40 - Ultra Crit Dmg/Sta Mod Chance": 20, "41 - Poly Card Bonus": 1, "42 - Frag Gain Mult": 1, "43 - Sta Mod Gain": 1, "44 - All Mod Chances": 1, "45 - Exp Gain/All Stat Cap Inc.": 1, "46 - Gleaming Floor Multi": 24, "47 - Damage Up/Crit Dmg Up": 1, "48 - Gold Crosshair Chance/Auto-Tap Chance": 5, "49 - Flat Dmg/Ultra Crit Chance": 5, "50 - Ability Insta Chance/Sta Mod Chance": 25, "51 - Dmg Up/Exp Gain": 5, "52 - [Corruption Buff] Dmg Up / Mod Multi Up": 10, "53 - Super Crit Dmg/Exp Mod Gain": 30, "54 - Max Sta/Crosshair Auto-Tap Chance": 28, "55 - All Mod Multipliers": 10}, "external_upgrades": {"Hestia Idol": 1929, "Axolotl Skin": 11, "Dino Skin": 11, "Geoduck Tribute": 1047, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 1, "Ascension Bundle": 1, "Arch Ability Card": 4}, "cards": {"dirt1": 4, "dirt2": 4, "dirt3": 4, "dirt4": 3, "com1": 3, "com2": 3, "com3": 4, "com4": 2, "rare1": 3, "rare2": 3, "rare3": 3, "rare4": 2, "epic1": 3, "epic2": 3, "epic3": 4, "epic4": 2, "leg1": 3, "leg2": 3, "leg3": 4, "leg4": 2, "myth1": 3, "myth2": 3, "myth3": 3, "myth4": 2, "div1": 3, "div2": 3, "div3": 3, "div4": 0}}
                         apply_preset(late_game)
                         
                 with col_p3:
-                    if st.button("🗑️ Factory Reset\n(Wipe All Data)", use_container_width=True, type="secondary"):
+                    if st.button("🗑️ Factory Reset\n(Wipe All Data)", width="stretch", type="secondary"):
                         apply_preset(reset=True)
                         
         # --- GLOBAL STAT BUDGET TRACKER ---
@@ -917,8 +917,8 @@ if __name__ == "__main__":
                 st.divider()
                 st.write(f"**EXP Mod Chance:** {p.exp_mod_chance*100:,.2f}% *(Mod Multi: {p.exp_mod_gain:,.2f}x)*")
                 st.write(f"**Loot Mod Chance:** {p.loot_mod_chance*100:,.2f}% *(Mod Multi: {p.loot_mod_gain:,.2f}x)*")
-                st.write(f"**Stamina Mod Chance:** {p.stamina_mod_chance*100:,.2f}% *(Mod Gain: +{p.stamina_mod_gain:,.0f} Stamina)*")
                 st.write(f"**Speed Mod Chance:** {p.speed_mod_chance*100:,.2f}% *(Mod Gain: +{p.speed_mod_gain:,.0f} 2x spd atks)*")
+                st.write(f"**Stamina Mod Chance:** {p.stamina_mod_chance*100:,.2f}% *(Mod Gain: +{p.stamina_mod_gain:,.0f} Stamina)*")
                 st.divider()
                 st.write(f"**Crosshair Auto-Tap Chance:** {p.crosshair_auto_tap*100:,.2f}%")
                 st.write(f"**Gold Crosshair Chance:** {p.gold_crosshair_chance*100:,.2f}% *(Mult: {p.gold_crosshair_mult:,.2f}x)*")
@@ -1061,7 +1061,7 @@ if __name__ == "__main__":
             with st.expander("🎛️ Control Panel", expanded=True):
                 
                 # --- SANDBOX SYNC ---
-                if st.button("🔄 Sync from Base Stats", use_container_width=True, help="Pull your currently saved stat distribution into the sandbox."):
+                if st.button("🔄 Sync from Base Stats", width="stretch", help="Pull your currently saved stat distribution into the sandbox."):
                     for stat in STAT_CAPS.keys():
                         st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
                     st.rerun()
@@ -1250,7 +1250,7 @@ if __name__ == "__main__":
                     df_sandbox,
                     column_config=col_config,
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                     height=700 # Forces the table to be nice and tall to match the left panel
                 )
             
@@ -1378,7 +1378,7 @@ if __name__ == "__main__":
             with col_bench:
                 st.write("#### 1. Hardware Benchmark")
                 st.write("*(Optional: Runs automatically on start if skipped)*")
-                if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
+                if st.button("⏱️ Benchmark CPU & Calculate ETAs", width="stretch"):
                     with st.spinner("Running 200 micro-simulations to test CPU speed..."):
                         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
@@ -1487,7 +1487,7 @@ if __name__ == "__main__":
         st.info(f"⚙️ **Active Settings:** {depth_choice} Search Depth | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
         
         st.caption("⚠️ **Note:** Do not change tabs or click other widgets while the engine is running, or it will abort the simulation!")
-        if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
+        if st.button("🚀 Run Optimizer", width="stretch", type="primary"):
             st.write("---")
             
             # Clean up any stale ROI or Synthesis data from previous runs
@@ -1595,55 +1595,68 @@ if __name__ == "__main__":
                     
                     time_limit_secs = time_limit_mins * 60
                     
-                    with mp.Pool(CPU_CORES) as pool:
-                        # Apply Stat Locks to Phase 1 bounds
-                        bounds_p1 = {}
-                        for s in STATS_TO_OPTIMIZE:
-                            if st.session_state.get(f"lock_check_{s}", False):
-                                val = int(st.session_state.get(f"lock_val_{s}", 0))
-                                bounds_p1[s] = (val, val)
-                            else:
-                                bounds_p1[s] = (0, EFFECTIVE_CAPS[s])
-                                
-                        best_p1, summary_p1 = run_optimization_phase(
-                            "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
-                            DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
-                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
-                            base_state_dict=base_state_dict
-                        )
-                        
-                        best_p2, summary_p2 = None, None
-                        if best_p1 and (time.time() - start_time) < time_limit_secs:
-                            bounds_p2 = {}
-                            step_2 = max(2, step_size // 3)
+                    import traceback
+                    try:
+                        with mp.Pool(CPU_CORES) as pool:
+                            # Apply Stat Locks to Phase 1 bounds
+                            bounds_p1 = {}
                             for s in STATS_TO_OPTIMIZE:
                                 if st.session_state.get(f"lock_check_{s}", False):
-                                    bounds_p2[s] = bounds_p1[s]
+                                    val = int(st.session_state.get(f"lock_val_{s}", 0))
+                                    bounds_p1[s] = (val, val)
                                 else:
-                                    bounds_p2[s] = (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size))
+                                    bounds_p1[s] = (0, EFFECTIVE_CAPS[s])
                                     
-                            best_p2, summary_p2 = run_optimization_phase(
-                                "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
-                                DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
+                            best_p1, summary_p1 = run_optimization_phase(
+                                "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
+                                DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
                                 progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                 base_state_dict=base_state_dict
                             )
                             
-                        if best_p2 and (time.time() - start_time) < time_limit_secs:
-                            bounds_p3 = {}
-                            p3_radius = min(2, step_2) 
-                            for s in STATS_TO_OPTIMIZE:
-                                if st.session_state.get(f"lock_check_{s}", False):
-                                    bounds_p3[s] = bounds_p1[s]
-                                else:
-                                    bounds_p3[s] = (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius))
-                                    
-                            best_p3, final_summary = run_optimization_phase(
-                                "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
-                                DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
-                                progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
-                                base_state_dict=base_state_dict
-                            )
+                            best_p2, summary_p2 = None, None
+                            if best_p1 and (time.time() - start_time) < time_limit_secs:
+                                bounds_p2 = {}
+                                step_2 = max(2, step_size // 3)
+                                for s in STATS_TO_OPTIMIZE:
+                                    if st.session_state.get(f"lock_check_{s}", False):
+                                        bounds_p2[s] = bounds_p1[s]
+                                    else:
+                                        bounds_p2[s] = (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size))
+                                        
+                                best_p2, summary_p2 = run_optimization_phase(
+                                    "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
+                                    DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
+                                    progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                                    base_state_dict=base_state_dict
+                                )
+                                
+                            if best_p2 and (time.time() - start_time) < time_limit_secs:
+                                bounds_p3 = {}
+                                p3_radius = min(2, step_2) 
+                                for s in STATS_TO_OPTIMIZE:
+                                    if st.session_state.get(f"lock_check_{s}", False):
+                                        bounds_p3[s] = bounds_p1[s]
+                                    else:
+                                        bounds_p3[s] = (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius))
+                                        
+                                best_p3, final_summary = run_optimization_phase(
+                                    "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
+                                    DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
+                                    progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                                    base_state_dict=base_state_dict
+                                )
+                    except Exception as crash_err:
+                        st.error(f"🚨 **CRITICAL ENGINE CRASH:** The background worker was unexpectedly killed. This is almost always caused by the Streamlit Cloud server temporarily running out of memory.")
+                        st.error(f"**Technical Details:** `{type(crash_err).__name__}: {str(crash_err)}`")
+                        with st.expander("View Full Crash Traceback", expanded=False):
+                            st.code(traceback.format_exc(), language="python")
+                        print(f"\n[CRASH LOG] {traceback.format_exc()}\n")
+                        best_p3, final_summary = None, None
+                    except BaseException as interrupt_err:
+                        print(f"\n[INTERRUPT LOG] Script halted during Execution Loop! Reason: {type(interrupt_err).__name__}")
+                        print("-> This is usually caused by the user clicking a button, changing a tab, or a browser disconnection.\n")
+                        raise # We MUST re-raise this so Streamlit can correctly stop the thread!
                     
                     best_final = best_p3 or best_p2 or best_p1
                     final_summary_out = final_summary or summary_p2 or summary_p1
@@ -1767,7 +1780,7 @@ if __name__ == "__main__":
                         delta = int(allocated_pts) - current_val
                         st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
             
-            if st.button("✨ Apply Build to UI", use_container_width=True):
+            if st.button("✨ Apply Build to UI", width="stretch"):
                 for k, v in best_final.items():
                     st.session_state[f"stat_{k}"] = int(v)
                     p.base_stats[k] = int(v)
@@ -1859,7 +1872,7 @@ if __name__ == "__main__":
                     fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True)
                     fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
                     fig_hill.update_layout(margin=dict(l=10, r=20, t=10, b=20), height=200)
-                    st.plotly_chart(fig_hill, use_container_width=True)
+                    st.plotly_chart(fig_hill, width="stretch")
                     
                     # Streamlit Markdown header
                     st.markdown(
@@ -1879,7 +1892,7 @@ if __name__ == "__main__":
                         color_discrete_map={"Worst Tested": "#ff4b4b", "Average": "#ffa229", "Runner-Up": "#6495ED", "🏆 Optimal": "#4CAF50"}
                     )
                     fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200)
-                    st.plotly_chart(fig_conf, use_container_width=True)
+                    st.plotly_chart(fig_conf, width="stretch")
 
             # --- NEW TAB: CARD DROPS ---
             if run_target_metric != "highest_floor" or dev_mode:
@@ -1976,7 +1989,7 @@ if __name__ == "__main__":
                     )
                     fig_loot.update_traces(textposition='outside')
                     fig_loot.update_layout(showlegend=False, margin=dict(t=20, b=20), height=400)
-                    st.plotly_chart(fig_loot, use_container_width=True)
+                    st.plotly_chart(fig_loot, width="stretch")
 
             # --- TAB 3: THE WALL (HISTOGRAM) ---
             if show_wall:
@@ -1993,7 +2006,7 @@ if __name__ == "__main__":
                     fig_hist = px.bar(df_hist, x='Floor', y='Deaths', text='Deaths')
                     fig_hist.update_traces(marker_color='#ff4b4b', textposition='outside')
                     fig_hist.update_layout(margin=dict(t=20, b=20), height=400, xaxis_type='category')
-                    st.plotly_chart(fig_hist, use_container_width=True)
+                    st.plotly_chart(fig_hist, width="stretch")
 
                     # --- STAMINA PLOT (NEW) ---
                     if "stamina_trace" in final_summary_out:
@@ -2027,7 +2040,7 @@ if __name__ == "__main__":
                             height=300,
                             xaxis_title="Floor Level"
                         )
-                        st.plotly_chart(fig_stam, use_container_width=True)
+                        st.plotly_chart(fig_stam, width="stretch")
 
             # ==========================================
             # RUN HISTORY & SYNTHESIS (OUTSIDE TABS)
@@ -2053,7 +2066,7 @@ if __name__ == "__main__":
                             default=[t for t in unique_targets if t == run_target_metric] or unique_targets
                         )
                     with col_filt2:
-                        if st.button("🔄 Toggle 'Include' for Visible", use_container_width=True):
+                        if st.button("🔄 Toggle 'Include' for Visible", width="stretch"):
                             for r in st.session_state.run_history:
                                 if r.get("Target") in view_targets:
                                     r["Include"] = not r.get("Include", True)
@@ -2076,7 +2089,7 @@ if __name__ == "__main__":
                         edited_df = st.data_editor(
                             df_history, 
                             hide_index=True, 
-                            use_container_width=True,
+                            width="stretch",
                             column_config={"Include": st.column_config.CheckboxColumn("Include")},
                             disabled=[c for c in df_history.columns if c != "Include"] 
                         )
@@ -2087,7 +2100,7 @@ if __name__ == "__main__":
                         
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
-                            if st.button("🧬 Synthesize & Verify Meta-Build", use_container_width=True):
+                            if st.button("🧬 Synthesize & Verify Meta-Build", width="stretch"):
                                 valid_runs =[r for r in st.session_state.run_history if r.get("Include", False)]
                                 
                                 if len(valid_runs) == 0:
@@ -2258,7 +2271,7 @@ if __name__ == "__main__":
                                         st.rerun()
 
                         with col_synth2:
-                            if st.button("🗑️ Delete Unchecked Runs", use_container_width=True, help="Permanently deletes any visible runs that do NOT have their 'Include' box checked."):
+                            if st.button("🗑️ Delete Unchecked Runs", width="stretch", help="Permanently deletes any visible runs that do NOT have their 'Include' box checked."):
                                 # 1. Preserve runs that are currently hidden by the target filter
                                 hidden_runs =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
                                 
@@ -2301,7 +2314,7 @@ if __name__ == "__main__":
                                               color_discrete_map={"Historical Runs": "#6495ED", "Meta-Build": "#4CAF50"})
                             fig_comp.update_layout(showlegend=False, margin=dict(t=10, b=20), height=300)
                             fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
-                            st.plotly_chart(fig_comp, use_container_width=True)
+                            st.plotly_chart(fig_comp, width="stretch")
                             
                             # --- 🏆 META-BUILD YIELDS & CALCULATOR ---
                             st.divider()
@@ -2352,7 +2365,7 @@ if __name__ == "__main__":
                                         delta = int(allocated_pts) - current_val
                                         st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
                             
-                            if st.button("✨ Apply Meta-Build to UI", use_container_width=True, key="apply_meta_build_btn"):
+                            if st.button("✨ Apply Meta-Build to UI", width="stretch", key="apply_meta_build_btn"):
                                 for k, v in sr["stats"].items():
                                     st.session_state[f"stat_{k}"] = int(v)
                                     p.base_stats[k] = int(v)
@@ -2371,7 +2384,7 @@ if __name__ == "__main__":
                 st.markdown("##### 1. Next Stat Point")
                 st.write("Tests adding +1 to every stat to see which yields the highest increase.")
                 
-                if st.button("🔍 Analyze Next Stat Point", use_container_width=True):
+                if st.button("🔍 Analyze Next Stat Point", width="stretch"):
                     with st.spinner("Testing marginal stat values..."):
                         stat_results = {}
                         
@@ -2422,13 +2435,13 @@ if __name__ == "__main__":
                 if "roi_stat_results" in st.session_state:
                     sorted_stats = sorted(st.session_state.roi_stat_results.items(), key=lambda x: x[1], reverse=True)
                     df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain"])
-                    st.dataframe(df_stat_roi, hide_index=True, use_container_width=True)
+                    st.dataframe(df_stat_roi, hide_index=True, width="stretch")
 
             with col_roi_2:
                 st.markdown("##### 2. Upgrade ROI (Internal)")
                 st.write("Tests adding +1 level to every un-maxed internal upgrade.")
                 
-                if st.button("🔍 Analyze Upgrades", use_container_width=True):
+                if st.button("🔍 Analyze Upgrades", width="stretch"):
                     with st.spinner("Testing marginal upgrade values (This may take a minute)..."):
                         upg_results = {}
                         roi_pool_args =[]
@@ -2481,4 +2494,4 @@ if __name__ == "__main__":
                 if "roi_upg_results" in st.session_state:
                     sorted_upgs = sorted(st.session_state.roi_upg_results.items(), key=lambda x: x[1], reverse=True)
                     df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain"])
-                    st.dataframe(df_upg_roi, hide_index=True, use_container_width=True)
+                    st.dataframe(df_upg_roi, hide_index=True, width="stretch")
