@@ -1595,55 +1595,68 @@ if __name__ == "__main__":
                     
                     time_limit_secs = time_limit_mins * 60
                     
-                    with mp.Pool(CPU_CORES) as pool:
-                        # Apply Stat Locks to Phase 1 bounds
-                        bounds_p1 = {}
-                        for s in STATS_TO_OPTIMIZE:
-                            if st.session_state.get(f"lock_check_{s}", False):
-                                val = int(st.session_state.get(f"lock_val_{s}", 0))
-                                bounds_p1[s] = (val, val)
-                            else:
-                                bounds_p1[s] = (0, EFFECTIVE_CAPS[s])
-                                
-                        best_p1, summary_p1 = run_optimization_phase(
-                            "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
-                            DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
-                            progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
-                            base_state_dict=base_state_dict
-                        )
-                        
-                        best_p2, summary_p2 = None, None
-                        if best_p1 and (time.time() - start_time) < time_limit_secs:
-                            bounds_p2 = {}
-                            step_2 = max(2, step_size // 3)
+                    import traceback
+                    try:
+                        with mp.Pool(CPU_CORES) as pool:
+                            # Apply Stat Locks to Phase 1 bounds
+                            bounds_p1 = {}
                             for s in STATS_TO_OPTIMIZE:
                                 if st.session_state.get(f"lock_check_{s}", False):
-                                    bounds_p2[s] = bounds_p1[s]
+                                    val = int(st.session_state.get(f"lock_val_{s}", 0))
+                                    bounds_p1[s] = (val, val)
                                 else:
-                                    bounds_p2[s] = (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size))
+                                    bounds_p1[s] = (0, EFFECTIVE_CAPS[s])
                                     
-                            best_p2, summary_p2 = run_optimization_phase(
-                                "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
-                                DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
+                            best_p1, summary_p1 = run_optimization_phase(
+                                "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
+                                DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
                                 progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                 base_state_dict=base_state_dict
                             )
                             
-                        if best_p2 and (time.time() - start_time) < time_limit_secs:
-                            bounds_p3 = {}
-                            p3_radius = min(2, step_2) 
-                            for s in STATS_TO_OPTIMIZE:
-                                if st.session_state.get(f"lock_check_{s}", False):
-                                    bounds_p3[s] = bounds_p1[s]
-                                else:
-                                    bounds_p3[s] = (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius))
-                                    
-                            best_p3, final_summary = run_optimization_phase(
-                                "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
-                                DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
-                                progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
-                                base_state_dict=base_state_dict
-                            )
+                            best_p2, summary_p2 = None, None
+                            if best_p1 and (time.time() - start_time) < time_limit_secs:
+                                bounds_p2 = {}
+                                step_2 = max(2, step_size // 3)
+                                for s in STATS_TO_OPTIMIZE:
+                                    if st.session_state.get(f"lock_check_{s}", False):
+                                        bounds_p2[s] = bounds_p1[s]
+                                    else:
+                                        bounds_p2[s] = (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size))
+                                        
+                                best_p2, summary_p2 = run_optimization_phase(
+                                    "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
+                                    DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
+                                    progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                                    base_state_dict=base_state_dict
+                                )
+                                
+                            if best_p2 and (time.time() - start_time) < time_limit_secs:
+                                bounds_p3 = {}
+                                p3_radius = min(2, step_2) 
+                                for s in STATS_TO_OPTIMIZE:
+                                    if st.session_state.get(f"lock_check_{s}", False):
+                                        bounds_p3[s] = bounds_p1[s]
+                                    else:
+                                        bounds_p3[s] = (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius))
+                                        
+                                best_p3, final_summary = run_optimization_phase(
+                                    "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
+                                    DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
+                                    progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                                    base_state_dict=base_state_dict
+                                )
+                    except Exception as crash_err:
+                        st.error(f"🚨 **CRITICAL ENGINE CRASH:** The background worker was unexpectedly killed. This is almost always caused by the Streamlit Cloud server temporarily running out of memory.")
+                        st.error(f"**Technical Details:** `{type(crash_err).__name__}: {str(crash_err)}`")
+                        with st.expander("View Full Crash Traceback", expanded=False):
+                            st.code(traceback.format_exc(), language="python")
+                        print(f"\n[CRASH LOG] {traceback.format_exc()}\n")
+                        best_p3, final_summary = None, None
+                    except BaseException as interrupt_err:
+                        print(f"\n[INTERRUPT LOG] Script halted during Execution Loop! Reason: {type(interrupt_err).__name__}")
+                        print("-> This is usually caused by the user clicking a button, changing a tab, or a browser disconnection.\n")
+                        raise # We MUST re-raise this so Streamlit can correctly stop the thread!
                     
                     best_final = best_p3 or best_p2 or best_p1
                     final_summary_out = final_summary or summary_p2 or summary_p1
