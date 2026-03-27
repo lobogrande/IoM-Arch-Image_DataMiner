@@ -83,7 +83,7 @@ from core.player import Player
 from core.block import Block
 from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
-from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_eta_profiles
+from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_eta_profiles, worker_simulate
 
 # --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
@@ -1166,6 +1166,26 @@ if __name__ == "__main__":
 
         st.divider()
 
+        # --- NEW: STAT LOCKING ---
+        st.markdown("#### 🔒 Lock Stats (Optional)")
+        st.write("Locking a stat to its current value drastically reduces the search space, resulting in much faster simulations.")
+        
+        # Build available stats list
+        available_stats =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        if p.asc2_unlocked: available_stats.append('Corr')
+        
+        if "locked_stats" not in st.session_state:
+            st.session_state.locked_stats =[]
+            
+        locked_stats = st.multiselect(
+            "Select stats to freeze at their current UI allocation:", 
+            options=available_stats,
+            default=st.session_state.locked_stats,
+            key="locked_stats"
+        )
+
+        st.divider()
+
         # --- HARDWARE BENCHMARKING & ETA ---
         if "sims_per_sec" not in st.session_state:
             st.session_state.sims_per_sec = 0
@@ -1377,18 +1397,32 @@ if __name__ == "__main__":
                     time_limit_secs = time_limit_mins * 60
                     
                     with mp.Pool(CPU_CORES) as pool:
-                        bounds_p1 = {s: (0, EFFECTIVE_CAPS[s]) for s in STATS_TO_OPTIMIZE}
+                        # Apply Stat Locks to Phase 1 bounds
+                        bounds_p1 = {}
+                        for s in STATS_TO_OPTIMIZE:
+                            if s in st.session_state.locked_stats:
+                                val = int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)))
+                                bounds_p1[s] = (val, val)
+                            else:
+                                bounds_p1[s] = (0, EFFECTIVE_CAPS[s])
+                                
                         best_p1, summary_p1 = run_optimization_phase(
                             "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
                             DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
                             progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
-                            base_state_dict=base_state_dict # <--- Passed via memory!
+                            base_state_dict=base_state_dict
                         )
                         
                         best_p2, summary_p2 = None, None
                         if best_p1 and (time.time() - start_time) < time_limit_secs:
-                            bounds_p2 = {s: (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size)) for s in STATS_TO_OPTIMIZE}
+                            bounds_p2 = {}
                             step_2 = max(2, step_size // 3)
+                            for s in STATS_TO_OPTIMIZE:
+                                if s in st.session_state.locked_stats:
+                                    bounds_p2[s] = bounds_p1[s]
+                                else:
+                                    bounds_p2[s] = (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size))
+                                    
                             best_p2, summary_p2 = run_optimization_phase(
                                 "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
                                 DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
@@ -1397,8 +1431,14 @@ if __name__ == "__main__":
                             )
                             
                         if best_p2 and (time.time() - start_time) < time_limit_secs:
+                            bounds_p3 = {}
                             p3_radius = min(2, step_2) 
-                            bounds_p3 = {s: (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius)) for s in STATS_TO_OPTIMIZE}
+                            for s in STATS_TO_OPTIMIZE:
+                                if s in st.session_state.locked_stats:
+                                    bounds_p3[s] = bounds_p1[s]
+                                else:
+                                    bounds_p3[s] = (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius))
+                                    
                             best_p3, final_summary = run_optimization_phase(
                                 "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
                                 DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
