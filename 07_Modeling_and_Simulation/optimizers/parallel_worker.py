@@ -308,15 +308,17 @@ def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, it
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
         p1_sims = get_expected_runs(p1_builds, iter_p1)
         
-        # Positive-Shifted Bounds
+        # Positive-Shifted Bounds with Boundary Clamping
+        # In reality, optimized builds lie on the edges (0 or Max Cap) of the stat budget.
+        # A full +/- step radius is impossible; it gets clipped in half by the boundaries.
         if num_free > 0:
-            p2_mock_bounds = {s: (0, 2 * step_1) for s in free_stats}
-            # Prevent Parity Clipping: Force budget to be an exact multiple of the step size
-            p2_budget = ((num_free * step_1) // step_2) * step_2
+            p2_mock_bounds = {s: (0, step_1) for s in free_stats}
+            p2_budget = ((num_free * step_1 // 2) // step_2) * step_2
             p2_builds = len(generate_distributions(free_stats, p2_budget, step_2, p2_mock_bounds))
             
-            p3_mock_bounds = {s: (0, 2 * p3_radius) for s in free_stats}
-            p3_builds = len(generate_distributions(free_stats, num_free * p3_radius, 1, p3_mock_bounds))
+            p3_mock_bounds = {s: (0, p3_radius) for s in free_stats}
+            p3_budget = ((num_free * p3_radius // 2) // 1) * 1
+            p3_builds = len(generate_distributions(free_stats, p3_budget, 1, p3_mock_bounds))
         else:
             p2_builds, p3_builds = 0, 0
             

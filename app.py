@@ -1326,11 +1326,18 @@ if __name__ == "__main__":
                         'total_infernal_cards': p.total_infernal_cards
                     }
                     
-                    # --- REALISTIC BENCHMARK PAYLOAD ---
-                    # Uses the user's actual UI distribution. Evenly-spread "tank" builds artificially
-                    # maximize combat loop micro-ticks, wildly deflating the CPU sims/sec benchmark.
-                    bench_stats = {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}
+                    # --- GUARANTEED STRESS-TEST BENCHMARK ---
+                    # We must test a "Glass Cannon" (High Str/Agi). If the user left their UI on 0 stats,
+                    # the benchmark will run instantly and provide a fake 10,000 sims/sec speed.
+                    bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                    bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
                     
+                    # Dump budget into Damage and Stamina to ensure it reaches deep floors
+                    if bench_budget > 0:
+                        bench_stats['Str'] = min(99, bench_budget)
+                        if 'Agi' in bench_stats:
+                            bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
+                            
                     payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
                     
                     # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
@@ -1466,7 +1473,14 @@ if __name__ == "__main__":
                         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         
                         bench_stats = {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}
-                        
+                        bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
+                    
+                        # Dump budget into Damage and Stamina to ensure it reaches deep floors
+                        if bench_budget > 0:
+                            bench_stats['Str'] = min(99, bench_budget)
+                            if 'Agi' in bench_stats:
+                                bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
+
                         payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
                         # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
                         if sys.platform == "linux":
