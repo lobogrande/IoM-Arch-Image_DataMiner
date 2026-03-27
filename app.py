@@ -2102,7 +2102,7 @@ if __name__ == "__main__":
                                             for args, r in zip(verify_args, res_list):
                                                 b_id = args['_b_id']
                                                 if b_id not in build_results: build_results[b_id] = {'sum_t': 0, 'sum_f': 0, 'floors': []}
-                                                build_results[b_id]['sum_t'] += r.get(run_target_metric, r.get("highest_floor", 0))
+                                                build_results[b_id]['sum_t'] += float(r.get(run_target_metric, 0.0))
                                                 build_results[b_id]['sum_f'] += r.get("highest_floor", 0)
                                                 build_results[b_id]['floors'].append(r.get("highest_floor", 0))
                                                 
@@ -2256,7 +2256,7 @@ if __name__ == "__main__":
                                 for args, r in zip(roi_pool_args, res_list):
                                     t_s = args['_test_stat']
                                     if t_s not in stat_results: stat_results[t_s] = {'sum': 0, 'count': 0}
-                                    val = r.get(run_target_metric, r.get("highest_floor", 0))
+                                    val = float(r.get(run_target_metric, 0.0))
                                     stat_results[t_s]['sum'] += val
                                     stat_results[t_s]['count'] += 1
                                     
@@ -2315,7 +2315,7 @@ if __name__ == "__main__":
                                 for args, r in zip(roi_pool_args, res_list):
                                     t_u = args['_test_upg']
                                     if t_u not in upg_results: upg_results[t_u] = {'sum': 0, 'count': 0}
-                                    val = r.get(run_target_metric, r.get("highest_floor", 0))
+                                    val = float(r.get(run_target_metric, 0.0))
                                     upg_results[t_u]['sum'] += val
                                     upg_results[t_u]['count'] += 1
                                     
