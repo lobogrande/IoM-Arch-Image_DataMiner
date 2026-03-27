@@ -404,11 +404,13 @@ if __name__ == "__main__":
                 if 'last_uploaded_file' not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.file_id:
                     st.session_state.last_uploaded_file = uploaded_file.file_id
                     
-                    temp_path = os.path.join(ROOT_DIR, "temp_upload.json")
+                    import uuid
+                    temp_path = os.path.join(ROOT_DIR, f"temp_upload_{uuid.uuid4().hex}.json")
                     with open(temp_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     load_state_from_json(p, temp_path)
-                    os.remove(temp_path)
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
                     
                     # Flush ALL widget keys so they resync to the new JSON file!
                     for k in list(st.session_state.keys()):
@@ -435,7 +437,8 @@ if __name__ == "__main__":
                     except ValueError:
                         pass
 
-            temp_export = os.path.join(ROOT_DIR, "temp_export.json")
+            import uuid
+            temp_export = os.path.join(ROOT_DIR, f"temp_export_{uuid.uuid4().hex}.json")
             save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
             
             # --- INTERCEPT AND ENFORCE STRICT CARD JSON ORDERING ---
