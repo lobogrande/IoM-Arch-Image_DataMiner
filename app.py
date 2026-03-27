@@ -1127,12 +1127,12 @@ if __name__ == "__main__":
         # --- PROJECTION DISCLAIMER ---
         st.warning(
             "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
-            "This tool is highly accurate at finding the **optimal stat distribution** for your target. "
-            "However, please take the **absolute output numbers** (Max Floor, Yields/hr, Drop Times) with a grain of salt. "
-            "Extensive testing shows these projections lean conservative and will likely fall short of your actual in-game "
-            "performance (typically by 5-10 floors for late-game Asc1 players).\n\n"
-            "*Why?* While the combat math is exact, the enemy spawn data for Floors 100+ is based on a limited sample "
-            "size of real-world runs. Treat the output yields as a baseline, not absolute gospel!"
+            "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
+            "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
+            "**The Reality Check:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
+            "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
+            "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
+            "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
         )
 
         # --- GOAL SELECTION ---

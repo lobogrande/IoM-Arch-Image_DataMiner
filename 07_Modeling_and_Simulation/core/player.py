@@ -339,22 +339,32 @@ class Player:
     @property
     def enrage_charges(self): return 5 + self.w('W9')
     @property
-    def enrage_cooldown(self): return self._excel_floor((60 + self.u('H18') + self.u('H29') + self.u('H32') + self.w('W10')) * (1 + self.w('W20')), 1)
+    def enrage_cooldown(self): 
+        val = (60 + self.u('H18') + self.u('H29') + self.u('H32') + self.w('W10')) * (1 + self.w('W20'))
+        return self._excel_round(val, 0)
+        
     @property
     def enrage_bonus_dmg(self): return 0.2 + self.u('F18')
     @property
     def enrage_bonus_crit_dmg(self): return 1.0 + self.u('F18')
+    
     @property
     def flurry_duration(self): return 5 + self.w('W9')
     @property
-    def flurry_cooldown(self): return (120 + self.u('H22') + self.u('H29') + self.w('W10')) * (1 + self.w('W20'))
+    def flurry_cooldown(self): 
+        val = (115 + self.u('H22') + self.u('H29') + self.w('W10')) * (1 + self.w('W20'))
+        return self._excel_round(val, 0)
+        
     @property
     def flurry_bonus_atk_spd(self): return 1.0
     @property
     def flurry_sta_on_cast(self): return 5 + self.u('F22')
+    
     @property
     def quake_attacks(self): return 5 + self.u('F31') + self.w('W9')
     @property
-    def quake_cooldown(self): return (180 + self.u('H29') + self.u('H31') + self.w('W10')) * (1 + self.w('W20'))
+    def quake_cooldown(self): 
+        val = (175 + self.u('H29') + self.u('H31') + self.w('W10')) * (1 + self.w('W20'))
+        return self._excel_round(val, 0)
     @property
     def quake_dmg_to_all(self): return 0.2
