@@ -175,6 +175,14 @@ def composite_card(bg_path, cblock_path, x_offset, y_offset):
     """Dynamically overlays ANY core asset onto a dynamic background."""
     try:
         bg = Image.open(bg_path).convert("RGBA")
+        
+        # --- NEW: Standardize background sizes against 1.png to prevent UI jitter ---
+        base_bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", "1.png")
+        if os.path.exists(base_bg_path):
+            with Image.open(base_bg_path) as base_bg:
+                if bg.size != base_bg.size:
+                    bg = bg.resize(base_bg.size, Image.NEAREST)
+                    
         fg = Image.open(cblock_path).convert("RGBA")
         
         # --- NEW: Scale the inner core down before pasting ---
@@ -306,12 +314,14 @@ if __name__ == "__main__":
             padding: 0.75rem !important;
         }
         
-        /* 5. Force +/- Stepper Buttons in narrow 9-column layouts */[data-testid="stNumberInputStepDown"],[data-testid="stNumberInputStepUp"] {
-            display: flex !important;
+        /* 5. Cleanly hide broken stepper buttons in narrow columns to prevent ghost spacing */[data-testid="stNumberInput"] button {
+            display: none !important;
         }
         
-        /* 6. Center the text inside all number inputs */[data-testid="stNumberInput"] input {
+        /* 6. Perfectly center the text inside all number inputs */[data-testid="stNumberInput"] input {
             text-align: center !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important; 
         }
         </style>
     """, unsafe_allow_html=True)
