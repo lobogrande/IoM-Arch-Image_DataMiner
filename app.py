@@ -1543,7 +1543,7 @@ if __name__ == "__main__":
                         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         
-                        bench_stats = {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}
+                        bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
                         bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
                     
                         # Dump budget into Damage and Stamina to ensure it reaches deep floors
