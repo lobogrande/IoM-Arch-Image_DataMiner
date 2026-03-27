@@ -1609,9 +1609,11 @@ if __name__ == "__main__":
             if best_final and final_summary_out:
                 # --- NEW: APPEND TO RUN HISTORY ---
                 if "run_history" not in st.session_state:
-                    st.session_state.run_history =[]
+                    st.session_state.run_history = list()
                 
                 history_entry = {
+                    "Include": True,
+                    "Target": target_metric,
                     "Metric Score": round(final_summary_out.get(target_metric, 0), 2),
                     "Avg Floor": round(final_summary_out.get("avg_floor", 0), 2)
                 }
@@ -1911,84 +1913,101 @@ if __name__ == "__main__":
                 st.write("Because the combat math is highly balanced, high-level optimizations often land on a 'Plateau' where wildly different builds perform identically. Track your runs here to spot these patterns.")
                 
                 if "run_history" in st.session_state and st.session_state.run_history:
-                    df_history = pd.DataFrame(st.session_state.run_history)
-                    st.dataframe(df_history, hide_index=True, use_container_width=True)
+                    # Isolate history to ONLY the target we are currently optimizing for!
+                    current_history =[r for r in st.session_state.run_history if r.get("Target") == run_target_metric]
                     
-                    st.divider()
-                    st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
-                    st.write("Smooth out Monte Carlo RNG noise. This algorithm averages the builds in your history, corrects for budget constraints, and runs a deep verification test to find the true mathematical center of the plateau.")
-                    
-                    col_synth1, col_synth2 = st.columns(2)
-                    with col_synth1:
-                        if st.button("🧬 Synthesize & Verify Meta-Build", use_container_width=True):
-                            with st.spinner("Synthesizing and running deep verification..."):
-                                history = st.session_state.run_history
-                                stat_keys =[k for k in history[0].keys() if k not in ["Metric Score", "Avg Floor"]]
+                    if not current_history:
+                        st.info(f"No run history available for the target: **{run_target_metric}**. Run the optimizer a few times to build history.")
+                    else:
+                        st.write(f"*(Uncheck the **Include** box to safely ignore outlier runs from the Meta-Build calculation)*")
+                        
+                        df_history = pd.DataFrame(current_history)
+                        edited_df = st.data_editor(
+                            df_history, 
+                            hide_index=True, 
+                            use_container_width=True,
+                            column_config={"Include": st.column_config.CheckboxColumn("Include", default=True)},
+                            disabled=[c for c in df_history.columns if c != "Include"] # Lock everything except the checkbox!
+                        )
+                        
+                        st.divider()
+                        st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
+                        st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test to find the true mathematical center of the plateau.")
+                        
+                        col_synth1, col_synth2 = st.columns(2)
+                        with col_synth1:
+                            if st.button("🧬 Synthesize & Verify Meta-Build", use_container_width=True):
+                                # Extract ONLY the rows the user left checked!
+                                valid_runs = edited_df[edited_df["Include"] == True].to_dict('records')
                                 
-                                # 1. Average the stats
-                                meta_dist = {}
-                                for s in stat_keys:
-                                    meta_dist[s] = int(round(sum(run[s] for run in history) / len(history)))
-                                    
-                                # 2. Fix budget drift caused by rounding
-                                target_budget = sum(history[-1][s] for s in stat_keys)
-                                current_budget = sum(meta_dist.values())
-                                
-                                diff = target_budget - current_budget
-                                if diff != 0:
-                                    # Adjust the stat with the highest allocation to absorb the rounding error
-                                    max_stat = max(stat_keys, key=lambda k: meta_dist[k])
-                                    meta_dist[max_stat] += diff
-                                
-                                # 3. Reconstruct payload for verification
-                                synth_state_dict = {
-                                    'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                                    'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
-                                    'total_infernal_cards': p.total_infernal_cards
-                                }
-                                
-                                verify_args =[{'stats': meta_dist, 'fixed_stats': {}, 'state_dict': synth_state_dict} for _ in range(200)]
-                                
-                                if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
-                                else: CPU_CORES = max(1, mp.cpu_count() - 1)
-                                
-                                with mp.Pool(CPU_CORES) as pool:
-                                    res_list = pool.map(worker_simulate, verify_args)
-                                
-                                # 4. Aggregate Synthesis Results
-                                sum_target = sum(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list)
-                                sum_floor = sum(r.get("highest_floor", 0) for r in res_list)
-                                floors =[r.get("highest_floor", 0) for r in res_list]
-                                
-                                # Package it exactly like a Phase 3 result!
-                                synth_summary = {
-                                    run_target_metric: sum_target / 200.0,
-                                    "avg_floor": sum_floor / 200.0,
-                                    "abs_max_floor": max(floors) if floors else 0,
-                                    "abs_max_chance": (floors.count(max(floors)) / len(floors)) if floors else 0,
-                                    "floors": floors,
-                                    "worst_val": min(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list),
-                                    "avg_val": sum_target / 200.0,
-                                    "runner_up_val": sum_target / 200.0, # N/A for synthesis
-                                    "avg_metrics": {} # Simplified for synthesis
-                                }
-                                
-                                # Overwrite the session state and trigger a UI reload to display the Meta-Build!
-                                st.session_state.opt_results["best_final"] = meta_dist
-                                st.session_state.opt_results["final_summary_out"] = synth_summary
-                                st.session_state.opt_results["chart_hill_labels"] = ["Average Build", "🧬 Synthesized Meta-Build"]
-                                st.session_state.opt_results["chart_hill_scores"] = [sum(r["Metric Score"] for r in history)/len(history), sum_target / 200.0]
-                                st.session_state.opt_results["chart_hist"] = dict(Counter(floors))
-                                
-                                st.rerun()
+                                if len(valid_runs) == 0:
+                                    st.error("⚠️ You must leave at least 1 run checked to synthesize!")
+                                else:
+                                    with st.spinner("Synthesizing and running deep verification..."):
+                                        stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor"]]
+                                        
+                                        # 1. Average the stats
+                                        meta_dist = {}
+                                        for s in stat_keys:
+                                            meta_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
+                                            
+                                        # 2. Fix budget drift caused by rounding
+                                        target_budget = sum(valid_runs[-1][s] for s in stat_keys)
+                                        current_budget = sum(meta_dist.values())
+                                        
+                                        diff = target_budget - current_budget
+                                        if diff != 0:
+                                            max_stat = max(stat_keys, key=lambda k: meta_dist[k])
+                                            meta_dist[max_stat] += diff
+                                        
+                                        # 3. Reconstruct payload for verification
+                                        synth_state_dict = {
+                                            'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                                            'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                                            'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                            'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                                            'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                                            'total_infernal_cards': p.total_infernal_cards
+                                        }
+                                        
+                                        verify_args =[{'stats': meta_dist, 'fixed_stats': {}, 'state_dict': synth_state_dict} for _ in range(200)]
+                                        
+                                        if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
+                                        else: CPU_CORES = max(1, mp.cpu_count() - 1)
+                                        
+                                        with mp.Pool(CPU_CORES) as pool:
+                                            res_list = pool.map(worker_simulate, verify_args)
+                                        
+                                        # 4. Aggregate Synthesis Results
+                                        sum_target = sum(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list)
+                                        sum_floor = sum(r.get("highest_floor", 0) for r in res_list)
+                                        floors =[r.get("highest_floor", 0) for r in res_list]
+                                        
+                                        synth_summary = {
+                                            run_target_metric: sum_target / 200.0,
+                                            "avg_floor": sum_floor / 200.0,
+                                            "abs_max_floor": max(floors) if floors else 0,
+                                            "abs_max_chance": (floors.count(max(floors)) / len(floors)) if floors else 0,
+                                            "floors": floors,
+                                            "worst_val": min(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list),
+                                            "avg_val": sum_target / 200.0,
+                                            "runner_up_val": sum_target / 200.0, 
+                                            "avg_metrics": {} 
+                                        }
+                                        
+                                        st.session_state.opt_results["best_final"] = meta_dist
+                                        st.session_state.opt_results["final_summary_out"] = synth_summary
+                                        st.session_state.opt_results["chart_hill_labels"] =["Checked Average", "🧬 Meta-Build"]
+                                        st.session_state.opt_results["chart_hill_scores"] =[sum(r["Metric Score"] for r in valid_runs)/len(valid_runs), sum_target / 200.0]
+                                        st.session_state.opt_results["chart_hist"] = dict(Counter(floors))
+                                        
+                                        st.rerun()
 
-                    with col_synth2:
-                        if st.button("🗑️ Clear History", use_container_width=True):
-                            st.session_state.run_history = list()
-                            st.rerun()
+                        with col_synth2:
+                            if st.button("🗑️ Clear History (Current Target)", use_container_width=True):
+                                # Only clear history for the active target
+                                st.session_state.run_history =[r for r in st.session_state.run_history if r.get("Target") != run_target_metric]
+                                st.rerun()
 
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
