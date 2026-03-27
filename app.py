@@ -1909,36 +1909,59 @@ if __name__ == "__main__":
 
             # --- TAB: RUN HISTORY & SYNTHESIS ---
             with ui_tabs[tab_idx]:
-                st.markdown("#### 📚 Run History")
-                st.write("Because the combat math is highly balanced, high-level optimizations often land on a 'Plateau' where wildly different builds perform identically. Track your runs here to spot these patterns.")
+                st.markdown("#### 📚 Run History & Hybrid Synthesis")
+                st.write("Because the combat math is highly balanced, optimizations often land on a 'Plateau' where wildly different builds perform identically. Track your runs here to spot these patterns.")
                 
                 if "run_history" in st.session_state and st.session_state.run_history:
-                    # Isolate history to ONLY the target we are currently optimizing for!
-                    current_history =[r for r in st.session_state.run_history if r.get("Target") == run_target_metric]
+                    unique_targets = list(set(r.get("Target", "unknown") for r in st.session_state.run_history))
                     
-                    if not current_history:
-                        st.info(f"No run history available for the target: **{run_target_metric}**. Run the optimizer a few times to build history.")
+                    col_filt1, col_filt2 = st.columns([2, 1])
+                    with col_filt1:
+                        view_targets = st.multiselect(
+                            "🔍 Filter visible runs by optimization target:", 
+                            options=unique_targets, 
+                            default=[t for t in unique_targets if t == run_target_metric] or unique_targets
+                        )
+                    with col_filt2:
+                        if st.button("🔄 Toggle 'Include' for Visible", use_container_width=True):
+                            for r in st.session_state.run_history:
+                                if r.get("Target") in view_targets:
+                                    r["Include"] = not r.get("Include", True)
+                            st.rerun()
+
+                    visible_history =[r for r in st.session_state.run_history if r.get("Target") in view_targets]
+                    
+                    if not visible_history:
+                        st.info("No runs match the selected filters. Run the optimizer to build history.")
                     else:
-                        st.write(f"*(Uncheck the **Include** box to safely ignore outlier runs from the Meta-Build calculation)*")
+                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. Power Users: Mix runs from DIFFERENT targets to create Hybrid Builds!)*")
                         
-                        df_history = pd.DataFrame(current_history)
+                        df_history = pd.DataFrame(visible_history)
+                        cols = ['Include', 'Target', 'Metric Score', 'Avg Floor']
+                        cols += [c for c in df_history.columns if c not in cols]
+                        df_history = df_history[cols]
+                        
                         edited_df = st.data_editor(
                             df_history, 
                             hide_index=True, 
                             use_container_width=True,
-                            column_config={"Include": st.column_config.CheckboxColumn("Include", default=True)},
-                            disabled=[c for c in df_history.columns if c != "Include"] # Lock everything except the checkbox!
+                            column_config={"Include": st.column_config.CheckboxColumn("Include")},
+                            disabled=[c for c in df_history.columns if c != "Include"] 
                         )
+                        
+                        # Sync edits back to global state by reference
+                        edited_records = edited_df.to_dict('records')
+                        for i, row in enumerate(edited_records):
+                            visible_history[i]['Include'] = row['Include']
                         
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
-                        st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test to find the true mathematical center of the plateau.")
+                        st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test against your *current* UI target.")
                         
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
                             if st.button("🧬 Synthesize & Verify Meta-Build", use_container_width=True):
-                                # Extract ONLY the rows the user left checked!
-                                valid_runs = edited_df[edited_df["Include"] == True].to_dict('records')
+                                valid_runs =[r for r in st.session_state.run_history if r.get("Include", False)]
                                 
                                 if len(valid_runs) == 0:
                                     st.error("⚠️ You must leave at least 1 run checked to synthesize!")
@@ -1946,12 +1969,10 @@ if __name__ == "__main__":
                                     with st.spinner("Synthesizing and running deep verification..."):
                                         stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor"]]
                                         
-                                        # 1. Average the stats
                                         meta_dist = {}
                                         for s in stat_keys:
                                             meta_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
                                             
-                                        # 2. Fix budget drift caused by rounding
                                         target_budget = sum(valid_runs[-1][s] for s in stat_keys)
                                         current_budget = sum(meta_dist.values())
                                         
@@ -1960,7 +1981,6 @@ if __name__ == "__main__":
                                             max_stat = max(stat_keys, key=lambda k: meta_dist[k])
                                             meta_dist[max_stat] += diff
                                         
-                                        # 3. Reconstruct payload for verification
                                         synth_state_dict = {
                                             'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                                             'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
@@ -1978,7 +1998,6 @@ if __name__ == "__main__":
                                         with mp.Pool(CPU_CORES) as pool:
                                             res_list = pool.map(worker_simulate, verify_args)
                                         
-                                        # 4. Aggregate Synthesis Results
                                         sum_target = sum(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list)
                                         sum_floor = sum(r.get("highest_floor", 0) for r in res_list)
                                         floors =[r.get("highest_floor", 0) for r in res_list]
@@ -1995,18 +2014,21 @@ if __name__ == "__main__":
                                             "avg_metrics": {} 
                                         }
                                         
+                                        # Chart safety: Only average the scores of history runs that match the current metric
+                                        same_target_runs = [r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
+                                        avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
+                                        
                                         st.session_state.opt_results["best_final"] = meta_dist
                                         st.session_state.opt_results["final_summary_out"] = synth_summary
-                                        st.session_state.opt_results["chart_hill_labels"] =["Checked Average", "🧬 Meta-Build"]
-                                        st.session_state.opt_results["chart_hill_scores"] =[sum(r["Metric Score"] for r in valid_runs)/len(valid_runs), sum_target / 200.0]
+                                        st.session_state.opt_results["chart_hill_labels"] =["Checked Average", "🧬 Hybrid Meta-Build"]
+                                        st.session_state.opt_results["chart_hill_scores"] = [avg_history_score, sum_target / 200.0]
                                         st.session_state.opt_results["chart_hist"] = dict(Counter(floors))
                                         
                                         st.rerun()
 
                         with col_synth2:
-                            if st.button("🗑️ Clear History (Current Target)", use_container_width=True):
-                                # Only clear history for the active target
-                                st.session_state.run_history =[r for r in st.session_state.run_history if r.get("Target") != run_target_metric]
+                            if st.button("🗑️ Clear History (Visible Targets)", use_container_width=True):
+                                st.session_state.run_history =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
                                 st.rerun()
 
             # ==========================================
