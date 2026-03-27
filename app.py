@@ -1966,20 +1966,36 @@ if __name__ == "__main__":
                                 if len(valid_runs) == 0:
                                     st.error("⚠️ You must leave at least 1 run checked to synthesize!")
                                 else:
-                                    with st.spinner("Synthesizing and running deep verification..."):
+                                    with st.spinner("Calculating seed, mapping neighborhood, and running deep Gradient Polish..."):
                                         stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor"]]
                                         
-                                        meta_dist = {}
+                                        # 1. Calculate the starting Seed (Average)
+                                        seed_dist = {}
                                         for s in stat_keys:
-                                            meta_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
+                                            seed_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
                                             
                                         target_budget = sum(valid_runs[-1][s] for s in stat_keys)
-                                        current_budget = sum(meta_dist.values())
+                                        current_budget = sum(seed_dist.values())
                                         
                                         diff = target_budget - current_budget
                                         if diff != 0:
-                                            max_stat = max(stat_keys, key=lambda k: meta_dist[k])
-                                            meta_dist[max_stat] += diff
+                                            max_stat = max(stat_keys, key=lambda k: seed_dist[k])
+                                            seed_dist[max_stat] += diff
+                                            
+                                        # 2. Generate Local Neighborhood (All valid 1-point swaps)
+                                        cap_increase = int(p.u('H45'))
+                                        EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in stat_keys}
+                                        
+                                        neighbors =[seed_dist] # Always test the exact seed too
+                                        for s_from in stat_keys:
+                                            if seed_dist[s_from] > 0 and not st.session_state.get(f"lock_check_{s_from}", False):
+                                                for s_to in stat_keys:
+                                                    if s_from != s_to and seed_dist[s_to] < EFFECTIVE_CAPS[s_to] and not st.session_state.get(f"lock_check_{s_to}", False):
+                                                        neighbor = seed_dist.copy()
+                                                        neighbor[s_from] -= 1
+                                                        neighbor[s_to] += 1
+                                                        if neighbor not in neighbors:
+                                                            neighbors.append(neighbor)
                                         
                                         synth_state_dict = {
                                             'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
@@ -1990,7 +2006,11 @@ if __name__ == "__main__":
                                             'total_infernal_cards': p.total_infernal_cards
                                         }
                                         
-                                        verify_args =[{'stats': meta_dist, 'fixed_stats': {}, 'state_dict': synth_state_dict} for _ in range(200)]
+                                        # 3. Parallelize 75 simulations for EVERY build in the neighborhood
+                                        verify_args =[]
+                                        for build in neighbors:
+                                            for _ in range(75):
+                                                verify_args.append({'stats': build, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(build.items())})
                                         
                                         if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
                                         else: CPU_CORES = max(1, mp.cpu_count() - 1)
@@ -1998,31 +2018,46 @@ if __name__ == "__main__":
                                         with mp.Pool(CPU_CORES) as pool:
                                             res_list = pool.map(worker_simulate, verify_args)
                                         
-                                        sum_target = sum(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list)
-                                        sum_floor = sum(r.get("highest_floor", 0) for r in res_list)
-                                        floors =[r.get("highest_floor", 0) for r in res_list]
+                                        # 4. Aggregate results and find the true peak of the neighborhood
+                                        build_results = {}
+                                        for args, r in zip(verify_args, res_list):
+                                            b_id = args['_b_id']
+                                            if b_id not in build_results:
+                                                build_results[b_id] = {'sum_t': 0, 'sum_f': 0, 'floors':[]}
+                                            build_results[b_id]['sum_t'] += r.get(run_target_metric, r.get("highest_floor", 0))
+                                            build_results[b_id]['sum_f'] += r.get("highest_floor", 0)
+                                            build_results[b_id]['floors'].append(r.get("highest_floor", 0))
+                                            
+                                        def sort_key(b_id):
+                                            data = build_results[b_id]
+                                            if run_target_metric == 'highest_floor':
+                                                return (max(data['floors']), data['sum_f'])
+                                            return (data['sum_t'], data['sum_f'])
+                                            
+                                        best_b_id = sorted(build_results.keys(), key=sort_key, reverse=True)[0]
+                                        best_data = build_results[best_b_id]
+                                        final_meta_dist = dict(best_b_id)
                                         
                                         synth_summary = {
-                                            run_target_metric: sum_target / 200.0,
-                                            "avg_floor": sum_floor / 200.0,
-                                            "abs_max_floor": max(floors) if floors else 0,
-                                            "abs_max_chance": (floors.count(max(floors)) / len(floors)) if floors else 0,
-                                            "floors": floors,
-                                            "worst_val": min(r.get(run_target_metric, r.get("highest_floor", 0)) for r in res_list),
-                                            "avg_val": sum_target / 200.0,
-                                            "runner_up_val": sum_target / 200.0, 
+                                            run_target_metric: best_data['sum_t'] / 75.0,
+                                            "avg_floor": best_data['sum_f'] / 75.0,
+                                            "abs_max_floor": max(best_data['floors']) if best_data['floors'] else 0,
+                                            "abs_max_chance": (best_data['floors'].count(max(best_data['floors'])) / 75.0) if best_data['floors'] else 0,
+                                            "floors": best_data['floors'],
+                                            "worst_val": min((d['sum_t']/75.0) for d in build_results.values()),
+                                            "avg_val": best_data['sum_t'] / 75.0,
+                                            "runner_up_val": sorted([d['sum_t']/75.0 for d in build_results.values()], reverse=True)[1] if len(build_results)>1 else best_data['sum_t']/75.0,
                                             "avg_metrics": {} 
                                         }
                                         
-                                        # Chart safety: Only average the scores of history runs that match the current metric
                                         same_target_runs = [r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
-                                        st.session_state.opt_results["best_final"] = meta_dist
+                                        st.session_state.opt_results["best_final"] = final_meta_dist
                                         st.session_state.opt_results["final_summary_out"] = synth_summary
-                                        st.session_state.opt_results["chart_hill_labels"] =["Checked Average", "🧬 Hybrid Meta-Build"]
-                                        st.session_state.opt_results["chart_hill_scores"] = [avg_history_score, sum_target / 200.0]
-                                        st.session_state.opt_results["chart_hist"] = dict(Counter(floors))
+                                        st.session_state.opt_results["chart_hill_labels"] =["History Average", "🧬 Polished Meta-Build"]
+                                        st.session_state.opt_results["chart_hill_scores"] = [avg_history_score, best_data['sum_t'] / 75.0]
+                                        st.session_state.opt_results["chart_hist"] = dict(Counter(best_data['floors']))
                                         
                                         st.rerun()
 
