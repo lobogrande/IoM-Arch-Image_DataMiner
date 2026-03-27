@@ -445,6 +445,10 @@ if __name__ == "__main__":
             with open(temp_export, "r") as f:
                 export_data = json.load(f)
                 
+            # Strip hardcoded constants to prevent user confusion and math tampering
+            if "settings" in export_data and "base_damage_const" in export_data["settings"]:
+                del export_data["settings"]["base_damage_const"]
+                
             if "cards" in export_data:
                 ordered_cards = {}
                 for ot in['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']:
