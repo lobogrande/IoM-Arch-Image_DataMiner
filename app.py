@@ -1607,6 +1607,17 @@ if __name__ == "__main__":
             # SAVE TO SESSION STATE FOR PERSISTENCE
             # ==========================================
             if best_final and final_summary_out:
+                # --- NEW: APPEND TO RUN HISTORY ---
+                if "run_history" not in st.session_state:
+                    st.session_state.run_history =[]
+                
+                history_entry = {
+                    "Metric Score": round(final_summary_out.get(target_metric, 0), 2),
+                    "Avg Floor": round(final_summary_out.get("avg_floor", 0), 2)
+                }
+                history_entry.update(best_final) # Add the stats to the dictionary
+                st.session_state.run_history.append(history_entry)
+
                 st.session_state.opt_results = {
                     "best_final": best_final,
                     "final_summary_out": final_summary_out,
