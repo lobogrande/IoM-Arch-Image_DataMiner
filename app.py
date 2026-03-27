@@ -1913,7 +1913,12 @@ if __name__ == "__main__":
                 st.write("Because the combat math is highly balanced, optimizations often land on a 'Plateau' where wildly different builds perform identically. Track your runs here to spot these patterns.")
                 
                 if "run_history" in st.session_state and st.session_state.run_history:
-                    unique_targets = list(set(r.get("Target", "unknown") for r in st.session_state.run_history))
+                    # State migration failsafe: Normalize stale runs from older app versions
+                    for r in st.session_state.run_history:
+                        if "Target" not in r:
+                            r["Target"] = "unknown"
+                            
+                    unique_targets = list(set(r.get("Target") for r in st.session_state.run_history))
                     
                     col_filt1, col_filt2 = st.columns([2, 1])
                     with col_filt1:
