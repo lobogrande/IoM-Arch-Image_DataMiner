@@ -2035,10 +2035,14 @@ if __name__ == "__main__":
                                         # ==========================================================
                                         # UNIFIED MULTI-SEED TOURNAMENT SYNTHESIS
                                         # ==========================================================
-                                        candidates =[]
-                                        # 1. Guarantee the original runs are in the tournament pool
+                                        candidates = []
+                                        original_b_ids =[]
+                                        
+                                        # 1. Add original runs
                                         for r in valid_runs:
                                             dist = {s: r[s] for s in stat_keys}
+                                            b_id = tuple(dist.items())
+                                            if b_id not in original_b_ids: original_b_ids.append(b_id)
                                             if dist not in candidates: candidates.append(dist)
                                             
                                         # 2. Add the Average Build
@@ -2046,12 +2050,15 @@ if __name__ == "__main__":
                                         for s in stat_keys: avg_dist[s] = int(round(sum(r[s] for r in valid_runs) / len(valid_runs)))
                                         diff = sum(valid_runs[-1][s] for s in stat_keys) - sum(avg_dist.values())
                                         if diff != 0: avg_dist[max(stat_keys, key=lambda k: avg_dist[k])] += diff
+                                        
+                                        avg_b_id = tuple(avg_dist.items())
                                         if avg_dist not in candidates: candidates.append(avg_dist)
                                         
-                                        # 3. Multi-Seed Wide Mutation: +/- 1 and +/- 2 around EVERY checked run AND the Average Build!
-                                        base_dists = [ {s: r[s] for s in stat_keys} for r in valid_runs ] + [avg_dist]
+                                        # 3. Smart Mutation: +/- 1 around history runs, +/- 1 & 2 around Average Center
+                                        base_dists = candidates.copy()
                                         for base_dist in base_dists:
-                                            for radius in [1, 2]:
+                                            radii = [1, 2] if tuple(base_dist.items()) == avg_b_id else [1]
+                                            for radius in radii:
                                                 for s_from in stat_keys:
                                                     if base_dist[s_from] >= radius and not st.session_state.get(f"lock_check_{s_from}", False):
                                                         for s_to in stat_keys:
@@ -2079,7 +2086,7 @@ if __name__ == "__main__":
                                             build_res[b_id]['sum_f'] += f_val
                                             build_res[b_id]['floors'].append(f_val)
                                             
-                                        # SORTING LOGIC FOR ROUND 1: Ceiling Consistency vs Metric Average
+                                        # SORTING LOGIC FOR ROUND 1
                                         def get_ceiling_score(floors, count=3):
                                             sorted_f = sorted(floors)
                                             return sum(sorted_f[-count:]) / float(count) if floors else 0
@@ -2089,14 +2096,18 @@ if __name__ == "__main__":
                                         else:
                                             top5_ids = sorted(build_res.keys(), key=lambda k: build_res[k]['sum_t'], reverse=True)[:5]
                                         
-                                        # TOURNAMENT ROUND 2: 450 runs on top 5
-                                        r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in top5_ids for _ in range(450)]
+                                        # FORCE ORIGINAL RUNS INTO ROUND 2:
+                                        # We evaluate all original history runs to 500 simulations to strip away their RNG 
+                                        # noise so we can do a fair Apples-to-Apples comparison on the final chart!
+                                        r2_ids = list(set(top5_ids + original_b_ids))
+                                        
+                                        # TOURNAMENT ROUND 2: 450 runs on the finalists & original runs
+                                        r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in r2_ids for _ in range(450)]
                                         with mp.Pool(CPU_CORES) as pool:
                                             res2 = pool.map(worker_simulate, r2_args)
                                             
                                         for args, r in zip(r2_args, res2):
                                             b_id = args['_b_id']
-                                            
                                             t_val = float(r.get(run_target_metric, 0.0))
                                             f_val = r.get("highest_floor", 0)
                                             
@@ -2106,9 +2117,9 @@ if __name__ == "__main__":
                                             
                                         # SORTING LOGIC FOR ROUND 2
                                         if run_target_metric == "highest_floor":
-                                            best_b_id = sorted(top5_ids, key=lambda k: get_ceiling_score(build_res[k]['floors'], 5), reverse=True)[0]
+                                            best_b_id = sorted(r2_ids, key=lambda k: get_ceiling_score(build_res[k]['floors'], 5), reverse=True)[0]
                                         else:
-                                            best_b_id = sorted(top5_ids, key=lambda k: build_res[k]['sum_t'], reverse=True)[0]
+                                            best_b_id = sorted(r2_ids, key=lambda k: build_res[k]['sum_t'], reverse=True)[0]
                                             
                                         best_data = build_res[best_b_id]
                                         final_meta_dist = dict(best_b_id)
@@ -2128,13 +2139,20 @@ if __name__ == "__main__":
                                             "avg_metrics": {} 
                                         }
 
-                                        # Chart mapping logic
+                                        # APPLES-TO-APPLES CHART MAPPING
+                                        # We map the TRUE 500-run scores of the historical runs instead of their noisy 100-run history scores.
+                                        same_target_runs =[]
+                                        for r in valid_runs:
+                                            b_id = tuple({s: r[s] for s in stat_keys}.items())
+                                            if run_target_metric == "highest_floor":
+                                                same_target_runs.append(max(build_res[b_id]['floors']))
+                                            else:
+                                                same_target_runs.append(build_res[b_id]['sum_t'] / 500.0)
+                                                
                                         if run_target_metric == "highest_floor":
-                                            same_target_runs =[r.get("Max Floor", r["Metric Score"]) for r in valid_runs if r.get("Target") == run_target_metric]
                                             meta_score = abs_max
                                             chart_label = "🏆 Verified God-Build"
                                         else:
-                                            same_target_runs =[r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
                                             meta_score = best_data['sum_t'] / 500.0
                                             chart_label = "🧬 Polished Meta-Build"
                                             
@@ -2175,6 +2193,7 @@ if __name__ == "__main__":
                             # --- 📊 PERFORMANCE PROOF CHART ---
                             st.markdown("#### 📊 Synthesis Performance Proof")
                             st.write("How the Gradient-Polished Meta-Build compares to the individual historical runs you selected.")
+                            st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated to 500 simulations to strip away their initial 'lucky' RNG variance).*")
                             
                             chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] + ["🧬 Meta-Build"]
                             chart_scores = sr["history_scores"] + [sr["meta_score"]]
