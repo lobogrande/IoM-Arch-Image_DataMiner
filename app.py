@@ -2140,13 +2140,17 @@ if __name__ == "__main__":
                                         }
 
                                         # APPLES-TO-APPLES CHART MAPPING
-                                        # We map the TRUE 500-run scores of the historical runs instead of their noisy 100-run history scores.
                                         same_target_runs =[]
                                         for r in valid_runs:
                                             b_id = tuple({s: r[s] for s in stat_keys}.items())
                                             if run_target_metric == "highest_floor":
-                                                same_target_runs.append(max(build_res[b_id]['floors']))
+                                                # PEAK VARIANCE: You cannot erase a God Run. 
+                                                # Chart the absolute highest floor this build has EVER achieved (History vs Tournament).
+                                                historic_max = r.get("Max Floor", r.get("Metric Score", 0))
+                                                tournament_max = max(build_res[b_id]['floors'])
+                                                same_target_runs.append(max(historic_max, tournament_max))
                                             else:
+                                                # CONSISTENCY: Averages must be strictly regressed to the mean via 500 runs.
                                                 same_target_runs.append(build_res[b_id]['sum_t'] / 500.0)
                                                 
                                         if run_target_metric == "highest_floor":
