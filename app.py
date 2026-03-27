@@ -1516,6 +1516,7 @@ if __name__ == "__main__":
             st.markdown("### 📊 Advanced Analytics Dashboard")
             tab_list =["📈 Performance"]
             
+            if run_target_metric != "highest_floor" or dev_mode: tab_list.append("🃏 Card Drops")
             if show_loot: tab_list.append("🎒 Loot Breakdown")
             if show_wall: tab_list.append("🧱 The Wall")
             
@@ -1553,57 +1554,6 @@ if __name__ == "__main__":
                         # Clean, consolidated Real-Time readout
                         st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                         st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
-                        
-                        # --- NEW BLOCK CARD ODDS SECTION ---
-                        if "block_" in run_target_metric:
-                            st.divider()
-                            st.markdown(f"#### 🃏 Block Card Drop Estimates<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
-                            
-                            odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
-                            
-                            # Extract the exact core image needed (e.g., "block_myth3_per_min" -> "myth3")
-                            target_block_id = run_target_metric.replace("block_", "").replace("_per_min", "")
-                            cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_block_id}.png")
-                            
-                            # Map backgrounds: Base=1(Com), Poly=2(Rare), Infernal=4(Leg)
-                            bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
-                            
-                            cols_cards = st.columns(3)
-                            for idx, (drop_name, base_odds) in enumerate(odds.items()):
-                                with cols_cards[idx]:
-                                    with st.container(border=True):
-                                        # --- RENDER DYNAMIC CARD ---
-                                        bg_tier = bg_mapping.get(drop_name, "1")
-                                        bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
-                                        
-                                        comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
-                                        if comp_img:
-                                            render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
-                                        else:
-                                            st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
-                                        
-                                        st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
-                                        st.divider()
-                                        
-                                        # --- MATH & YIELDS ---
-                                        if val > 0:
-                                            kills_50 = 0.693 * base_odds
-                                            kills_90 = 2.302 * base_odds
-                                            
-                                            def format_time(req_kills):
-                                                rt_mins = req_kills / val
-                                                rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
-                                                arch_secs = req_kills / (val / 60.0)
-                                                arch_1k = arch_secs / 1000.0
-                                                return rt_str, arch_1k
-
-                                            rt_50, bk_50 = format_time(kills_50)
-                                            rt_90, bk_90 = format_time(kills_90)
-                                            
-                                            st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
-                                            st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
-                                        else:
-                                            st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
 
                         st.divider()
                         
@@ -1646,6 +1596,64 @@ if __name__ == "__main__":
                     )
                     fig_conf.update_layout(showlegend=False, margin=dict(l=10, r=20, t=10, b=20), height=200)
                     st.plotly_chart(fig_conf, use_container_width=True)
+
+            # --- NEW TAB: CARD DROPS ---
+            if run_target_metric != "highest_floor" or dev_mode:
+                with ui_tabs[tab_idx]:
+                    tab_idx += 1
+                    st.markdown("#### 🃏 Block Card Drop Estimates")
+                    
+                    # If this isn't a targeted block run (e.g., EXP/Frags), we use a generic placeholder icon (div1)
+                    is_block_run = "block_" in run_target_metric
+                    target_block_id = run_target_metric.replace("block_", "").replace("_per_min", "") if is_block_run else "div1"
+                    val = final_summary_out.get(run_target_metric, 0)
+                    
+                    if not is_block_run:
+                        st.write("*(Note: You optimized for general Yield, not a specific block. Projections below apply your total kills/min against generic drop rates.)*")
+                        
+                    st.markdown(f"<span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
+                    st.divider()
+                    
+                    odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
+                    cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_block_id}.png")
+                    bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
+                    
+                    cols_cards = st.columns(3)
+                    for idx, (drop_name, base_odds) in enumerate(odds.items()):
+                        with cols_cards[idx]:
+                            with st.container(border=True):
+                                # --- RENDER DYNAMIC CARD ---
+                                bg_tier = bg_mapping.get(drop_name, "1")
+                                bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
+                                
+                                comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
+                                if comp_img:
+                                    render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                                else:
+                                    st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
+                                
+                                st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
+                                st.divider()
+                                
+                                # --- MATH & YIELDS ---
+                                if val > 0:
+                                    kills_50 = 0.693 * base_odds
+                                    kills_90 = 2.302 * base_odds
+                                    
+                                    def format_time(req_kills):
+                                        rt_mins = req_kills / val
+                                        rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
+                                        arch_secs = req_kills / (val / 60.0)
+                                        arch_1k = arch_secs / 1000.0
+                                        return rt_str, arch_1k
+
+                                    rt_50, bk_50 = format_time(kills_50)
+                                    rt_90, bk_90 = format_time(kills_90)
+                                    
+                                    st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
+                                    st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
+                                else:
+                                    st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
 
             # --- TAB 2: COLLATERAL LOOT (BAR CHART) ---
             if show_loot:
