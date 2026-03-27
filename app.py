@@ -2076,6 +2076,12 @@ if __name__ == "__main__":
                         # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
                         if "synthesis_result" in st.session_state:
                             sr = st.session_state.synthesis_result
+                            
+                            # State migration failsafe: clear old format if it persists in RAM
+                            if "history_scores" not in sr:
+                                del st.session_state["synthesis_result"]
+                                st.rerun()
+                                
                             st.success("✅ Synthesis Complete! The main charts above have been updated to reflect this build.")
                             
                             # --- 📊 PERFORMANCE PROOF CHART ---
