@@ -1193,10 +1193,13 @@ if __name__ == "__main__":
             "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
             "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
             "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
-            "**The Reality Check:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
+            "**The Reality Check #1:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
             "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
             "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
             "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
+            "**The Reality Check #2:** The engine calculates **100% Theoretical Efficiency**. In the Python simulator, 0.000 seconds pass between killing an ore and hitting the next one. "
+            "In the actual live game, minor animation delays, frame drops, and tick-rate transitions consume fractions of a second. "
+            "Because of this 'Animation Lag', you should expect your actual real-world Yields (XP/Frags) to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
         )
         
         # Append the specific warning if Asc2 is checked
@@ -1733,8 +1736,27 @@ if __name__ == "__main__":
                         st.divider()
                         
                         # Clean, consolidated Real-Time readout
+                        # Clean, consolidated Real-Time readout
                         st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                         st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
+                        
+                        # --- ⬆️ LEVEL UP CALCULATOR ---
+                        if run_target_metric == "xp_per_min":
+                            st.divider()
+                            st.markdown(f"#### 🆙 Level Up Calculator<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} EXP/min</span>", unsafe_allow_html=True)
+                            
+                            col_xp_c, col_xp_t = st.columns(2)
+                            with col_xp_c:
+                                cur_xp = st.number_input("Current EXP", min_value=0.0, step=1000.0, format="%.0f", key="perf_cur_xp")
+                            with col_xp_t:
+                                tar_xp = st.number_input("Target EXP", min_value=0.0, step=1000.0, format="%.0f", key="perf_tar_xp")
+                                
+                            if cur_xp > 0 or tar_xp > 0:
+                                if tar_xp > cur_xp and val > 0:
+                                    mins_req = (tar_xp - cur_xp) / val
+                                    st.success(f"**Required:** ~{(mins_req * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({mins_req:,.1f} mins real-time)")
+                                elif tar_xp <= cur_xp:
+                                    st.warning("Target EXP must be greater than Current EXP.")
 
                         st.divider()
                         
@@ -1782,59 +1804,79 @@ if __name__ == "__main__":
             if run_target_metric != "highest_floor" or dev_mode:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
-                    st.markdown("#### 🃏 Block Card Drop Estimates")
+                    st.markdown("#### 🎴 Block Card Drop Estimates")
                     
-                    # If this isn't a targeted block run (e.g., EXP/Frags), we use a generic placeholder icon (div1)
-                    is_block_run = "block_" in run_target_metric
-                    target_block_id = run_target_metric.replace("block_", "").replace("_per_min", "") if is_block_run else "div1"
-                    val = final_summary_out.get(run_target_metric, 0)
+                    # Extract the exact average kill rates for EVERY block from the telemetry
+                    avg_metrics = final_summary_out.get("avg_metrics", {})
+                    available_blocks =[k.replace("block_", "").replace("_per_min", "") for k in avg_metrics.keys() if k.startswith("block_")]
                     
-                    if not is_block_run:
-                        st.write("*(Note: You optimized for general Yield, not a specific block. Projections below apply your total kills/min against generic drop rates.)*")
+                    if not available_blocks:
+                        st.info("No block kill data available for this run.")
+                    else:
+                        # Sort blocks alphabetically
+                        available_blocks.sort()
                         
-                    st.markdown(f"<span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} target kills/min</span>", unsafe_allow_html=True)
-                    st.divider()
-                    
-                    odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
-                    cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{target_block_id}.png")
-                    bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
-                    
-                    cols_cards = st.columns(3)
-                    for idx, (drop_name, base_odds) in enumerate(odds.items()):
-                        with cols_cards[idx]:
-                            with st.container(border=True):
-                                # --- RENDER DYNAMIC CARD ---
-                                bg_tier = bg_mapping.get(drop_name, "1")
-                                bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
-                                
-                                comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
-                                if comp_img:
-                                    render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
-                                else:
-                                    st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
-                                
-                                st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
-                                st.divider()
-                                
-                                # --- MATH & YIELDS ---
-                                if val > 0:
-                                    kills_50 = 0.693 * base_odds
-                                    kills_90 = 2.302 * base_odds
+                        # Default to the target block if it was a Card Farming run
+                        is_block_run = "block_" in run_target_metric
+                        target_block_id = run_target_metric.replace("block_", "").replace("_per_min", "") if is_block_run else None
+                        default_idx = available_blocks.index(target_block_id) if target_block_id in available_blocks else 0
+                        
+                        col_c1, col_c2 = st.columns([1, 2])
+                        with col_c1:
+                            # Let the user pick exactly which block they want to inspect
+                            selected_block = st.selectbox(
+                                "Select Block to view Drop Projections:", 
+                                options=available_blocks, 
+                                index=default_idx, 
+                                format_func=lambda x: x.capitalize()
+                            )
+                        
+                        # Fetch the true kill rate for this specific block
+                        val = avg_metrics.get(f"block_{selected_block}_per_min", 0)
+                        
+                        st.markdown(f"<span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} <b>{selected_block.capitalize()}</b> kills/min</span>", unsafe_allow_html=True)
+                        st.divider()
+                        
+                        odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
+                        cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{selected_block}.png")
+                        bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
+                        
+                        cols_cards = st.columns(3)
+                        for idx, (drop_name, base_odds) in enumerate(odds.items()):
+                            with cols_cards[idx]:
+                                with st.container(border=True):
+                                    # --- RENDER DYNAMIC CARD ---
+                                    bg_tier = bg_mapping.get(drop_name, "1")
+                                    bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
                                     
-                                    def format_time(req_kills):
-                                        rt_mins = req_kills / val
-                                        rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
-                                        arch_secs = req_kills / (val / 60.0)
-                                        arch_1k = arch_secs / 1000.0
-                                        return rt_str, arch_1k
+                                    comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
+                                    if comp_img:
+                                        render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                                    else:
+                                        st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
+                                    
+                                    st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
+                                    st.divider()
+                                    
+                                    # --- MATH & YIELDS ---
+                                    if val > 0:
+                                        kills_50 = 0.693 * base_odds
+                                        kills_90 = 2.302 * base_odds
+                                        
+                                        def format_time(req_kills):
+                                            rt_mins = req_kills / val
+                                            rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
+                                            arch_secs = req_kills / (val / 60.0)
+                                            arch_1k = arch_secs / 1000.0
+                                            return rt_str, arch_1k
 
-                                    rt_50, bk_50 = format_time(kills_50)
-                                    rt_90, bk_90 = format_time(kills_90)
-                                    
-                                    st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
-                                    st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
-                                else:
-                                    st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
+                                        rt_50, bk_50 = format_time(kills_50)
+                                        rt_90, bk_90 = format_time(kills_90)
+                                        
+                                        st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
+                                        st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
+                                    else:
+                                        st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
 
             # --- TAB 2: COLLATERAL LOOT (BAR CHART) ---
             if show_loot:
@@ -1941,7 +1983,7 @@ if __name__ == "__main__":
                     if not visible_history:
                         st.info("No runs match the selected filters. Run the optimizer to build history.")
                     else:
-                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. Power Users: Mix runs from DIFFERENT targets to create Hybrid Builds!)*")
+                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button below!)*")
                         
                         df_history = pd.DataFrame(visible_history)
                         cols =['Include', 'Target', 'Metric Score', 'Avg Floor', 'Max Floor']
@@ -1957,11 +1999,6 @@ if __name__ == "__main__":
                             column_config={"Include": st.column_config.CheckboxColumn("Include")},
                             disabled=[c for c in df_history.columns if c != "Include"] 
                         )
-                        
-                        # Sync edits back to global state by reference
-                        edited_records = edited_df.to_dict('records')
-                        for i, row in enumerate(edited_records):
-                            visible_history[i]['Include'] = row['Include']
                         
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
@@ -1994,142 +2031,132 @@ if __name__ == "__main__":
                                         EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in stat_keys}
 
                                         # ==========================================================
-                                        # BIFURCATED SYNTHESIS LOGIC
+                                        # UNIFIED MULTI-SEED TOURNAMENT SYNTHESIS
                                         # ==========================================================
+                                        candidates = []
+                                        original_b_ids =[]
+                                        
+                                        # 1. Add original runs
+                                        for r in valid_runs:
+                                            dist = {s: r[s] for s in stat_keys}
+                                            b_id = tuple(dist.items())
+                                            if b_id not in original_b_ids: original_b_ids.append(b_id)
+                                            if dist not in candidates: candidates.append(dist)
+                                            
+                                        # 2. Add the Average Build
+                                        avg_dist = {}
+                                        for s in stat_keys: avg_dist[s] = int(round(sum(r[s] for r in valid_runs) / len(valid_runs)))
+                                        diff = sum(valid_runs[-1][s] for s in stat_keys) - sum(avg_dist.values())
+                                        if diff != 0: avg_dist[max(stat_keys, key=lambda k: avg_dist[k])] += diff
+                                        
+                                        avg_b_id = tuple(avg_dist.items())
+                                        if avg_dist not in candidates: candidates.append(avg_dist)
+                                        
+                                        # 3. Smart Mutation: +/- 1 around history runs, +/- 1 & 2 around Average Center
+                                        base_dists = candidates.copy()
+                                        for base_dist in base_dists:
+                                            radii = [1, 2] if tuple(base_dist.items()) == avg_b_id else [1]
+                                            for radius in radii:
+                                                for s_from in stat_keys:
+                                                    if base_dist[s_from] >= radius and not st.session_state.get(f"lock_check_{s_from}", False):
+                                                        for s_to in stat_keys:
+                                                            if s_from != s_to and base_dist[s_to] <= EFFECTIVE_CAPS[s_to] - radius and not st.session_state.get(f"lock_check_{s_to}", False):
+                                                                neighbor = base_dist.copy()
+                                                                neighbor[s_from] -= radius
+                                                                neighbor[s_to] += radius
+                                                                if neighbor not in candidates:
+                                                                    candidates.append(neighbor)
+                                                                    
+                                        # TOURNAMENT ROUND 1: 50 runs each
+                                        r1_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50)]
+                                        with mp.Pool(CPU_CORES) as pool:
+                                            res1 = pool.map(worker_simulate, r1_args)
+                                            
+                                        build_res = {}
+                                        for args, r in zip(r1_args, res1):
+                                            b_id = args['_b_id']
+                                            if b_id not in build_res: build_res[b_id] = {'sum_t': 0.0, 'sum_f': 0, 'floors':[]}
+                                            
+                                            t_val = float(r.get(run_target_metric, 0.0))
+                                            f_val = r.get("highest_floor", 0)
+                                            
+                                            build_res[b_id]['sum_t'] += t_val
+                                            build_res[b_id]['sum_f'] += f_val
+                                            build_res[b_id]['floors'].append(f_val)
+                                            
+                                        # SORTING LOGIC FOR ROUND 1
+                                        def get_ceiling_score(floors, count=3):
+                                            sorted_f = sorted(floors)
+                                            return sum(sorted_f[-count:]) / float(count) if floors else 0
+                                            
                                         if run_target_metric == "highest_floor":
-                                            # PEAK VARIANCE: Multi-Seed Genetic Tournament
-                                            candidates = []
-                                            for r in valid_runs:
-                                                dist = {s: r[s] for s in stat_keys}
-                                                if dist not in candidates: candidates.append(dist)
-                                                
-                                            # Add the Average Build
-                                            avg_dist = {}
-                                            for s in stat_keys: avg_dist[s] = int(round(sum(r[s] for r in valid_runs) / len(valid_runs)))
-                                            diff = sum(valid_runs[-1][s] for s in stat_keys) - sum(avg_dist.values())
-                                            if diff != 0: avg_dist[max(stat_keys, key=lambda k: avg_dist[k])] += diff
-                                            if avg_dist not in candidates: candidates.append(avg_dist)
-                                            
-                                            # Multi-Seed Wide Mutation: Test +/- 1 AND +/- 2 around EVERY checked run!
-                                            for r in valid_runs:
-                                                base_dist = {s: r[s] for s in stat_keys}
-                                                for radius in [1, 2]:
-                                                    for s_from in stat_keys:
-                                                        if base_dist[s_from] >= radius and not st.session_state.get(f"lock_check_{s_from}", False):
-                                                            for s_to in stat_keys:
-                                                                if s_from != s_to and base_dist[s_to] <= EFFECTIVE_CAPS[s_to] - radius and not st.session_state.get(f"lock_check_{s_to}", False):
-                                                                    neighbor = base_dist.copy()
-                                                                    neighbor[s_from] -= radius
-                                                                    neighbor[s_to] += radius
-                                                                    if neighbor not in candidates:
-                                                                        candidates.append(neighbor)
-                                                                        
-                                            # TOURNAMENT ROUND 1: 50 runs each
-                                            r1_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50)]
-                                            with mp.Pool(CPU_CORES) as pool:
-                                                res1 = pool.map(worker_simulate, r1_args)
-                                                
-                                            build_res = {}
-                                            for args, r in zip(r1_args, res1):
-                                                b_id = args['_b_id']
-                                                if b_id not in build_res: build_res[b_id] = {'floors':[]}
-                                                build_res[b_id]['floors'].append(r.get("highest_floor", 0))
-                                                
-                                            # SORTING LOGIC: Ceiling Consistency
-                                            # Average of the Top 3 (Round 1) and Top 5 (Round 2) floors achieved. 
-                                            # Completely eliminates inferior builds that win via a single 1-in-500 fluke.
-                                            def get_ceiling_score(floors, count=3):
-                                                sorted_f = sorted(floors)
-                                                return sum(sorted_f[-count:]) / float(count) if floors else 0
-                                                
                                             top5_ids = sorted(build_res.keys(), key=lambda k: get_ceiling_score(build_res[k]['floors'], 3), reverse=True)[:5]
+                                        else:
+                                            top5_ids = sorted(build_res.keys(), key=lambda k: build_res[k]['sum_t'], reverse=True)[:5]
+                                        
+                                        # FORCE ORIGINAL RUNS INTO ROUND 2:
+                                        # We evaluate all original history runs to 500 simulations to strip away their RNG 
+                                        # noise so we can do a fair Apples-to-Apples comparison on the final chart!
+                                        r2_ids = list(set(top5_ids + original_b_ids))
+                                        
+                                        # TOURNAMENT ROUND 2: 450 runs on the finalists & original runs
+                                        r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in r2_ids for _ in range(450)]
+                                        with mp.Pool(CPU_CORES) as pool:
+                                            res2 = pool.map(worker_simulate, r2_args)
                                             
-                                            # TOURNAMENT ROUND 2: 450 runs on top 5
-                                            r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in top5_ids for _ in range(450)]
-                                            with mp.Pool(CPU_CORES) as pool:
-                                                res2 = pool.map(worker_simulate, r2_args)
+                                        for args, r in zip(r2_args, res2):
+                                            b_id = args['_b_id']
+                                            t_val = float(r.get(run_target_metric, 0.0))
+                                            f_val = r.get("highest_floor", 0)
+                                            
+                                            build_res[b_id]['sum_t'] += t_val
+                                            build_res[b_id]['sum_f'] += f_val
+                                            build_res[b_id]['floors'].append(f_val)
+                                            
+                                        # SORTING LOGIC FOR ROUND 2
+                                        if run_target_metric == "highest_floor":
+                                            best_b_id = sorted(r2_ids, key=lambda k: get_ceiling_score(build_res[k]['floors'], 5), reverse=True)[0]
+                                        else:
+                                            best_b_id = sorted(r2_ids, key=lambda k: build_res[k]['sum_t'], reverse=True)[0]
+                                            
+                                        best_data = build_res[best_b_id]
+                                        final_meta_dist = dict(best_b_id)
+                                        
+                                        abs_max = max(best_data['floors'])
+                                        avg_f = best_data['sum_f'] / 500.0
+                                        
+                                        synth_summary = {
+                                            run_target_metric: abs_max if run_target_metric == "highest_floor" else best_data['sum_t'] / 500.0,
+                                            "avg_floor": avg_f,
+                                            "abs_max_floor": abs_max,
+                                            "abs_max_chance": best_data['floors'].count(abs_max) / 500.0,
+                                            "floors": best_data['floors'],
+                                            "worst_val": 0,
+                                            "avg_val": avg_f,
+                                            "runner_up_val": 0,
+                                            "avg_metrics": {} 
+                                        }
+
+                                        # APPLES-TO-APPLES CHART MAPPING
+                                        same_target_runs =[]
+                                        for r in valid_runs:
+                                            b_id = tuple({s: r[s] for s in stat_keys}.items())
+                                            if run_target_metric == "highest_floor":
+                                                # PEAK VARIANCE: You cannot erase a God Run. 
+                                                # Chart the absolute highest floor this build has EVER achieved (History vs Tournament).
+                                                historic_max = r.get("Max Floor", r.get("Metric Score", 0))
+                                                tournament_max = max(build_res[b_id]['floors'])
+                                                same_target_runs.append(max(historic_max, tournament_max))
+                                            else:
+                                                # CONSISTENCY: Averages must be strictly regressed to the mean via 500 runs.
+                                                same_target_runs.append(build_res[b_id]['sum_t'] / 500.0)
                                                 
-                                            for args, r in zip(r2_args, res2):
-                                                b_id = args['_b_id']
-                                                build_res[b_id]['floors'].append(r.get("highest_floor", 0))
-                                                
-                                            best_b_id = sorted(top5_ids, key=lambda k: get_ceiling_score(build_res[k]['floors'], 5), reverse=True)[0]
-                                            
-                                            best_data = build_res[best_b_id]
-                                            final_meta_dist = dict(best_b_id)
-                                            
-                                            abs_max = max(best_data['floors'])
-                                            avg_f = sum(best_data['floors']) / 500.0
-                                            
-                                            synth_summary = {
-                                                run_target_metric: abs_max,
-                                                "avg_floor": avg_f,
-                                                "abs_max_floor": abs_max,
-                                                "abs_max_chance": best_data['floors'].count(abs_max) / 500.0,
-                                                "floors": best_data['floors'],
-                                                "worst_val": min(best_data['floors']),
-                                                "avg_val": avg_f,
-                                                "runner_up_val": 0,
-                                                "avg_metrics": {} 
-                                            }
-                                            
+                                        if run_target_metric == "highest_floor":
                                             meta_score = abs_max
                                             chart_label = "🏆 Verified God-Build"
-                                            
                                         else:
-                                            # CONSISTENCY: Average + Neighborhood Polish (75 runs)
-                                            seed_dist = {}
-                                            for s in stat_keys: seed_dist[s] = int(round(sum(run[s] for run in valid_runs) / len(valid_runs)))
-                                            diff = sum(valid_runs[-1][s] for s in stat_keys) - sum(seed_dist.values())
-                                            if diff != 0: seed_dist[max(stat_keys, key=lambda k: seed_dist[k])] += diff
-                                            
-                                            neighbors = [seed_dist]
-                                            for s_from in stat_keys:
-                                                if seed_dist[s_from] > 0 and not st.session_state.get(f"lock_check_{s_from}", False):
-                                                    for s_to in stat_keys:
-                                                        if s_from != s_to and seed_dist[s_to] < EFFECTIVE_CAPS[s_to] and not st.session_state.get(f"lock_check_{s_to}", False):
-                                                            neighbor = seed_dist.copy()
-                                                            neighbor[s_from] -= 1
-                                                            neighbor[s_to] += 1
-                                                            if neighbor not in neighbors: neighbors.append(neighbor)
-                                                            
-                                            verify_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in neighbors for _ in range(75)]
-                                            
-                                            with mp.Pool(CPU_CORES) as pool:
-                                                res_list = pool.map(worker_simulate, verify_args)
-                                                
-                                            build_results = {}
-                                            for args, r in zip(verify_args, res_list):
-                                                b_id = args['_b_id']
-                                                if b_id not in build_results: build_results[b_id] = {'sum_t': 0, 'sum_f': 0, 'floors': []}
-                                                build_results[b_id]['sum_t'] += r.get(run_target_metric, r.get("highest_floor", 0))
-                                                build_results[b_id]['sum_f'] += r.get("highest_floor", 0)
-                                                build_results[b_id]['floors'].append(r.get("highest_floor", 0))
-                                                
-                                            best_b_id = sorted(build_results.keys(), key=lambda k: (build_results[k]['sum_t'], build_results[k]['sum_f']), reverse=True)[0]
-                                            best_data = build_results[best_b_id]
-                                            final_meta_dist = dict(best_b_id)
-                                            
-                                            synth_summary = {
-                                                run_target_metric: best_data['sum_t'] / 75.0,
-                                                "avg_floor": best_data['sum_f'] / 75.0,
-                                                "abs_max_floor": max(best_data['floors']) if best_data['floors'] else 0,
-                                                "abs_max_chance": (best_data['floors'].count(max(best_data['floors'])) / 75.0) if best_data['floors'] else 0,
-                                                "floors": best_data['floors'],
-                                                "worst_val": min((d['sum_t']/75.0) for d in build_results.values()),
-                                                "avg_val": best_data['sum_t'] / 75.0,
-                                                "runner_up_val": sorted([d['sum_t']/75.0 for d in build_results.values()], reverse=True)[1] if len(build_results)>1 else best_data['sum_t']/75.0,
-                                                "avg_metrics": {} 
-                                            }
-                                            
-                                            meta_score = best_data['sum_t'] / 75.0
+                                            meta_score = best_data['sum_t'] / 500.0
                                             chart_label = "🧬 Polished Meta-Build"
-
-                                        # Chart mapping logic
-                                        if run_target_metric == "highest_floor":
-                                            same_target_runs =[r.get("Max Floor", r["Metric Score"]) for r in valid_runs if r.get("Target") == run_target_metric]
-                                        else:
-                                            same_target_runs = [r["Metric Score"] for r in valid_runs if r.get("Target") == run_target_metric]
                                             
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
@@ -2150,8 +2177,18 @@ if __name__ == "__main__":
                                         st.rerun()
 
                         with col_synth2:
-                            if st.button("🗑️ Clear History (Visible Targets)", use_container_width=True):
-                                st.session_state.run_history =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
+                            if st.button("🗑️ Delete Unchecked Runs", use_container_width=True, help="Permanently deletes any visible runs that do NOT have their 'Include' box checked."):
+                                # 1. Preserve runs that are currently hidden by the target filter
+                                hidden_runs =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
+                                
+                                # 2. Preserve only the visible runs that the user left CHECKED
+                                kept_visible_runs =[]
+                                for i, row in edited_df.iterrows():
+                                    if row["Include"]:
+                                        kept_visible_runs.append(visible_history[i])
+                                        
+                                # 3. Overwrite history (Unchecked runs are dropped into the void)
+                                st.session_state.run_history = hidden_runs + kept_visible_runs
                                 st.rerun()
                                 
                         # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
@@ -2168,6 +2205,7 @@ if __name__ == "__main__":
                             # --- 📊 PERFORMANCE PROOF CHART ---
                             st.markdown("#### 📊 Synthesis Performance Proof")
                             st.write("How the Gradient-Polished Meta-Build compares to the individual historical runs you selected.")
+                            st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated to 500 simulations to strip away their initial 'lucky' RNG variance).*")
                             
                             chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] + ["🧬 Meta-Build"]
                             chart_scores = sr["history_scores"] + [sr["meta_score"]]
@@ -2184,8 +2222,40 @@ if __name__ == "__main__":
                             fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
                             st.plotly_chart(fig_comp, use_container_width=True)
                             
+                            # --- 🏆 META-BUILD YIELDS & CALCULATOR ---
+                            st.divider()
+                            m_name = sr.get("metric_name", "highest_floor")
+                            m_score = sr.get("meta_score", 0)
+                            
+                            if m_name == "highest_floor":
+                                st.metric("🏆 Projected Peak (Absolute Max Floor)", f"Floor {m_score:,.0f}")
+                            else:
+                                m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
+                                r_1k = (m_score / 60.0) * 1000.0
+                                
+                                c_m1, c_m2 = st.columns(2)
+                                c_m1.metric(f"💰 {m_str} per 1k Arch Secs", f"{r_1k:,.1f}")
+                                c_m2.metric(f"⏱️ {m_str} per minute", f"{m_score:,.2f}")
+                                
+                                if m_name == "xp_per_min":
+                                    st.markdown("##### ⬆️ Level Up Calculator")
+                                    col_sx_c, col_sx_t = st.columns(2)
+                                    with col_sx_c:
+                                        s_cur_xp = st.number_input("Current EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_cur_xp")
+                                    with col_sx_t:
+                                        s_tar_xp = st.number_input("Target EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_tar_xp")
+                                        
+                                    if s_cur_xp > 0 or s_tar_xp > 0:
+                                        if s_tar_xp > s_cur_xp and m_score > 0:
+                                            s_mins = (s_tar_xp - s_cur_xp) / m_score
+                                            st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({s_mins:,.1f} mins real-time)")
+                                        else:
+                                            st.warning("Target EXP must be greater than Current EXP.")
+                                            
+                            st.divider()
+                            
                             # --- 🧬 STAT OUTPUT ---
-                            st.markdown("#### 🧬 Synthesized Meta-Build Output")
+                            st.markdown("#### 🧬 Synthesized Stat Allocation")
                             
                             synth_stat_cols = st.columns(len(sr["stats"]))
                             for idx, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
@@ -2256,7 +2326,7 @@ if __name__ == "__main__":
                                 for args, r in zip(roi_pool_args, res_list):
                                     t_s = args['_test_stat']
                                     if t_s not in stat_results: stat_results[t_s] = {'sum': 0, 'count': 0}
-                                    val = r.get(run_target_metric, r.get("highest_floor", 0))
+                                    val = float(r.get(run_target_metric, 0.0))
                                     stat_results[t_s]['sum'] += val
                                     stat_results[t_s]['count'] += 1
                                     
@@ -2315,7 +2385,7 @@ if __name__ == "__main__":
                                 for args, r in zip(roi_pool_args, res_list):
                                     t_u = args['_test_upg']
                                     if t_u not in upg_results: upg_results[t_u] = {'sum': 0, 'count': 0}
-                                    val = r.get(run_target_metric, r.get("highest_floor", 0))
+                                    val = float(r.get(run_target_metric, 0.0))
                                     upg_results[t_u]['sum'] += val
                                     upg_results[t_u]['count'] += 1
                                     
