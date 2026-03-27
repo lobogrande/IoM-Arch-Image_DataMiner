@@ -1997,11 +1997,6 @@ if __name__ == "__main__":
                             disabled=[c for c in df_history.columns if c != "Include"] 
                         )
                         
-                        # Sync edits back to global state by reference
-                        edited_records = edited_df.to_dict('records')
-                        for i, row in enumerate(edited_records):
-                            visible_history[i]['Include'] = row['Include']
-                        
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
                         st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test against your *current* UI target.")
