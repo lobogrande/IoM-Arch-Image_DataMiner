@@ -1412,6 +1412,12 @@ if __name__ == "__main__":
         if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
             st.write("---")
             
+            # Clean up any stale ROI data from previous runs
+            if "roi_stat_results" in st.session_state:
+                del st.session_state["roi_stat_results"]
+            if "roi_upg_results" in st.session_state:
+                del st.session_state["roi_upg_results"]
+            
             # ==========================================
             # DEV MODE INTERCEPT (Instant UI Testing)
             # ==========================================
