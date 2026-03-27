@@ -2058,8 +2058,13 @@ if __name__ == "__main__":
                                         st.session_state.opt_results["chart_hill_scores"] =[avg_history_score, best_data['sum_t'] / 75.0]
                                         st.session_state.opt_results["chart_hist"] = dict(Counter(best_data['floors']))
                                         
-                                        # Save locally so we can display it right below the button!
-                                        st.session_state.synthesis_result = final_meta_dist
+                                        # Save locally with telemetry so we can chart it below the button!
+                                        st.session_state.synthesis_result = {
+                                            "stats": final_meta_dist,
+                                            "meta_score": best_data['sum_t'] / 75.0,
+                                            "history_scores": same_target_runs,
+                                            "metric_name": run_target_metric
+                                        }
                                         
                                         st.rerun()
 
@@ -2070,11 +2075,33 @@ if __name__ == "__main__":
                                 
                         # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
                         if "synthesis_result" in st.session_state:
+                            sr = st.session_state.synthesis_result
                             st.success("✅ Synthesis Complete! The main charts above have been updated to reflect this build.")
-                            st.markdown("### 🧬 Synthesized Meta-Build Output")
                             
-                            synth_stat_cols = st.columns(len(st.session_state.synthesis_result))
-                            for idx, (stat_name, allocated_pts) in enumerate(st.session_state.synthesis_result.items()):
+                            # --- 📊 PERFORMANCE PROOF CHART ---
+                            st.markdown("#### 📊 Synthesis Performance Proof")
+                            st.write("How the Gradient-Polished Meta-Build compares to the individual historical runs you selected.")
+                            
+                            chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] + ["🧬 Meta-Build"]
+                            chart_scores = sr["history_scores"] + [sr["meta_score"]]
+                            chart_colors = ["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
+                            
+                            df_comp = pd.DataFrame({"Build": chart_labels, "Score": chart_scores, "Type": chart_colors})
+                            
+                            # Dynamically zoom the Y-axis so fractional improvements on plateaus are highly visible
+                            min_score = min(chart_scores) * 0.98 if chart_scores else 0
+                            
+                            fig_comp = px.bar(df_comp, x="Build", y="Score", color="Type", text_auto='.3s',
+                                              color_discrete_map={"Historical Runs": "#6495ED", "Meta-Build": "#4CAF50"})
+                            fig_comp.update_layout(showlegend=False, margin=dict(t=10, b=20), height=300)
+                            fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
+                            st.plotly_chart(fig_comp, use_container_width=True)
+                            
+                            # --- 🧬 STAT OUTPUT ---
+                            st.markdown("#### 🧬 Synthesized Meta-Build Output")
+                            
+                            synth_stat_cols = st.columns(len(sr["stats"]))
+                            for idx, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
                                 with synth_stat_cols[idx]:
                                     with st.container(border=True):
                                         img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
@@ -2088,7 +2115,7 @@ if __name__ == "__main__":
                                         st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
                             
                             if st.button("✨ Apply Meta-Build to UI", use_container_width=True, key="apply_meta_build_btn"):
-                                for k, v in st.session_state.synthesis_result.items():
+                                for k, v in sr["stats"].items():
                                     st.session_state[f"stat_{k}"] = int(v)
                                     p.base_stats[k] = int(v)
                                 st.rerun()
