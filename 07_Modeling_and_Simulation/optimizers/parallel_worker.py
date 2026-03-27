@@ -308,11 +308,12 @@ def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, it
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
         p1_sims = get_expected_runs(p1_builds, iter_p1)
         
-        # Positive-Shifted Bounds: Instead of testing (-10 to 10) summing to 0, 
-        # we test (0 to 20) summing to 10*num_free. This prevents the recursive generator from clipping!
+        # Positive-Shifted Bounds
         if num_free > 0:
             p2_mock_bounds = {s: (0, 2 * step_1) for s in free_stats}
-            p2_builds = len(generate_distributions(free_stats, num_free * step_1, step_2, p2_mock_bounds))
+            # Prevent Parity Clipping: Force budget to be an exact multiple of the step size
+            p2_budget = ((num_free * step_1) // step_2) * step_2
+            p2_builds = len(generate_distributions(free_stats, p2_budget, step_2, p2_mock_bounds))
             
             p3_mock_bounds = {s: (0, 2 * p3_radius) for s in free_stats}
             p3_builds = len(generate_distributions(free_stats, num_free * p3_radius, 1, p3_mock_bounds))
@@ -325,17 +326,14 @@ def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, it
         total_estimated_builds = p1_builds + p2_builds + p3_builds
         
         # --- SURVIVAL WEIGHTING ---
-        # The benchmark measures a "Heavy" build (Floor 150+). 
-        # In grid search, most combinations are garbage and die instantly, taking a fraction of the time.
-        # We weight the simulations by their expected survival time relative to the benchmark.
-        weighted_p1 = p1_sims * 0.15 # 85% of Phase 1 builds die instantly
-        weighted_p2 = p2_sims * 0.60 # Phase 2 builds are closer to optimal
-        weighted_p3 = p3_sims * 1.00 # Phase 3 builds take the full benchmark time
+        weighted_p1 = p1_sims * 0.10 # P1 garbage builds die almost instantly
+        weighted_p2 = p2_sims * 0.40 # P2 zoomed builds survive slightly longer
+        weighted_p3 = p3_sims * 0.80 # P3 optimized builds test deep floors
         
         total_weighted_sims = weighted_p1 + weighted_p2 + weighted_p3
         
-        # Add a 1.25x batching efficiency multiplier for multiprocessing imap chunking
-        effective_sims_sec = max(1.0, float(sims_per_second)) * 1.25
+        # Factor in multiprocessing chunking efficiency over a single large map() payload
+        effective_sims_sec = max(1.0, float(sims_per_second)) * 2.0
         
         estimated_seconds = total_weighted_sims / effective_sims_sec
         

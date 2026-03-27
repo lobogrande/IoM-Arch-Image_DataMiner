@@ -1326,11 +1326,10 @@ if __name__ == "__main__":
                         'total_infernal_cards': p.total_infernal_cards
                     }
                     
-                    # --- BENCHMARK WITH HEAVY PAYLOAD ---
-                    # Distribute budget evenly so the benchmark tests deep-floor simulation speeds!
-                    bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
-                    avg_stat = max(0, bench_budget // len(STATS_TO_OPTIMIZE))
-                    bench_stats = {s: avg_stat for s in STATS_TO_OPTIMIZE}
+                    # --- REALISTIC BENCHMARK PAYLOAD ---
+                    # Uses the user's actual UI distribution. Evenly-spread "tank" builds artificially
+                    # maximize combat loop micro-ticks, wildly deflating the CPU sims/sec benchmark.
+                    bench_stats = {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}
                     
                     payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
                     
@@ -1466,9 +1465,7 @@ if __name__ == "__main__":
                         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         
-                        bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
-                        avg_stat = max(0, bench_budget // len(STATS_TO_OPTIMIZE))
-                        bench_stats = {s: avg_stat for s in STATS_TO_OPTIMIZE}
+                        bench_stats = {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}
                         
                         payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
                         # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
