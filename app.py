@@ -445,6 +445,10 @@ if __name__ == "__main__":
             with open(temp_export, "r") as f:
                 export_data = json.load(f)
                 
+            # Strip hardcoded constants to prevent user confusion and math tampering
+            if "settings" in export_data and "base_damage_const" in export_data["settings"]:
+                del export_data["settings"]["base_damage_const"]
+                
             if "cards" in export_data:
                 ordered_cards = {}
                 for ot in['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']:
@@ -1256,24 +1260,26 @@ if __name__ == "__main__":
         st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution. Ensure your total allocated points do not exceed your budget before running.")
 
         # --- PROJECTION DISCLAIMER ---
-        disclaimer_text = (
-            "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
-            "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
-            "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
-            "**The Reality Check #1:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
-            "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
-            "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
-            "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
-            "**The Reality Check #2:** The engine calculates **100% Theoretical Efficiency**. In the Python simulator, 0.000 seconds pass between killing an ore and hitting the next one. "
-            "In the actual live game, minor animation delays, frame drops, and tick-rate transitions consume fractions of a second. "
-            "Because of this 'Animation Lag', you should expect your actual real-world Yields (XP/Frags) to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
-        )
+        with st.expander("⚠️ Important Disclaimer regarding Projections (Click to read)"):
+            disclaimer_text = (
+                "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
+                "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
+                "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
+                "**The Reality Check #1:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
+                "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
+                "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
+                "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
+                "**The Reality Check #2:** The engine calculates **100% Theoretical Efficiency**. In the Python simulator, 0.000 seconds pass between killing an ore and hitting the next one. "
+                "In the actual live game, minor animation delays, frame drops, and tick-rate transitions consume fractions of a second. "
+                "Because of this 'Animation Lag', you should expect your actual real-world Yields (XP/Frags) to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
+            )
         
-        # Append the specific warning if Asc2 is checked
-        if p.asc2_unlocked:
-            disclaimer_text += "\n\n🌌 **Ascension 2 Note:** Because Asc2 unlocks the *Corruption* stat, the AI must search an entire extra dimension of math. Optimizations will naturally take longer to compute than Asc1 runs!"
+            # Append the specific warning if Asc2 is checked
+            if p.asc2_unlocked:
+                disclaimer_text += "\n\n🌌 **Ascension 2 Note:** Because Asc2 unlocks the *Corruption* stat, the AI must search an entire extra dimension of math. Optimizations will naturally take longer to compute than Asc1 runs!"
             
-        st.warning(disclaimer_text)
+    
+            st.warning(disclaimer_text)
 
         # --- GOAL SELECTION ---
         col_goal, col_target = st.columns(2)
@@ -1364,118 +1370,111 @@ if __name__ == "__main__":
                 
         live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
-        with st.expander("🧠 How does the AI Optimizer work? (Click to read)"):
-            st.markdown("""
-            **1. The 3-Phase "Zoom-In" Grid Search:**
-            Testing every possible stat combination point-by-point would require millions of simulations and take days. Instead, we "zoom in":
-            * **Phase 1 (Coarse):** We cast a wide net across your entire stat budget in large leaps (e.g., leaps of 10 points) to find the general neighborhood of the optimal build.
-            * **Phase 2 (Fine):** We draw a tight box around the Phase 1 winner and test smaller leaps (e.g., leaps of 3 points).
-            * **Phase 3 (Exact):** We draw a final box around the Phase 2 winner and test *every single point* (leaps of 1) to find the mathematical peak.
+        with st.expander("⚙️ Engine Tuning & Hardware Benchmark (Optional)", expanded=False):
             
-            **2. Successive Halving (Early Culling):**
-            During each phase, we don't test bad builds thoroughly. We test all builds briefly (15 runs), immediately delete the bottom 80% of performers, test the survivors a bit more (35 runs), and reserve the heaviest testing purely for the top contenders.
-            """)
-
-        col_bench, col_prof = st.columns([1, 1.5])
-        
-        with col_bench:
-            st.write("#### 1. Hardware Benchmark")
-            st.write("*(Optional: Runs automatically on start if skipped)*")
-            if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
-                with st.spinner("Running 200 micro-simulations to test CPU speed..."):
-                    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
-                    if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-                    
-                    # Create the In-Memory Dictionary Snapshot
-                    base_state_dict = {
-                        'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                        'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                        'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                        'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
-                        'total_infernal_cards': p.total_infernal_cards
-                    }
-                    
-                    # --- GUARANTEED STRESS-TEST BENCHMARK ---
-                    # We must test a "Glass Cannon" (High Str/Agi). If the user left their UI on 0 stats,
-                    # the benchmark will run instantly and provide a fake 10,000 sims/sec speed.
-                    bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
-                    bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
-                    
-                    # Dump budget into Damage and Stamina to ensure it reaches deep floors
-                    if bench_budget > 0:
-                        bench_stats['Str'] = min(99, bench_budget)
-                        if 'Agi' in bench_stats:
-                            bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
-                            
-                    payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
-                    
-                    # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
-                    if sys.platform == "linux":
-                        CPU_CORES = min(2, mp.cpu_count()) 
-                    else:
-                        CPU_CORES = max(1, mp.cpu_count() - 1)
+            # Keep the interactive controls at the absolute top
+            col_bench, col_prof = st.columns([1, 1.5])
+            
+            with col_bench:
+                st.write("#### 1. Hardware Benchmark")
+                st.write("*(Optional: Runs automatically on start if skipped)*")
+                if st.button("⏱️ Benchmark CPU & Calculate ETAs", use_container_width=True):
+                    with st.spinner("Running 200 micro-simulations to test CPU speed..."):
+                        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                        if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         
-                    with mp.Pool(CPU_CORES) as pool:
-                        spd = benchmark_hardware(payload, pool)
-                        st.session_state.sims_per_sec = spd
-                        st.rerun() # Force UI to immediately refresh with the new speed!
-            
-            if st.session_state.sims_per_sec > 0:
-                st.success(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second")
-            else:
-                st.info("Awaiting Benchmark...")
+                        base_state_dict = {
+                            'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                            'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                            'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                            'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                            'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                            'total_infernal_cards': p.total_infernal_cards
+                        }
+                        
+                        bench_budget = int(sum(p.base_stats.get(s, 0) for s in STATS_TO_OPTIMIZE))
+                        bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
+                        
+                        if bench_budget > 0:
+                            bench_stats['Str'] = min(99, bench_budget)
+                            if 'Agi' in bench_stats:
+                                bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
+                                
+                        payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
+                        
+                        if sys.platform == "linux":
+                            CPU_CORES = min(2, mp.cpu_count()) 
+                        else:
+                            CPU_CORES = max(1, mp.cpu_count() - 1)
+                            
+                        with mp.Pool(CPU_CORES) as pool:
+                            spd = benchmark_hardware(payload, pool)
+                            st.session_state.sims_per_sec = spd
+                            st.rerun() 
+                
+                if st.session_state.sims_per_sec > 0:
+                    st.success(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second")
+                else:
+                    st.info("Awaiting Benchmark...")
 
-        with col_prof:
-            st.write("#### 2. Search Depth (Initial Step Size)")
-            
-            # Transparent labels that show exactly what the knob is doing
-            depth_labels = {
-                "Fast": "Fast (Step 15) - Best for quick checks",
-                "Standard": "Standard (Step 10) - Recommended balance",
-                "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
-            }
-            
-            depth_choice = st.radio(
-                "Select Search Depth", 
-                options=list(depth_labels.keys()), 
-                format_func=lambda x: depth_labels[x],
-                horizontal=False, 
-                label_visibility="collapsed"
-            )
+            with col_prof:
+                st.write("#### 2. Search Depth (Initial Step Size)")
+                
+                depth_labels = {
+                    "Fast": "Fast (Step 15) - Best for quick checks",
+                    "Standard": "Standard (Step 10) - Recommended balance",
+                    "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
+                }
+                
+                depth_choice = st.radio(
+                    "Select Search Depth", 
+                    options=list(depth_labels.keys()), 
+                    index=1,
+                    format_func=lambda x: depth_labels[x],
+                    horizontal=False, 
+                    label_visibility="collapsed"
+                )
 
+                st.divider()
+                st.write("#### 3. Execution Time Limit")
+                time_limit_mins = st.slider(
+                    "Safely abort and return best build if time exceeds:", 
+                    min_value=1, max_value=30, value=5, step=1, format="%d mins"
+                )
+                
+                step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
+                step_2 = max(2, step_1 // 3)
+                step_3 = 1
+                
+                preview_html = f"""
+                <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
+                    <b>Engine Execution Plan:</b><br>
+                    🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
+                    🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
+                    🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.
+                """
+                
+                if st.session_state.sims_per_sec > 0:
+                    prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
+                    prof_data = live_eta_profiles[prof_key]
+                    preview_html += f"<br><br>⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>"
+                else:
+                    preview_html += "<br><br>⏱️ <b>Estimated Time:</b> Awaiting Benchmark..."
+                    
+                preview_html += "</div>"
+                st.markdown(preview_html, unsafe_allow_html=True)
+
+            # --- UN-INDENTED EXPLANATION TEXT ---
             st.divider()
-            st.write("#### 3. Execution Time Limit")
-            time_limit_mins = st.slider(
-                "Safely abort and return best build if time exceeds:", 
-                min_value=1, max_value=30, value=5, step=1, format="%d mins"
-            )
+            st.markdown("""
+            **🧠 How does the AI Optimizer work?**
+            Testing every stat combination point-by-point would take days. Instead, we "zoom in":
+            * **Phase 1 (Coarse):** Casts a wide net across your stat budget in large leaps.
+            * **Phase 2 (Fine):** Draws a tight box around the Phase 1 winner and tests smaller leaps.
+            * **Phase 3 (Exact):** Pinpoints the mathematical peak by testing every single point in that final box.
             
-            # Derive the exact steps that will be used based on the choice
-            step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
-            step_2 = max(2, step_1 // 3)
-            step_3 = 1
-            
-            # Build the dynamic preview box
-            preview_html = f"""
-            <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
-                <b>Engine Execution Plan:</b><br>
-                🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
-                🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
-                🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.
-            """
-            
-            if st.session_state.sims_per_sec > 0:
-                prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
-                prof_data = live_eta_profiles[prof_key]
-                
-                # Append the ETA inside the dynamic box
-                preview_html += f"<br><br>⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>"
-            else:
-                preview_html += "<br><br>⏱️ <b>Estimated Time:</b> Awaiting Benchmark..."
-                
-            preview_html += "</div>"
-            st.markdown(preview_html, unsafe_allow_html=True)
+            *(The engine also uses "Successive Halving" to quickly delete bad builds after testing them briefly, saving enormous amounts of time).*
+            """)
 
     # --- MONTE CARLO EXECUTION LOOP ---
         st.divider()
@@ -1483,6 +1482,9 @@ if __name__ == "__main__":
         # Hidden for Production Beta. Change to True if you need to do UI testing later!
         # dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
         dev_mode = False
+        
+        # --- ACTIVE SETTINGS TRANSPARENCY ---
+        st.info(f"⚙️ **Active Settings:** {depth_choice} Search Depth | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
         
         st.caption("⚠️ **Note:** Do not change tabs or click other widgets while the engine is running, or it will abort the simulation!")
         if st.button("🚀 Run Optimizer", use_container_width=True, type="primary"):
@@ -1737,7 +1739,19 @@ if __name__ == "__main__":
                 st.success(f"✅ Successive Halving Complete in {elapsed:.1f} seconds!")
             
             st.markdown("### 🏆 Optimal Stat Build")
-            st.write("*(Green/Red numbers show changes from your current UI allocation)*")
+            
+            # --- ELI5 DYNAMIC SUMMARY ---
+            if run_target_metric == "highest_floor":
+                eli5_target = f"highest mathematical probability to reach **Floor {final_summary_out.get('abs_max_floor', 0):,.0f}**"
+            elif "frag" in run_target_metric:
+                eli5_target = "absolute highest **Fragment Farming** yields"
+            elif "block" in run_target_metric:
+                eli5_target = "absolute highest **Block Card Farming** yields"
+            else:
+                eli5_target = "absolute highest **EXP/min** yields"
+                
+            st.info(f"🔥 **Simulation Complete!** The AI determined that shifting your stats to the distribution below gives you the {eli5_target}.")
+            st.write("<small>*(Green/Red numbers show changes from your current UI allocation)*</small>", unsafe_allow_html=True)
             
             stat_cols = st.columns(len(best_final))
             for idx, (stat_name, allocated_pts) in enumerate(best_final.items()):
