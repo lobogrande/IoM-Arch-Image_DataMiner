@@ -302,9 +302,16 @@ if __name__ == "__main__":
             margin-bottom: 15px !important;
         }
         
-        /* Tighten the internal padding of the bordered stat containers */
-        [data-testid="stVerticalBlockBorderWrapper"] {
+        /* Tighten the internal padding of the bordered stat containers */[data-testid="stVerticalBlockBorderWrapper"] {
             padding: 0.75rem !important;
+        }
+        
+        /* 5. Force +/- Stepper Buttons in narrow 9-column layouts */[data-testid="stNumberInputStepDown"],[data-testid="stNumberInputStepUp"] {
+            display: flex !important;
+        }
+        
+        /* 6. Center the text inside all number inputs */[data-testid="stNumberInput"] input {
+            text-align: center !important;
         }
         </style>
     """, unsafe_allow_html=True)
