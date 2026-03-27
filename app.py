@@ -1733,8 +1733,27 @@ if __name__ == "__main__":
                         st.divider()
                         
                         # Clean, consolidated Real-Time readout
+                        # Clean, consolidated Real-Time readout
                         st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                         st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
+                        
+                        # --- ⬆️ LEVEL UP CALCULATOR ---
+                        if run_target_metric == "xp_per_min":
+                            st.divider()
+                            st.markdown(f"#### 🆙 Level Up Calculator<br><span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} EXP/min</span>", unsafe_allow_html=True)
+                            
+                            col_xp_c, col_xp_t = st.columns(2)
+                            with col_xp_c:
+                                cur_xp = st.number_input("Current EXP", min_value=0.0, step=1000.0, format="%.0f", key="perf_cur_xp")
+                            with col_xp_t:
+                                tar_xp = st.number_input("Target EXP", min_value=0.0, step=1000.0, format="%.0f", key="perf_tar_xp")
+                                
+                            if cur_xp > 0 or tar_xp > 0:
+                                if tar_xp > cur_xp and val > 0:
+                                    mins_req = (tar_xp - cur_xp) / val
+                                    st.success(f"**Required:** ~{(mins_req * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({mins_req:,.1f} mins real-time)")
+                                elif tar_xp <= cur_xp:
+                                    st.warning("Target EXP must be greater than Current EXP.")
 
                         st.divider()
                         
@@ -1782,7 +1801,7 @@ if __name__ == "__main__":
             if run_target_metric != "highest_floor" or dev_mode:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
-                    st.markdown("#### 🃏 Block Card Drop Estimates")
+                    st.markdown("#### 🎴 Block Card Drop Estimates")
                     
                     # Extract the exact average kill rates for EVERY block from the telemetry
                     avg_metrics = final_summary_out.get("avg_metrics", {})
@@ -2172,8 +2191,40 @@ if __name__ == "__main__":
                             fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
                             st.plotly_chart(fig_comp, use_container_width=True)
                             
+                            # --- 🏆 META-BUILD YIELDS & CALCULATOR ---
+                            st.divider()
+                            m_name = sr.get("metric_name", "highest_floor")
+                            m_score = sr.get("meta_score", 0)
+                            
+                            if m_name == "highest_floor":
+                                st.metric("🏆 Projected Peak (Absolute Max Floor)", f"Floor {m_score:,.0f}")
+                            else:
+                                m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
+                                r_1k = (m_score / 60.0) * 1000.0
+                                
+                                c_m1, c_m2 = st.columns(2)
+                                c_m1.metric(f"💰 {m_str} per 1k Arch Secs", f"{r_1k:,.1f}")
+                                c_m2.metric(f"⏱️ {m_str} per minute", f"{m_score:,.2f}")
+                                
+                                if m_name == "xp_per_min":
+                                    st.markdown("##### ⬆️ Level Up Calculator")
+                                    col_sx_c, col_sx_t = st.columns(2)
+                                    with col_sx_c:
+                                        s_cur_xp = st.number_input("Current EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_cur_xp")
+                                    with col_sx_t:
+                                        s_tar_xp = st.number_input("Target EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_tar_xp")
+                                        
+                                    if s_cur_xp > 0 or s_tar_xp > 0:
+                                        if s_tar_xp > s_cur_xp and m_score > 0:
+                                            s_mins = (s_tar_xp - s_cur_xp) / m_score
+                                            st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({s_mins:,.1f} mins real-time)")
+                                        else:
+                                            st.warning("Target EXP must be greater than Current EXP.")
+                                            
+                            st.divider()
+                            
                             # --- 🧬 STAT OUTPUT ---
-                            st.markdown("#### 🧬 Synthesized Meta-Build Output")
+                            st.markdown("#### 🧬 Synthesized Stat Allocation")
                             
                             synth_stat_cols = st.columns(len(sr["stats"]))
                             for idx, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
