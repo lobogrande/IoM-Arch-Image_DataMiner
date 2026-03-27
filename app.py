@@ -867,6 +867,7 @@ if __name__ == "__main__":
     with tab_calc_stats:
         st.subheader("📋 Calculated Player Stats")
         st.write("This is the exact mathematical output derived from your Base Stats, Upgrades, and Cards being fed into the Engine.")
+        st.info("💡 **Verification Step:** The best way to ensure the AI gives you perfect results is to verify your inputs! Compare these numbers directly against the stats shown on your in-game Archaeology screen. If they match perfectly, your imported data is correct.")
         
         col_calc_1, col_calc_2, col_calc_3 = st.columns(3)
         
@@ -1012,7 +1013,12 @@ if __name__ == "__main__":
     # --- TAB 6: HIT CALCULATOR (SANDBOX) ---
     with tab_sandbox:
         st.header("🧪 Block Hit Sandbox")
-        st.write("Experiment with stat distributions without worrying about your global point budget. Find the exact breakpoints for how many hits it takes to kill specific blocks.")
+        st.markdown("""
+        💡 **What is a Breakpoint?**  
+        A breakpoint is the exact stat number required to reduce the hits needed to break a block (e.g., dropping from 3 hits down to 2). Because blocks can only take whole hits, any stat points you spend that *don't* push you past the next breakpoint are mathematically wasted!
+        
+        In the early and mid-game, players use this tool to engineer their stats manually. The goal is to ensure you can kill your target blocks in **1 Regular Hit** (Max Hits), or at least 1 hit if a Critical Strike lands. If you are using the Optimizer, you can use this page to manually verify *why* the AI chose the stats it did!
+        """)
         
         # --- MATH & FORMULAS (MOVED TO TOP) ---
         with st.expander("📚 Math & Formulas Breakdown (Click to expand)"):
@@ -1101,7 +1107,6 @@ if __name__ == "__main__":
                 min_hits = st.number_input("Min Avg Hits to Kill:", min_value=1, value=1, step=1, help="Hides blocks that take fewer hits than this.")
                     
                 show_unreachable = st.checkbox("Show Blocks Above Target Floor")
-                show_crit_details = st.checkbox("Show Detailed Crit Multipliers")
 
         with col_table:
             # Build an isolated Sandbox Player Object
@@ -1169,25 +1174,19 @@ if __name__ == "__main__":
                     "Armor": int(eff_armor),
                     "EDPS": int(edps),
                     "Enr EDPS": int(enr_edps),
-                    "Reg Hit": int(reg_hit)
+                    "Reg Hit": int(reg_hit),
+                    "Crit": int(reg_hit * c_crit),
+                    "sCrit": int(reg_hit * c_scrit),
+                    "uCrit": int(reg_hit * c_ucrit),
+                    "Max Hits": int(max_sta),
+                    "Avg Hits": int(avg_sta),
+                    "Enr Hit": int(enr_hit),
+                    "Enr Crit": int(enr_hit * c_enr_crit),
+                    "Enr sCrit": int(enr_hit * c_enr_scrit),
+                    "Enr uCrit": int(enr_hit * c_enr_ucrit),
+                    "Enr Max Hits": int(max_enr_sta),
+                    "Enr Avg Hits": int(avg_enr_sta)
                 }
-                
-                if show_crit_details:
-                    row["Crit"] = int(reg_hit * c_crit)
-                    row["sCrit"] = int(reg_hit * c_scrit)
-                    row["uCrit"] = int(reg_hit * c_ucrit)
-                    
-                row["Max Hits"] = int(max_sta)
-                row["Avg Hits"] = int(avg_sta)
-                row["Enr Hit"] = int(enr_hit)
-                
-                if show_crit_details:
-                    row["Enr Crit"] = int(enr_hit * c_enr_crit)
-                    row["Enr sCrit"] = int(enr_hit * c_enr_scrit)
-                    row["Enr uCrit"] = int(enr_hit * c_enr_ucrit)
-                    
-                row["Enr Max Hits"] = int(max_enr_sta)
-                row["Enr Avg Hits"] = int(avg_enr_sta)
                     
                 sb_table_data.append(row)
                 
@@ -1204,8 +1203,18 @@ if __name__ == "__main__":
                 if min_hits > 1:
                     df_sandbox = df_sandbox[df_sandbox["Avg Hits"] >= min_hits]
 
-                st.markdown(f"#### 🎯 Target Breakpoints <span style='font-size: 0.6em; color: gray;'>({len(df_sandbox)} Blocks Displayed)</span>", unsafe_allow_html=True)
+                # --- HEADER AND DYNAMIC CRIT TOGGLE ---
+                col_bp_title, col_bp_tog = st.columns([1, 1])
+                with col_bp_title:
+                    st.markdown(f"#### 🎯 Target Breakpoints <span style='font-size: 0.6em; color: gray;'>({len(df_sandbox)} Blocks Displayed)</span>", unsafe_allow_html=True)
+                with col_bp_tog:
+                    # Use a visually padded container to align the toggle seamlessly next to the title
+                    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+                    show_crit_details = st.toggle("🔍 Show Detailed Crit Damage Amounts", value=False)
                 
+                if not show_crit_details:
+                    df_sandbox = df_sandbox.drop(columns=["Crit", "sCrit", "uCrit", "Enr Crit", "Enr sCrit", "Enr uCrit"])
+
                 # --- TOOLTIPS & COMMA FORMATTING ---
                 num_cfg = st.column_config.NumberColumn(format="%,d")
                 col_config = {
