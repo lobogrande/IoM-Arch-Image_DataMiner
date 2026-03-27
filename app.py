@@ -519,13 +519,24 @@ if __name__ == "__main__":
         sub_internal, sub_external = st.tabs(["Internal Upgrades", "External Upgrades"])
         
         with sub_internal:
+            # --- HIDE MAXED TOGGLE ---
+            hide_maxed = st.toggle("👀 Hide Maxed Upgrades", value=False)
+            st.divider()
+
             asc2_locked_rows =[19, 27, 34, 46, 52, 55]
             
             # 1. Pre-filter active upgrades
-            active_upgrades =[]
+            active_upgrades = list()
             for upg_id, upg_data in p.UPGRADE_DEF.items():
                 if not p.asc2_unlocked and upg_id in asc2_locked_rows:
                     continue
+                    
+                max_lvl = int(cfg.INTERNAL_UPGRADE_CAPS.get(upg_id, 99))
+                current_lvl = int(p.upgrade_levels.get(upg_id, 0))
+                
+                if hide_maxed and current_lvl >= max_lvl:
+                    continue
+                    
                 active_upgrades.append((upg_id, upg_data))
                 
             # UI TWEAK: Uses the ratio from the top of the file
