@@ -1193,10 +1193,13 @@ if __name__ == "__main__":
             "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
             "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
             "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
-            "**The Reality Check:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
+            "**The Reality Check #1:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
             "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
             "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
             "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
+            "**The Reality Check #2:** The engine calculates **100% Theoretical Efficiency**. In the Python simulator, 0.000 seconds pass between killing an ore and hitting the next one. "
+            "In the actual live game, minor animation delays, frame drops, and tick-rate transitions consume fractions of a second. "
+            "Because of this 'Animation Lag', you should expect your actual real-world Yields (XP/Frags) to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
         )
         
         # Append the specific warning if Asc2 is checked
