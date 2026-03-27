@@ -314,14 +314,11 @@ if __name__ == "__main__":
             padding: 0.75rem !important;
         }
         
-        /* 5. Cleanly hide broken stepper buttons in narrow columns to prevent ghost spacing */[data-testid="stNumberInput"] button {
-            display: none !important;
-        }
-        
-        /* 6. Perfectly center the text inside all number inputs */[data-testid="stNumberInput"] input {
+        /* 5. Mathematically center text by stripping Streamlit's asymmetric clear-button padding */[data-testid="stNumberInput"] input {
             text-align: center !important;
             padding-left: 0 !important;
-            padding-right: 0 !important; 
+            padding-right: 0 !important;
+            margin: 0 !important;
         }
         </style>
     """, unsafe_allow_html=True)
