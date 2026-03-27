@@ -35,6 +35,7 @@ def worker_simulate(payload):
         p.current_max_floor = state.get('current_max_floor', 1)
         p.hades_idol_level = state.get('hades_idol_level', 0)
         p.arch_ability_infernal_bonus = state.get('arch_ability_infernal_bonus', 0.0)
+        p.total_infernal_cards = state.get('total_infernal_cards', 0)
         
         # PROPERLY RE-APPLY UPGRADES USING SETTERS SO MATH TRIGGERS!
         for upg_id, lvl in state.get('upgrade_levels', {}).items():
@@ -217,6 +218,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         p_profile.current_max_floor = base_state_dict.get('current_max_floor', 1)
         p_profile.hades_idol_level = base_state_dict.get('hades_idol_level', 0)
         p_profile.arch_ability_infernal_bonus = base_state_dict.get('arch_ability_infernal_bonus', 0.0)
+        p_profile.total_infernal_cards = base_state_dict.get('total_infernal_cards', 0)
         for upg_id, lvl in base_state_dict.get('upgrade_levels', {}).items():
             p_profile.set_upgrade_level(upg_id, lvl)
         for ext_id, lvl in base_state_dict.get('external_levels', {}).items():
@@ -273,43 +275,72 @@ def benchmark_hardware(baseline_payload, pool, test_iterations=200):
     
     return test_iterations / elapsed if elapsed > 0 else 1
 
-def get_eta_profiles(stats_list, budget, caps, sims_per_second, iter_p1=25, iter_p2=50, iter_p3=100):
-    """Calculates ETAs dynamically scaled to batch-processing Culling Factors."""
+def get_expected_runs(builds, max_iter):
+    """Exactly calculates the number of runs executed through Successive Halving drops."""
+    if builds <= 20 or max_iter <= 10: return builds * max_iter
+    r1 = max(1, int(max_iter * 0.15))
+    r2 = max(1, int(max_iter * 0.35))
+    r3 = max_iter - r1 - r2
+    runs = builds * r1
+    b2 = max(3, int(builds * 0.20))
+    runs += b2 * r2
+    b3 = max(3, int(b2 * 0.10))
+    runs += b3 * r3
+    return runs
+
+def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, iter_p2=50, iter_p3=100):
+    """Calculates ETAs dynamically based on exact Halving runs and Positive-Shifted coordinates."""
     profiles = {
         "Fast (Step: 15)": {"step": 15},
         "Standard (Step: 10)": {"step": 10},
         "Deep (Step: 5)": {"step": 5}
     }
-    bounds = {s: (0, caps[s]) for s in stats_list}
+    
+    # Identify mathematically "free" stats (unlocked)
+    free_stats =[s for s in stats_list if bounds[s][0] != bounds[s][1]]
+    num_free = len(free_stats)
     
     for name, data in profiles.items():
         step_1 = data["step"]
         step_2 = max(2, step_1 // 3)
         p3_radius = min(2, step_2)
         
-        # 1. Exact Phase 1 Builds
         p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
-        p1_sims = p1_builds * iter_p1 * 0.25
+        p1_sims = get_expected_runs(p1_builds, iter_p1)
         
-        # 2. Exact Phase 2 & 3 Builds (No artificial bloat multipliers)
-        mock_bounds_p2 = {s: (-step_1, step_1) for s in stats_list}
-        p2_builds = len(generate_distributions(stats_list, 0, step_2, mock_bounds_p2))
-        p2_sims = p2_builds * iter_p2 * 0.25
-        
-        mock_bounds_p3 = {s: (-p3_radius, p3_radius) for s in stats_list}
-        p3_builds = len(generate_distributions(stats_list, 0, 1, mock_bounds_p3))
-        p3_sims = p3_builds * iter_p3 * 0.25
+        # Positive-Shifted Bounds with Edge-Clipping Factor
+        # Real builds hug the 0 and Max Cap walls, cutting the theoretical hypercube search space
+        # down by roughly 75%. We generate the full shape, then apply the clipping factor.
+        if num_free > 0:
+            p2_mock_bounds = {s: (0, 2 * step_1) for s in free_stats}
+            p2_budget = ((num_free * step_1) // step_2) * step_2
+            raw_p2_builds = len(generate_distributions(free_stats, p2_budget, step_2, p2_mock_bounds))
+            
+            p3_mock_bounds = {s: (0, 2 * p3_radius) for s in free_stats}
+            p3_budget = ((num_free * p3_radius) // 1) * 1
+            raw_p3_builds = len(generate_distributions(free_stats, p3_budget, 1, p3_mock_bounds))
+            
+            EDGE_CLIP = 0.25
+            p2_builds = max(1, int(raw_p2_builds * EDGE_CLIP))
+            p3_builds = max(1, int(raw_p3_builds * EDGE_CLIP))
+        else:
+            p2_builds, p3_builds = 0, 0
+            
+        p2_sims = get_expected_runs(p2_builds, iter_p2)
+        p3_sims = get_expected_runs(p3_builds, iter_p3)
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
-        total_simulations = p1_sims + p2_sims + p3_sims
         
-        # --- BATCH CULLING FACTOR ---
-        # Maps the pure-baseline benchmark to the high-efficiency chunked reality of grid search.
-        # A factor of 6.0 perfectly aligns 40-50 sims/sec hardware to ~2-minute execution times.
-        CULLING_FACTOR = 6.0
-        effective_sims_sec = max(1, sims_per_second) * CULLING_FACTOR
+        # --- SURVIVAL WEIGHTING ---
+        weighted_p1 = p1_sims * 0.25 # P1 garbage builds die fast, but still incur parallel overhead
+        weighted_p2 = p2_sims * 0.75 # P2 zoomed builds survive much longer
+        weighted_p3 = p3_sims * 1.00 # P3 optimized builds take the full benchmark time
         
-        estimated_seconds = total_simulations / effective_sims_sec
+        total_weighted_sims = weighted_p1 + weighted_p2 + weighted_p3
+        
+        effective_sims_sec = max(1.0, float(sims_per_second))
+        
+        estimated_seconds = total_weighted_sims / effective_sims_sec
         
         if estimated_seconds < 60:
             time_str = f"~{int(estimated_seconds)} seconds"
