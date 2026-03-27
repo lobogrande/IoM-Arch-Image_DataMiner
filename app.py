@@ -412,8 +412,23 @@ if __name__ == "__main__":
 
             temp_export = os.path.join(ROOT_DIR, "temp_export.json")
             save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
+            
+            # --- INTERCEPT AND ENFORCE STRICT CARD JSON ORDERING ---
             with open(temp_export, "r") as f:
-                export_json_str = f.read()
+                export_data = json.load(f)
+                
+            if "cards" in export_data:
+                ordered_cards = {}
+                for ot in['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']:
+                    for tier in range(1, 5):
+                        cid = f"{ot}{tier}"
+                        if cid in export_data["cards"]:
+                            ordered_cards[cid] = export_data["cards"][cid]
+                export_data["cards"] = ordered_cards
+                
+            # json.dumps without sort_keys preserves our forced insertion order
+            export_json_str = json.dumps(export_data, indent=4)
+            
             if os.path.exists(temp_export):
                 os.remove(temp_export)
                 
