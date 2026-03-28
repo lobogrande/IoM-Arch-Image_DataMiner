@@ -2594,28 +2594,28 @@ You might notice that running Synthesis multiple times gives slightly different 
                 for idx, synth in reversed(list(enumerate(st.session_state.synth_history))):
                     if synth.get("Target") in synth_view_targets:
                         
-                        title = f"🧬 Meta-Build | Target: {synth['Target']} | Ceiling: {synth['Ceiling Score']}"
-                        if "God-Run Peak" in synth: 
-                            title += f" | Peak: {synth['God-Run Peak']}"
+                        with st.container(border=True):
+                            # --- Header & Visible Stats ---
+                            title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{synth['Ceiling Score']}`"
+                            if "God-Run Peak" in synth: 
+                                title += f" | Peak: `{synth['God-Run Peak']}`"
+                            st.markdown(title)
                             
-                        with st.expander(title):
-                            # Backward compatibility check for older session state formats
-                            if "Sources Data" in synth:
-                                source_df = pd.DataFrame(synth['Sources Data'])
-                                cols_to_drop = ['Include', 'Target'] 
-                                source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
-                                st.markdown("##### 🔍 Source Runs (The original builds that were averaged)")
-                                st.dataframe(source_df, hide_index=True, width="stretch")
-                            else:
-                                st.markdown("##### 🔍 Source Runs (Legacy Format)")
-                                st.write(synth.get("Sources", "*(No source data saved)*"))
-                            
-                            # Render the exact stats of the Meta-Build itself
-                            st.markdown("##### ⚙️ Meta-Build Stat Output")
                             stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "Sources Data", "Sources", "Keep"]}
-                            st.write(", ".join([f"**{k}:** {v}" for k, v in stats_only.items()]))
+                            stat_string = " &nbsp;&nbsp;|&nbsp;&nbsp; ".join([f"**{k}:** {v}" for k, v in stats_only.items()])
+                            st.info(stat_string)
                             
-                            st.divider()
+                            # --- Hidden Source Runs ---
+                            with st.expander("🔍 View Source Runs (The original builds that were averaged)"):
+                                if "Sources Data" in synth:
+                                    source_df = pd.DataFrame(synth['Sources Data'])
+                                    cols_to_drop = ['Include', 'Target'] 
+                                    source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
+                                    st.dataframe(source_df, hide_index=True, width="stretch")
+                                else:
+                                    st.write(synth.get("Sources", "*(No source data saved)*"))
+                            
+                            # --- Always-Visible Buttons ---
                             col_h1, col_h2, col_h3 = st.columns(3)
                             
                             col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("global", stats_only, "✅ Meta-Build stats applied globally!", "🧬"))
