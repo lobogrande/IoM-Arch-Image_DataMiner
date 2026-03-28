@@ -2568,17 +2568,20 @@ You might notice that running Synthesis multiple times gives slightly different 
                             title += f" | Peak: {synth['God-Run Peak']}"
                             
                         with st.expander(title):
-                            # Clean up the sources sub-table to hide UI flags
-                            source_df = pd.DataFrame(synth['Sources Data'])
-                            cols_to_drop =['Include', 'Target'] 
-                            source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
-                            
-                            st.markdown("##### 🔍 Source Runs (The original builds that were averaged)")
-                            st.dataframe(source_df, hide_index=True, width="stretch")
+                            # Backward compatibility check for older session state formats
+                            if "Sources Data" in synth:
+                                source_df = pd.DataFrame(synth['Sources Data'])
+                                cols_to_drop = ['Include', 'Target'] 
+                                source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
+                                st.markdown("##### 🔍 Source Runs (The original builds that were averaged)")
+                                st.dataframe(source_df, hide_index=True, width="stretch")
+                            else:
+                                st.markdown("##### 🔍 Source Runs (Legacy Format)")
+                                st.write(synth.get("Sources", "*(No source data saved)*"))
                             
                             # Render the exact stats of the Meta-Build itself
                             st.markdown("##### ⚙️ Meta-Build Stat Output")
-                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "Sources Data"]}
+                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "Sources Data", "Sources", "Keep"]}
                             st.write(", ".join([f"**{k}:** {v}" for k, v in stats_only.items()]))
                             
                             st.divider()
