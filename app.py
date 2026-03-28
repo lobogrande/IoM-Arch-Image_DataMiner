@@ -432,6 +432,26 @@ if __name__ == "__main__":
             else:
                 p.hades_idol_level = 0
 
+            # --- OVER-BUDGET AUTO-FIX ---
+            current_allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
+            current_allocated = sum(int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0))) for s in p.base_stats.keys())
+            if current_allocated > current_allowed:
+                st.error(f"⚠️ **Over Budget!**\nYou have allocated {current_allocated} / {current_allowed} points.")
+                def trim_stats():
+                    excess = current_allocated - current_allowed
+                    # Trim stats in reverse priority order to preserve survival/damage
+                    trim_order =['Corr', 'Div', 'Luck', 'Int', 'Per', 'Agi', 'Str']
+                    for s in trim_order:
+                        if excess <= 0: break
+                        val = int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)))
+                        if val > 0:
+                            deduct = min(val, excess)
+                            st.session_state[f"stat_{s}"] = val - deduct
+                            p.base_stats[s] = val - deduct
+                            excess -= deduct
+                    st.toast("✅ Stats trimmed to fit new budget!", icon="✂️")
+                st.button("✂️ Auto-Trim Stats", width="stretch", on_click=trim_stats, type="primary")
+
         # --- 2. IMPORT DATA ---
         with st.expander("📂 Import Data", expanded=False):
             uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
@@ -1162,11 +1182,30 @@ if __name__ == "__main__":
             with st.expander("🎛️ Control Panel", expanded=True):
                 
                 # --- SANDBOX SYNC ---
-                if st.button("🔄 Sync from Base Stats", width="stretch", help="Pull your currently saved stat distribution into the sandbox."):
-                    for stat in STAT_CAPS.keys():
-                        st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
-                    st.rerun()
+                col_sb1, col_sb2 = st.columns(2)
+                with col_sb1:
+                    if st.button("🔄 Pull Global Stats", width="stretch", help="Pull your currently saved global stat distribution into the sandbox."):
+                        for stat in STAT_CAPS.keys():
+                            st.session_state[f"sandbox_stat_{stat}"] = int(p.base_stats.get(stat, 0))
+                        st.rerun()
+                with col_sb2:
+                    def push_sandbox_to_global():
+                        # Auto-clamp constraints
+                        sandbox_total = sum(int(st.session_state.get(f"sandbox_stat_{s}", 0)) for s in STAT_CAPS.keys())
+                        allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
+                        if sandbox_total > allowed:
+                            st.toast(f"❌ Cannot push: Sandbox uses {sandbox_total} points but budget is {allowed}!", icon="⚠️")
+                            return
+                        # Safely inject into base stats
+                        for s in STAT_CAPS.keys():
+                            val = int(st.session_state.get(f"sandbox_stat_{s}", 0))
+                            st.session_state[f"stat_{s}"] = val
+                            p.base_stats[s] = val
+                        st.toast("✅ Sandbox stats pushed to Global UI!", icon="📤")
 
+                    st.button("📤 Push to Global", width="stretch", on_click=push_sandbox_to_global, help="Apply these sandbox stats to your actual character build.")
+
+                st.divider()
                 st.markdown("#### Sandbox Stats")
                 
                 def render_sandbox_stat(label, stat_key, col):
@@ -1499,15 +1538,12 @@ if __name__ == "__main__":
                         }
                         
                         # --- GUARANTEED STRESS-TEST BENCHMARK ---
-                        # We must test a "Glass Cannon" (High Str/Agi). If the user left their UI on 0 stats,
-                        # the benchmark will run instantly and provide a fake 10,000 sims/sec speed.
-                        bench_budget = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
-                        bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
-                        
-                        if bench_budget > 0:
-                            bench_stats['Str'] = min(99, bench_budget)
-                            if 'Agi' in bench_stats:
-                                bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
+                        # Force a heavy mid-game build (50 Str / 50 Agi / 20 Int) to guarantee the CPU actually
+                        # performs deep simulated combat loops, regardless of the user's current level.
+                        bench_stats = {s: 5 for s in STATS_TO_OPTIMIZE}
+                        bench_stats['Str'] = 50
+                        bench_stats['Agi'] = 50
+                        bench_stats['Int'] = 20
                                 
                         payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
                         
@@ -1613,7 +1649,7 @@ if __name__ == "__main__":
         else:
             btn_disabled = False
 
-        st.caption("⚠️ **Note:** Do not change tabs or click other widgets while the engine is running, or it will abort the simulation!")
+        st.warning("⚠️ **CRITICAL:** Do not change tabs or click anywhere else on the page while the engine is running! Streamlit will instantly abort the simulation if you interact with the UI.")
         if st.button("🚀 Run Optimizer", use_container_width=True, type="primary", disabled=btn_disabled):
             st.write("---")
             
@@ -1670,14 +1706,11 @@ if __name__ == "__main__":
                         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
                         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                         
-                        bench_budget = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
-                        bench_stats = {s: 0 for s in STATS_TO_OPTIMIZE}
-                    
-                        # Dump budget into Damage and Stamina to ensure it reaches deep floors
-                        if bench_budget > 0:
-                            bench_stats['Str'] = min(99, bench_budget)
-                            if 'Agi' in bench_stats:
-                                bench_stats['Agi'] = max(0, bench_budget - bench_stats['Str'])
+                        # Force a heavy mid-game build to guarantee deep combat simulation loops
+                        bench_stats = {s: 5 for s in STATS_TO_OPTIMIZE}
+                        bench_stats['Str'] = 50
+                        bench_stats['Agi'] = 50
+                        bench_stats['Int'] = 20
 
                         payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
                         # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
@@ -1958,7 +1991,7 @@ if __name__ == "__main__":
             
             if run_target_metric != "highest_floor" or dev_mode: tab_list.append("🃏 Card Drops")
             if show_loot: tab_list.append("🎒 Loot Breakdown")
-            if show_wall: tab_list.append("🧱 The Wall")
+            if show_wall: tab_list.append("🧱 Progression Wall")
             
             ui_tabs = st.tabs(tab_list)
             tab_idx = 0
@@ -1977,8 +2010,8 @@ if __name__ == "__main__":
                         abs_chance = final_summary_out.get("abs_max_chance", 0) * 100
                         avg_flr = final_summary_out.get("avg_floor", final_summary_out.get(run_target_metric, 0))
                         
-                        st.metric("Absolute Max Floor (God Run)", f"Floor {abs_max:,.0f}")
-                        st.metric("God Run Probability", f"{abs_chance:.1f}%")
+                        st.metric("Theoretical Peak Floor", f"Floor {abs_max:,.0f}")
+                        st.metric("Peak Probability", f"{abs_chance:.1f}%")
                         st.metric("Average Consistency Floor", f"Floor {avg_flr:,.1f}")
                     else:
                         val = final_summary_out[run_target_metric]
@@ -2153,12 +2186,12 @@ if __name__ == "__main__":
                     fig_loot.update_layout(showlegend=False, margin=dict(t=20, b=20), height=400)
                     st.plotly_chart(fig_loot, width="stretch")
 
-            # --- TAB 3: THE WALL (HISTOGRAM) ---
+            # --- TAB 3: PROGRESSION WALL (HISTOGRAM) ---
             if show_wall:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
-                    st.markdown("#### Death Distribution (The Brick Wall)")
-                    st.write("Out of the simulations run on the optimal build, this is exactly where your character died. High spikes indicate a hard scaling wall (usually enemy armor).")
+                    st.markdown("#### Death Distribution (Progression Wall)")
+                    st.write("Out of the simulations run on the optimal build, this is exactly where your character died. High spikes indicate a hard progression wall (usually enemy armor).")
                     
                     df_hist = pd.DataFrame(list(chart_hist.items()), columns=['Floor', 'Deaths'])
                     # Sort the dataframe by Floor numerically so the x-axis reads chronologically
@@ -2472,10 +2505,10 @@ You might notice that running Synthesis multiple times gives slightly different 
                                                 
                                         if run_target_metric == "highest_floor":
                                             meta_score = get_ceiling_score(best_data['floors'], 5)
-                                            chart_label = "🏆 Verified God-Build"
+                                            chart_label = "🏆 Theoretical Peak"
                                         else:
                                             meta_score = best_data['sum_t'] / 500.0
-                                            chart_label = "📈 Verified Farm-Build"
+                                            chart_label = "📈 Optimal Farm-Build"
                                             
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
@@ -2514,8 +2547,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                             "Sources Data": valid_runs # Save the full dictionaries for the sub-table!
                                         }
                                         if run_target_metric == "highest_floor":
-                                            synth_entry["God-Run Peak"] = int(abs_max)
-                                            synth_entry["God-Run Chance"] = abs_max_chance
+                                            synth_entry["Theoretical Peak"] = int(abs_max)
+                                            synth_entry["Peak Probability"] = abs_max_chance
                                             synth_entry["Arch Secs Cost"] = arch_secs_cost
                                             
                                         synth_entry.update(final_meta_dist)
@@ -2578,14 +2611,14 @@ You might notice that running Synthesis multiple times gives slightly different 
                             if m_name == "highest_floor":
                                 c_m1, c_m2 = st.columns(2)
                                 c_m1.metric("🏔️ Top 5 Peak Average (Ceiling)", f"Floor {m_score:,.1f}")
-                                c_m2.metric("🏆 Absolute God-Run (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
+                                c_m2.metric("🏆 Theoretical Peak (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
                                 
-                                # --- 🎲 GOD-RUN REALITY CHECK ---
+                                # --- 🎲 PEAK REALITY CHECK ---
                                 chance = sr.get('abs_max_chance', 0)
                                 if chance > 0:
                                     runs_needed = math.ceil(1.0 / chance)
                                     arch_secs = sr.get('arch_secs_cost', runs_needed * p.max_sta)
-                                    st.info(f"🎲 **God-Run Reality Check:** The AI hit Floor {sr.get('abs_max')} in **{chance*100:.1f}%** of its simulations. Mathematically, you must execute an average of **{runs_needed} full runs** to see this happen once. At your current Max Stamina, expect to burn roughly **~{arch_secs/1000.0:.1f}k Arch Seconds** before you break through! *(If you spent less than this and didn't hit it, you just haven't banked enough arch seconds yet!)*")
+                                    st.info(f"🎲 **Peak Reality Check:** The AI hit Floor {sr.get('abs_max')} in **{chance*100:.1f}%** of its simulations. Mathematically, you must execute an average of **{runs_needed} full runs** to see this happen once. At your current Max Stamina, expect to burn roughly **~{arch_secs/1000.0:.1f}k Arch Seconds** before you break through! *(If you spent less than this and didn't hit it, you just haven't banked enough arch seconds yet!)*")
                             else:
                                 m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
                                 r_1k = (m_score / 60.0) * 1000.0
@@ -2654,7 +2687,7 @@ You might notice that running Synthesis multiple times gives slightly different 
             if "synth_history" in st.session_state and st.session_state.synth_history:
                 st.divider()
                 st.markdown("### 📚 Meta-Build History Log")
-                st.write("A permanent record of your synthesized God-Builds. Expand a row to view the original builds that birthed it.")
+                st.write("A permanent record of your optimized Meta-Builds. Expand a row to view the original builds that birthed it.")
                 
                 synth_targets = list(set(s.get("Target") for s in st.session_state.synth_history))
                 synth_view_targets = st.multiselect(
@@ -2671,19 +2704,22 @@ You might notice that running Synthesis multiple times gives slightly different 
                         with st.container(border=True):
                             # --- Header & Visible Stats ---
                             title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{synth['Ceiling Score']}`"
-                            if "God-Run Peak" in synth: 
+                            if "Theoretical Peak" in synth: 
+                                title += f" | Peak: `{synth['Theoretical Peak']}`"
+                            elif "God-Run Peak" in synth: # Legacy state fallback
                                 title += f" | Peak: `{synth['God-Run Peak']}`"
                             st.markdown(title)
                             
-                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "God-Run Chance", "Arch Secs Cost", "Sources Data", "Sources", "Keep"]}
+                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "Theoretical Peak", "Peak Probability", "God-Run Peak", "God-Run Chance", "Arch Secs Cost", "Sources Data", "Sources", "Keep"]}
                             stat_string = " &nbsp;&nbsp;|&nbsp;&nbsp; ".join([f"**{k}:** {v}" for k, v in stats_only.items()])
                             st.info(stat_string)
                             
-                            if "God-Run Chance" in synth and synth["God-Run Chance"] > 0:
-                                chance = synth["God-Run Chance"]
+                            chance = synth.get("Peak Probability", synth.get("God-Run Chance", 0))
+                            if chance > 0:
                                 runs_needed = math.ceil(1.0 / chance)
                                 arch_secs = synth.get("Arch Secs Cost", 0)
-                                st.caption(f"🎲 **Reality Check:** Floor {synth.get('God-Run Peak')} hit in **{chance*100:.1f}%** of sims. Requires avg **{runs_needed} runs** (~**{arch_secs/1000.0:.1f}k Arch Secs**) to replicate.")
+                                peak_val = synth.get('Theoretical Peak', synth.get('God-Run Peak'))
+                                st.caption(f"🎲 **Reality Check:** Floor {peak_val} hit in **{chance*100:.1f}%** of sims. Requires avg **{runs_needed} runs** (~**{arch_secs/1000.0:.1f}k Arch Secs**) to replicate.")
                                 
                             if "block_" in synth['Target'] and synth['Ceiling Score'] > 0:
                                 val = synth['Ceiling Score']
