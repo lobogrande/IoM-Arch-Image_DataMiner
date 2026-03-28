@@ -2273,10 +2273,11 @@ You might notice that running Synthesis multiple times gives slightly different 
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
                             if st.button("🧬 Synthesize & Verify Meta-Build", width="stretch"):
-                                valid_runs =[r for r in st.session_state.run_history if r.get("Include", False)]
+                                # WYSIWYG Guard: Only synthesize runs that are currently visible in the UI filter!
+                                valid_runs = [r for r in visible_history if r.get("Include", False)]
                                 
                                 if len(valid_runs) == 0:
-                                    st.error("⚠️ You must leave at least 1 run checked to synthesize!")
+                                    st.error("⚠️ You must have at least 1 visible run checked to synthesize!")
                                 elif len(valid_runs) > 10:
                                     st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
