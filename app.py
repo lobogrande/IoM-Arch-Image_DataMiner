@@ -2453,6 +2453,9 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         if run_target_metric == "highest_floor":
                                             meta_score = get_ceiling_score(best_data['floors'], 5)
                                             chart_label = "🏆 Verified God-Build"
+                                        else:
+                                            meta_score = best_data['sum_t'] / 500.0
+                                            chart_label = "📈 Verified Farm-Build"
                                             
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
