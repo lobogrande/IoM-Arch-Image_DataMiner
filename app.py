@@ -2615,9 +2615,10 @@ You might notice that running Synthesis multiple times gives slightly different 
                                     def calc_c_main(odds):
                                         k50 = (0.693 * odds) / (m_score / 60.0) / 1000.0
                                         k90 = (2.302 * odds) / (m_score / 60.0) / 1000.0
-                                        return f"~{k50:.1f}k / ~{k90:.1f}k"
+                                        k99 = (4.605 * odds) / (m_score / 60.0) / 1000.0
+                                        return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
                                         
-                                    st.info(f"**{b_name} Card Projections [50% Lucky / 90% Safe]**\n\n"
+                                    st.info(f"**{b_name} Card Projections[50% Average / 90% Safe / 99% Guaranteed]**\n\n"
                                             f"**Base Card:** {calc_c_main(1500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
                                             f"**Poly Frag:** {calc_c_main(7500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
                                             f"**Infernal Frag:** {calc_c_main(200000)}")
@@ -2691,9 +2692,10 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 def calc_c(odds):
                                     k50 = (0.693 * odds) / (val / 60.0) / 1000.0
                                     k90 = (2.302 * odds) / (val / 60.0) / 1000.0
-                                    return f"~{k50:.1f}k / ~{k90:.1f}k"
+                                    k99 = (4.605 * odds) / (val / 60.0) / 1000.0
+                                    return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
                                     
-                                st.caption(f"🎴 **Card Reality Check ({b_name})**[50% Lucky / 90% Safe Arch Secs] ➔ "
+                                st.caption(f"🎴 **Card Reality Check ({b_name})**[50% Avg / 90% Safe / 99% Guaranteed] ➔ "
                                            f"**Base:** {calc_c(1500)} &nbsp;|&nbsp; "
                                            f"**Poly:** {calc_c(7500)} &nbsp;|&nbsp; "
                                            f"**Infernal:** {calc_c(200000)}", unsafe_allow_html=True)
