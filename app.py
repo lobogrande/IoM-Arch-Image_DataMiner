@@ -1548,7 +1548,8 @@ if __name__ == "__main__":
                 st.write("#### 3. Execution Time Limit")
                 time_limit_mins = st.slider(
                     "Safely abort and return best build if time exceeds:", 
-                    min_value=1, max_value=30, value=5, step=1, format="%d mins"
+                    min_value=1, max_value=30, value=5, step=1, format="%d mins",
+                    help="This is a 'Graceful Timeout'. To prevent data corruption, the engine will finish its currently active batch of math before stopping. Expect the final timer to overshoot your limit slightly!"
                 )
                 
                 step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
@@ -2241,10 +2242,26 @@ if __name__ == "__main__":
                         st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button below!)*")
                         
                         df_history = pd.DataFrame(visible_history)
-                        cols =['Include', 'Target', 'Metric Score', 'Avg Floor', 'Max Floor']
+
+                        # --- Inject Card Reality Check Columns for Farming ---
+                        is_block_farming = any("block_" in t for t in view_targets)
+                        if is_block_farming:
+                            def get_50_str(score, odds):
+                                if score <= 0: return "N/A"
+                                return f"~{(0.693 * odds) / (score / 60.0) / 1000.0:.1f}k"
+                            
+                            df_history["Base Card (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 1500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
+                        
+                        cols =[ 'Include', 'Target', 'Metric Score' ]
+                        if is_block_farming:
+                            cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
+                        cols += [ 'Avg Floor', 'Max Floor' ]
+                        
                         # Safe fallback in case old history rows don't have Max Floor yet
                         if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                        cols +=[c for c in df_history.columns if c not in cols]
+                        cols +=[ c for c in df_history.columns if c not in cols ]
                         df_history = df_history[cols]
                         
                         edited_df = st.data_editor(
@@ -2254,6 +2271,10 @@ if __name__ == "__main__":
                             column_config={"Include": st.column_config.CheckboxColumn("Include")},
                             disabled=[c for c in df_history.columns if c != "Include"] 
                         )
+                        
+                        # Sync live UI checkboxes directly back to the backend dictionaries
+                        for i, row in edited_df.iterrows():
+                            visible_history[i]["Include"] = bool(row["Include"])
                         
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
@@ -2267,19 +2288,20 @@ You might notice that running Synthesis multiple times gives slightly different 
 
 **The Takeaway:** If your stats bounce around slightly between runs, congratulations—you've reached the absolute peak! Send your results to the **Hit Calculator Sandbox** to prove to yourself that both builds kill your target blocks in the exact same number of hits.
                         """)
-                        st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test against your *current* UI target.")
+                        st.write("Smooth out Monte Carlo RNG noise. This algorithm calculates the statistical center of your checked builds, generates adjacent stat combinations, and runs an exhaustive 500-iteration simulation across all of them to find the true mathematical peak.")
                         
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
                             if st.button("🧬 Synthesize & Verify Meta-Build", width="stretch"):
-                                valid_runs =[r for r in st.session_state.run_history if r.get("Include", False)]
+                                # WYSIWYG Guard: Only synthesize runs that are currently visible in the UI filter!
+                                valid_runs = [r for r in visible_history if r.get("Include", False)]
                                 
                                 if len(valid_runs) == 0:
-                                    st.error("⚠️ You must leave at least 1 run checked to synthesize!")
+                                    st.error("⚠️ You must have at least 1 visible run checked to synthesize!")
                                 elif len(valid_runs) > 10:
                                     st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
-                                    with st.spinner("Calculating seed, mapping neighborhood, and running deep Gradient Polish..."):
+                                    with st.spinner("Calculating center, generating permutations, and running deep verification..."):
                                         stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor"]]
                                         
                                         synth_state_dict = {
@@ -2431,7 +2453,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                             "worst_val": 0,
                                             "avg_val": avg_f,
                                             "runner_up_val": 0,
-                                            "avg_metrics": {} 
+                                            # Dynamically populate the target metric so the main UI Analytics tabs wake up!
+                                            "avg_metrics": {run_target_metric: best_data['sum_t'] / 500.0} 
                                         }
 
                                         # APPLES-TO-APPLES CHART MAPPING
@@ -2450,6 +2473,9 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         if run_target_metric == "highest_floor":
                                             meta_score = get_ceiling_score(best_data['floors'], 5)
                                             chart_label = "🏆 Verified God-Build"
+                                        else:
+                                            meta_score = best_data['sum_t'] / 500.0
+                                            chart_label = "📈 Verified Farm-Build"
                                             
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
@@ -2526,10 +2552,10 @@ You might notice that running Synthesis multiple times gives slightly different 
                             
                             # --- 📊 PERFORMANCE PROOF CHART ---
                             st.markdown("#### 📊 Synthesis Performance Proof")
-                            st.write("How the Gradient-Polished Meta-Build compares to the individual historical runs you selected.")
-                            st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated to 500 simulations to strip away their initial 'lucky' RNG variance).*")
+                            st.write("How the optimized Meta-Build compares to the individual historical runs you selected.")
+                            st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
                             
-                            chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] + ["🧬 Meta-Build"]
+                            chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
                             chart_scores = sr["history_scores"] + [sr["meta_score"]]
                             chart_colors = ["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
                             
@@ -2582,6 +2608,20 @@ You might notice that running Synthesis multiple times gives slightly different 
                                             st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({s_mins:,.1f} mins real-time)")
                                         else:
                                             st.warning("Target EXP must be greater than Current EXP.")
+                                elif "block_" in m_name and m_score > 0:
+                                    st.markdown("##### 🎴 Card Drop Reality Check (Arch Secs)")
+                                    b_name = m_name.replace("block_", "").replace("_per_min", "").capitalize()
+                                    
+                                    def calc_c_main(odds):
+                                        k50 = (0.693 * odds) / (m_score / 60.0) / 1000.0
+                                        k90 = (2.302 * odds) / (m_score / 60.0) / 1000.0
+                                        k99 = (4.605 * odds) / (m_score / 60.0) / 1000.0
+                                        return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
+                                        
+                                    st.info(f"**{b_name} Card Projections[50% Average / 90% Safe / 99% Guaranteed]**\n\n"
+                                            f"**Base Card:** {calc_c_main(1500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                                            f"**Poly Frag:** {calc_c_main(7500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                                            f"**Infernal Frag:** {calc_c_main(200000)}")
                                             
                             st.divider()
                             
@@ -2644,9 +2684,24 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 runs_needed = math.ceil(1.0 / chance)
                                 arch_secs = synth.get("Arch Secs Cost", 0)
                                 st.caption(f"🎲 **Reality Check:** Floor {synth.get('God-Run Peak')} hit in **{chance*100:.1f}%** of sims. Requires avg **{runs_needed} runs** (~**{arch_secs/1000.0:.1f}k Arch Secs**) to replicate.")
+                                
+                            if "block_" in synth['Target'] and synth['Ceiling Score'] > 0:
+                                val = synth['Ceiling Score']
+                                b_name = synth['Target'].replace("block_", "").replace("_per_min", "").capitalize()
+                                
+                                def calc_c(odds):
+                                    k50 = (0.693 * odds) / (val / 60.0) / 1000.0
+                                    k90 = (2.302 * odds) / (val / 60.0) / 1000.0
+                                    k99 = (4.605 * odds) / (val / 60.0) / 1000.0
+                                    return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
+                                    
+                                st.caption(f"🎴 **Card Reality Check ({b_name})**[50% Avg / 90% Safe / 99% Guaranteed] ➔ "
+                                           f"**Base:** {calc_c(1500)} &nbsp;|&nbsp; "
+                                           f"**Poly:** {calc_c(7500)} &nbsp;|&nbsp; "
+                                           f"**Infernal:** {calc_c(200000)}", unsafe_allow_html=True)
                             
                             # --- Hidden Source Runs ---
-                            with st.expander("🔍 View Source Runs (The original builds that were averaged)"):
+                            with st.expander("🔍 View Source Runs (The original builds used to generate this Meta-Build)"):
                                 if "Sources Data" in synth:
                                     source_df = pd.DataFrame(synth['Sources Data'])
                                     cols_to_drop = ['Include', 'Target'] 
