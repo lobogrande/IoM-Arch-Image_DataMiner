@@ -1383,7 +1383,8 @@ if __name__ == "__main__":
         # --- DYNAMIC TUTORIAL TIPS ---
         if opt_goal == "Max Floor Push":
             st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To make the AI run much faster, try opening the **Stat Constraints** below and locking **Intelligence** to `0` and **Luck** to your max stat cap!")
-        
+        elif opt_goal in["Fragment Farming", "Block Card Farming", "Max EXP Yield"]:
+            st.info("💡 **Strategy Tip:** If your target spawns on early floors (e.g., Dirt), you don't need Max Stamina or Armor Pen to reach it! Lock **Agility** and **Perception** to `0` to speed up the AI.\n\n⚠️ **Wait, what if my target is late-game?** If you are farming Tier 4 blocks (which spawn on Floor 81+), you STILL have to survive the gauntlet of tough ores to get there. Do not lock your survival stats to 0, or the AI will die before reaching your target!")
         st.divider()
 
         # --- NEW: STAT LOCKING ---
