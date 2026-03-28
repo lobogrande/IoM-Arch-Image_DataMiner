@@ -142,35 +142,47 @@ def update_card_level(widget_key, card_id):
     st.session_state.player.set_card_level(card_id, int(val))
 
 # --- IMAGE CENTERING & SCALING HELPERS ---
+
+@st.cache_data(show_spinner=False)
+def _get_base64_image(img_path, target_width):
+    """Cached internal helper for rendering static path-based images."""
+    if not os.path.exists(img_path): return None
+    img = Image.open(img_path).convert("RGBA")
+    w_percent = (target_width / float(img.width))
+    target_height = int((float(img.height) * float(w_percent)))
+    img_resized = img.resize((target_width, target_height), Image.NEAREST)
+    buffered = BytesIO()
+    img_resized.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
 def render_centered_image(img_source, target_width):
     """
     Physically resizes the image using PIL Nearest Neighbor for razor-sharp 
     retro pixels, completely bypassing Streamlit CSS rendering bugs.
     """
-    # 1. Load image into PIL
+    encoded = None
     if isinstance(img_source, str):
-        img = Image.open(img_source).convert("RGBA")
+        # Cache hits for standard file paths
+        encoded = _get_base64_image(img_source, target_width)
     else:
+        # Dynamic processing for composited RAM images (handled by composite_card cache)
         img = img_source
+        w_percent = (target_width / float(img.width))
+        target_height = int((float(img.height) * float(w_percent)))
+        img_resized = img.resize((target_width, target_height), Image.NEAREST)
+        buffered = BytesIO()
+        img_resized.save(buffered, format="PNG")
+        encoded = base64.b64encode(buffered.getvalue()).decode()
         
-    # 2. Scale it physically in memory
-    w_percent = (target_width / float(img.width))
-    target_height = int((float(img.height) * float(w_percent)))
-    img_resized = img.resize((target_width, target_height), Image.NEAREST)
-    
-    # 3. Convert to Base64
-    buffered = BytesIO()
-    img_resized.save(buffered, format="PNG")
-    encoded = base64.b64encode(buffered.getvalue()).decode()
-        
-    # 4. Inject into centered HTML
-    html = f"""
-    <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-        <img src="data:image/png;base64,{encoded}">
-    </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+    if encoded:
+        html = f"""
+        <div style="display: flex; justify-content: center; margin-bottom: 10px;">
+            <img src="data:image/png;base64,{encoded}">
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
 
+@st.cache_data(show_spinner=False)
 def composite_card(bg_path, cblock_path, x_offset, y_offset):
     """Dynamically overlays ANY core asset onto a dynamic background."""
     try:
@@ -210,6 +222,7 @@ def find_external_image(upg_id):
     exact = os.path.join(ROOT_DIR, "assets", "upgrades", "external", f"{upg_id}.png")
     return exact if os.path.exists(exact) else None
 
+@st.cache_data(show_spinner=False)
 def get_scaled_image_uri(filepath, target_width):
     """Scales an image using NEAREST and returns a Base64 URI for Streamlit DataFrames."""
     if os.path.exists(filepath):
@@ -682,7 +695,7 @@ if __name__ == "__main__":
                 p.total_infernal_cards = st.number_input(
                     "Total Infernal Cards (Global)", 
                     min_value=0, step=1, key="set_total_inf",
-                    help="Sum of all Tier 4 cards you own across all minigames (Mining, Fishing, etc). Used for the Infernal Multiplier."
+                    help="Sum of all Infernal cards you own across all categories (Archaeology, Fishing, etc). Used for the Infernal Multiplier."
                 )
             st.divider()
 
@@ -1367,6 +1380,10 @@ if __name__ == "__main__":
             else:
                 target_metric = "highest_floor"
 
+        # --- DYNAMIC TUTORIAL TIPS ---
+        if opt_goal == "Max Floor Push":
+            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To make the AI run much faster, try opening the **Stat Constraints** below and locking **Intelligence** `0` and Luck to your max stat cap!")
+        
         st.divider()
 
         # --- NEW: STAT LOCKING ---
@@ -1552,8 +1569,25 @@ if __name__ == "__main__":
         # --- ACTIVE SETTINGS TRANSPARENCY ---
         st.info(f"⚙️ **Active Settings:** {depth_choice} Search Depth | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
         
+        # --- PRE-FLIGHT CHECK ---
+        # Calculate total locked points to prevent mathematically impossible runs
+        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+        DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
+        
+        locked_sum = 0
+        for s in STATS_TO_OPTIMIZE:
+            if st.session_state.get(f"lock_check_{s}", False):
+                locked_sum += int(st.session_state.get(f"lock_val_{s}", 0))
+                
+        if locked_sum > DYNAMIC_BUDGET:
+            st.error(f"❌ **Invalid Stat Locks:** You have locked {locked_sum} points, but your total budget is only {DYNAMIC_BUDGET}. Please lower your locked values.")
+            btn_disabled = True
+        else:
+            btn_disabled = False
+
         st.caption("⚠️ **Note:** Do not change tabs or click other widgets while the engine is running, or it will abort the simulation!")
-        if st.button("🚀 Run Optimizer", width="stretch", type="primary"):
+        if st.button("🚀 Run Optimizer", use_container_width=True, type="primary", disabled=btn_disabled):
             st.write("---")
             
             # Clean up any stale ROI or Synthesis data from previous runs
@@ -1864,11 +1898,20 @@ if __name__ == "__main__":
                         delta = int(allocated_pts) - current_val
                         st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
             
-            if st.button("✨ Apply Build to UI", width="stretch"):
-                for k, v in best_final.items():
-                    st.session_state[f"stat_{k}"] = int(v)
-                    p.base_stats[k] = int(v)
-                st.rerun()
+            col_apply1, col_apply2 = st.columns(2)
+            with col_apply1:
+                if st.button("✨ Apply Build Globally", width="stretch"):
+                    for k, v in best_final.items():
+                        st.session_state[f"stat_{k}"] = int(v)
+                        p.base_stats[k] = int(v)
+                    st.toast("✅ Optimal stats applied globally!", icon="🎉")
+                    st.rerun()
+            with col_apply2:
+                if st.button("🧪 Send to Sandbox", width="stretch"):
+                    for k, v in best_final.items():
+                        st.session_state[f"sandbox_stat_{k}"] = int(v)
+                    st.toast("✅ Optimal stats piped to Tab 6 (Hit Calculator)!", icon="🧪")
+                    st.rerun()
 
             st.divider()
 
@@ -2180,6 +2223,7 @@ if __name__ == "__main__":
                         
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
+                        st.info("💡 **Strategy Tip:**[INSERT SYNTHESIS STRATEGY HERE - Explain when/why users should check multiple historical runs and synthesize them together]")
                         st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test against your *current* UI target.")
                         
                         col_synth1, col_synth2 = st.columns(2)
@@ -2367,6 +2411,7 @@ if __name__ == "__main__":
                                         
                                 # 3. Overwrite history (Unchecked runs are dropped into the void)
                                 st.session_state.run_history = hidden_runs + kept_visible_runs
+                                st.toast("🗑️ Unchecked runs permanently deleted!", icon="🧹")
                                 st.rerun()
                                 
                         # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
@@ -2449,133 +2494,147 @@ if __name__ == "__main__":
                                         delta = int(allocated_pts) - current_val
                                         st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
                             
-                            if st.button("✨ Apply Meta-Build to UI", width="stretch", key="apply_meta_build_btn"):
-                                for k, v in sr["stats"].items():
-                                    st.session_state[f"stat_{k}"] = int(v)
-                                    p.base_stats[k] = int(v)
-                                st.rerun()
+                            col_ma1, col_ma2 = st.columns(2)
+                            with col_ma1:
+                                if st.button("✨ Apply Meta-Build Globally", width="stretch", key="apply_meta_build_btn"):
+                                    for k, v in sr["stats"].items():
+                                        st.session_state[f"stat_{k}"] = int(v)
+                                        p.base_stats[k] = int(v)
+                                    st.toast("✅ Meta-Build stats applied globally!", icon="🧬")
+                                    st.rerun()
+                            with col_ma2:
+                                if st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn"):
+                                    for k, v in sr["stats"].items():
+                                        st.session_state[f"sandbox_stat_{k}"] = int(v)
+                                    st.toast("✅ Meta-Build piped to Tab 6 (Hit Calculator)!", icon="🧪")
+                                    st.rerun()
 
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
             # ==========================================
             st.divider()
             st.markdown("### 🔮 Next Steps: Marginal Value & ROI Analyzer")
-            st.write("Run isolated micro-simulations to discover exactly where your next investments should go based on your current optimal build.")
             
-            col_roi_1, col_roi_2 = st.columns(2)
-            
-            with col_roi_1:
-                st.markdown("##### 1. Next Stat Point")
-                st.write("Tests adding +1 to every stat to see which yields the highest increase.")
+            if run_target_metric == "highest_floor":
+                st.warning("⚠️ **ROI Analyzer is Disabled for Max Floor Push:**\nBecause floor progression relies on large, discrete math 'Breakpoints' (e.g., shaving a 3-hit kill down to a 2-hit kill), adding a single +1 to a stat rarely shows an immediate gain. Additionally, the ROI engine compares a 15-run average to your absolute Peak God Run, which mathematically causes false negatives.\n\nTo calculate exactly what stats you need to beat your current wall, send your build to **Tab 6 (Hit Calculator Sandbox)** and manually inspect the HP and Armor Breakpoints!")
+            else:
+                st.info("💡 **Strategy Tip:**[INSERT ROI STRATEGY HERE - Explain that this tool evaluates +1 investments to show which upgrades yield the biggest immediate returns for your current farming target]")
+                st.write("Run isolated micro-simulations to discover exactly where your next investments should go based on your current optimal build.")
                 
-                if st.button("🔍 Analyze Next Stat Point", width="stretch"):
-                    with st.spinner("Testing marginal stat values..."):
-                        stat_results = {}
-                        
-                        roi_state_dict = {
-                            'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                            'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                            'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                            'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                            'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
-                            'total_infernal_cards': p.total_infernal_cards
-                        }
-                        
-                        roi_pool_args =[]
-                        cap_increase = int(p.u('H45'))
-                        
-                        for s in best_final.keys():
-                            max_cap = cfg.BASE_STAT_CAPS.get(s, 0) + cap_increase
-                            if best_final[s] < max_cap:
-                                test_dist = best_final.copy()
-                                test_dist[s] += 1
-                                for _ in range(15):
-                                    roi_pool_args.append({
-                                        'stats': test_dist, 'fixed_stats': {}, 'state_dict': roi_state_dict, '_test_stat': s
-                                    })
-                                    
-                        if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
-                        else: CPU_CORES = max(1, mp.cpu_count() - 1)
-                        
-                        if roi_pool_args:
-                            with mp.Pool(CPU_CORES) as pool:
-                                res_list = pool.map(worker_simulate, roi_pool_args)
-                                
-                                for args, r in zip(roi_pool_args, res_list):
-                                    t_s = args['_test_stat']
-                                    if t_s not in stat_results: stat_results[t_s] = {'sum': 0, 'count': 0}
-                                    val = float(r.get(run_target_metric, 0.0))
-                                    stat_results[t_s]['sum'] += val
-                                    stat_results[t_s]['count'] += 1
-                                    
-                            st.session_state.roi_stat_results = {
-                                k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
-                                for k, v in stat_results.items()
+                col_roi_1, col_roi_2 = st.columns(2)
+                
+                with col_roi_1:
+                    st.markdown("##### 1. Next Stat Point")
+                    st.write("Tests adding +1 to every stat to see which yields the highest increase.")
+                    
+                    if st.button("🔍 Analyze Next Stat Point", width="stretch"):
+                        with st.spinner("Testing marginal stat values..."):
+                            stat_results = {}
+                            
+                            roi_state_dict = {
+                                'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                                'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                                'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                                'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                                'total_infernal_cards': p.total_infernal_cards
                             }
-                            st.rerun() # Cleanly forces the UI to draw the dataframe
-                        else:
-                            st.warning("All stats are already maxed out! No further points can be tested.")
                             
-                if "roi_stat_results" in st.session_state:
-                    sorted_stats = sorted(st.session_state.roi_stat_results.items(), key=lambda x: x[1], reverse=True)
-                    df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain"])
-                    st.dataframe(df_stat_roi, hide_index=True, width="stretch")
-
-            with col_roi_2:
-                st.markdown("##### 2. Upgrade ROI (Internal)")
-                st.write("Tests adding +1 level to every un-maxed internal upgrade.")
-                
-                if st.button("🔍 Analyze Upgrades", width="stretch"):
-                    with st.spinner("Testing marginal upgrade values (This may take a minute)..."):
-                        upg_results = {}
-                        roi_pool_args =[]
-                        
-                        for upg_id, upg_data in p.UPGRADE_DEF.items():
-                            current_lvl = p.upgrade_levels.get(upg_id, 0)
-                            max_lvl = cfg.INTERNAL_UPGRADE_CAPS.get(upg_id, 99)
+                            roi_pool_args =[]
+                            cap_increase = int(p.u('H45'))
                             
-                            asc2_locked_rows =[19, 27, 34, 46, 52, 55]
-                            if not p.asc2_unlocked and upg_id in asc2_locked_rows: continue
-                                
-                            if current_lvl < max_lvl:
-                                roi_state_dict = {
-                                    'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                                    'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
-                                    'total_infernal_cards': p.total_infernal_cards
+                            for s in best_final.keys():
+                                max_cap = cfg.BASE_STAT_CAPS.get(s, 0) + cap_increase
+                                if best_final[s] < max_cap:
+                                    test_dist = best_final.copy()
+                                    test_dist[s] += 1
+                                    for _ in range(15):
+                                        roi_pool_args.append({
+                                            'stats': test_dist, 'fixed_stats': {}, 'state_dict': roi_state_dict, '_test_stat': s
+                                        })
+                                        
+                            if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
+                            else: CPU_CORES = max(1, mp.cpu_count() - 1)
+                            
+                            if roi_pool_args:
+                                with mp.Pool(CPU_CORES) as pool:
+                                    res_list = pool.map(worker_simulate, roi_pool_args)
+                                    
+                                    for args, r in zip(roi_pool_args, res_list):
+                                        t_s = args['_test_stat']
+                                        if t_s not in stat_results: stat_results[t_s] = {'sum': 0, 'count': 0}
+                                        val = float(r.get(run_target_metric, 0.0))
+                                        stat_results[t_s]['sum'] += val
+                                        stat_results[t_s]['count'] += 1
+                                        
+                                st.session_state.roi_stat_results = {
+                                    k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
+                                    for k, v in stat_results.items()
                                 }
-                                roi_state_dict['upgrade_levels'][upg_id] = current_lvl + 1
+                                st.rerun() 
+                            else:
+                                st.warning("All stats are already maxed out! No further points can be tested.")
                                 
-                                for _ in range(15):
-                                    roi_pool_args.append({
-                                        'stats': best_final, 'fixed_stats': {}, 'state_dict': roi_state_dict, '_test_upg': upg_data[0]
-                                    })
-                                    
-                        if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
-                        else: CPU_CORES = max(1, mp.cpu_count() - 1)
-                        
-                        if roi_pool_args:
-                            with mp.Pool(CPU_CORES) as pool:
-                                res_list = pool.map(worker_simulate, roi_pool_args)
-                                
-                                for args, r in zip(roi_pool_args, res_list):
-                                    t_u = args['_test_upg']
-                                    if t_u not in upg_results: upg_results[t_u] = {'sum': 0, 'count': 0}
-                                    val = float(r.get(run_target_metric, 0.0))
-                                    upg_results[t_u]['sum'] += val
-                                    upg_results[t_u]['count'] += 1
-                                    
-                            st.session_state.roi_upg_results = {
-                                k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
-                                for k, v in upg_results.items()
-                            }
-                            st.rerun() # Cleanly forces the UI to draw the dataframe
-                        else:
-                            st.warning("All internal upgrades are maxed out! No further upgrades can be tested.")
+                    if "roi_stat_results" in st.session_state:
+                        sorted_stats = sorted(st.session_state.roi_stat_results.items(), key=lambda x: x[1], reverse=True)
+                        df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain"])
+                        st.dataframe(df_stat_roi, hide_index=True, width="stretch")
+
+                with col_roi_2:
+                    st.markdown("##### 2. Upgrade ROI (Internal)")
+                    st.write("Tests adding +1 level to every un-maxed internal upgrade.")
+                    
+                    if st.button("🔍 Analyze Upgrades", width="stretch"):
+                        with st.spinner("Testing marginal upgrade values (This may take a minute)..."):
+                            upg_results = {}
+                            roi_pool_args =[]
                             
-                if "roi_upg_results" in st.session_state:
-                    sorted_upgs = sorted(st.session_state.roi_upg_results.items(), key=lambda x: x[1], reverse=True)
-                    df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain"])
-                    st.dataframe(df_upg_roi, hide_index=True, width="stretch")
+                            for upg_id, upg_data in p.UPGRADE_DEF.items():
+                                current_lvl = p.upgrade_levels.get(upg_id, 0)
+                                max_lvl = cfg.INTERNAL_UPGRADE_CAPS.get(upg_id, 99)
+                                
+                                asc2_locked_rows =[19, 27, 34, 46, 52, 55]
+                                if not p.asc2_unlocked and upg_id in asc2_locked_rows: continue
+                                    
+                                if current_lvl < max_lvl:
+                                    roi_state_dict = {
+                                        'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                                        'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                                        'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                        'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                                        'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                                        'total_infernal_cards': p.total_infernal_cards
+                                    }
+                                    roi_state_dict['upgrade_levels'][upg_id] = current_lvl + 1
+                                    
+                                    for _ in range(15):
+                                        roi_pool_args.append({
+                                            'stats': best_final, 'fixed_stats': {}, 'state_dict': roi_state_dict, '_test_upg': upg_data[0]
+                                        })
+                                        
+                            if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
+                            else: CPU_CORES = max(1, mp.cpu_count() - 1)
+                            
+                            if roi_pool_args:
+                                with mp.Pool(CPU_CORES) as pool:
+                                    res_list = pool.map(worker_simulate, roi_pool_args)
+                                    
+                                    for args, r in zip(roi_pool_args, res_list):
+                                        t_u = args['_test_upg']
+                                        if t_u not in upg_results: upg_results[t_u] = {'sum': 0, 'count': 0}
+                                        val = float(r.get(run_target_metric, 0.0))
+                                        upg_results[t_u]['sum'] += val
+                                        upg_results[t_u]['count'] += 1
+                                        
+                                st.session_state.roi_upg_results = {
+                                    k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
+                                    for k, v in upg_results.items()
+                                }
+                                st.rerun() 
+                            else:
+                                st.warning("All internal upgrades are maxed out! No further upgrades can be tested.")
+                                
+                    if "roi_upg_results" in st.session_state:
+                        sorted_upgs = sorted(st.session_state.roi_upg_results.items(), key=lambda x: x[1], reverse=True)
+                        df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain"])
+                        st.dataframe(df_upg_roi, hide_index=True, width="stretch")
