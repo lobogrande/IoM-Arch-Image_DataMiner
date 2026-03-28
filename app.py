@@ -2435,6 +2435,12 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         
                                         abs_max_chance = best_data['floors'].count(abs_max) / 500.0
                                         
+                                        # Calculate exact stamina cost using the isolated Meta-Build stats
+                                        import copy
+                                        temp_p = copy.deepcopy(p)
+                                        for k, v in final_meta_dist.items(): temp_p.base_stats[k] = v
+                                        arch_secs_cost = math.ceil(1.0 / abs_max_chance) * temp_p.max_sta if abs_max_chance > 0 else 0
+                                        
                                         # Save locally with telemetry so we can chart it below the button!
                                         st.session_state.synthesis_result = {
                                             "stats": final_meta_dist,
@@ -2442,7 +2448,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                             "history_scores": same_target_runs,
                                             "metric_name": run_target_metric,
                                             "abs_max": abs_max,
-                                            "abs_max_chance": abs_max_chance
+                                            "abs_max_chance": abs_max_chance,
+                                            "arch_secs_cost": arch_secs_cost
                                         }
                                         
                                         # --- APPEND TO SYNTHESIS HISTORY ---
@@ -2456,6 +2463,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         }
                                         if run_target_metric == "highest_floor":
                                             synth_entry["God-Run Peak"] = int(abs_max)
+                                            synth_entry["God-Run Chance"] = abs_max_chance
+                                            synth_entry["Arch Secs Cost"] = arch_secs_cost
                                             
                                         synth_entry.update(final_meta_dist)
                                         st.session_state.synth_history.append(synth_entry)
@@ -2523,8 +2532,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 chance = sr.get('abs_max_chance', 0)
                                 if chance > 0:
                                     runs_needed = math.ceil(1.0 / chance)
-                                    # Base estimate: 1 run = Max Stamina spent
-                                    arch_secs = runs_needed * p.max_sta
+                                    arch_secs = sr.get('arch_secs_cost', runs_needed * p.max_sta)
                                     st.info(f"🎲 **God-Run Reality Check:** The AI hit Floor {sr.get('abs_max')} in **{chance*100:.1f}%** of its simulations. Mathematically, you must execute an average of **{runs_needed} full runs** to see this happen once. At your current Max Stamina, expect to burn roughly **~{arch_secs/1000.0:.1f}k Arch Seconds** before you break through! *(If you spent less than this and didn't hit it, you just haven't banked enough arch seconds yet!)*")
                             else:
                                 m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
@@ -2601,9 +2609,15 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 title += f" | Peak: `{synth['God-Run Peak']}`"
                             st.markdown(title)
                             
-                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "Sources Data", "Sources", "Keep"]}
+                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "God-Run Chance", "Arch Secs Cost", "Sources Data", "Sources", "Keep"]}
                             stat_string = " &nbsp;&nbsp;|&nbsp;&nbsp; ".join([f"**{k}:** {v}" for k, v in stats_only.items()])
                             st.info(stat_string)
+                            
+                            if "God-Run Chance" in synth and synth["God-Run Chance"] > 0:
+                                chance = synth["God-Run Chance"]
+                                runs_needed = math.ceil(1.0 / chance)
+                                arch_secs = synth.get("Arch Secs Cost", 0)
+                                st.caption(f"🎲 **Reality Check:** Floor {synth.get('God-Run Peak')} hit in **{chance*100:.1f}%** of sims. Requires avg **{runs_needed} runs** (~**{arch_secs/1000.0:.1f}k Arch Secs**) to replicate.")
                             
                             # --- Hidden Source Runs ---
                             with st.expander("🔍 View Source Runs (The original builds that were averaged)"):
