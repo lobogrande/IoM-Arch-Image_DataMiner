@@ -2364,21 +2364,17 @@ if __name__ == "__main__":
                                         for r in valid_runs:
                                             b_id = tuple({s: r[s] for s in stat_keys}.items())
                                             if run_target_metric == "highest_floor":
-                                                # PEAK VARIANCE: You cannot erase a God Run. 
-                                                # Chart the absolute highest floor this build has EVER achieved (History vs Tournament).
-                                                historic_max = r.get("Max Floor", r.get("Metric Score", 0))
-                                                tournament_max = max(build_res[b_id]['floors'])
-                                                same_target_runs.append(max(historic_max, tournament_max))
+                                                # CEILING SCORE: Absolute peaks are skewed by 1-in-a-million RNG. 
+                                                # We chart the Top 5 Peak Average to perfectly match the Engine's sorting logic.
+                                                ceiling = get_ceiling_score(build_res[b_id]['floors'], 5)
+                                                same_target_runs.append(ceiling)
                                             else:
                                                 # CONSISTENCY: Averages must be strictly regressed to the mean via 500 runs.
                                                 same_target_runs.append(build_res[b_id]['sum_t'] / 500.0)
                                                 
                                         if run_target_metric == "highest_floor":
-                                            meta_score = abs_max
+                                            meta_score = get_ceiling_score(best_data['floors'], 5)
                                             chart_label = "🏆 Verified God-Build"
-                                        else:
-                                            meta_score = best_data['sum_t'] / 500.0
-                                            chart_label = "🧬 Polished Meta-Build"
                                             
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
@@ -2393,7 +2389,8 @@ if __name__ == "__main__":
                                             "stats": final_meta_dist,
                                             "meta_score": meta_score,
                                             "history_scores": same_target_runs,
-                                            "metric_name": run_target_metric
+                                            "metric_name": run_target_metric,
+                                            "abs_max": abs_max
                                         }
                                         
                                         st.rerun()
@@ -2451,7 +2448,9 @@ if __name__ == "__main__":
                             m_score = sr.get("meta_score", 0)
                             
                             if m_name == "highest_floor":
-                                st.metric("🏆 Projected Peak (Absolute Max Floor)", f"Floor {m_score:,.0f}")
+                                c_m1, c_m2 = st.columns(2)
+                                c_m1.metric("🏔️ Top 5 Peak Average (Ceiling)", f"Floor {m_score:,.1f}")
+                                c_m2.metric("🏆 Absolute God-Run (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
                             else:
                                 m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
                                 r_1k = (m_score / 60.0) * 1000.0
