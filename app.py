@@ -2526,7 +2526,16 @@ You might notice that running Synthesis multiple times gives slightly different 
             if run_target_metric == "highest_floor":
                 st.warning("⚠️ **ROI Analyzer is Disabled for Max Floor Push:**\nBecause floor progression relies on large, discrete math 'Breakpoints' (e.g., shaving a 3-hit kill down to a 2-hit kill), adding a single +1 to a stat rarely shows an immediate gain. Additionally, the ROI engine compares a 15-run average to your absolute Peak God Run, which mathematically causes false negatives.\n\nTo calculate exactly what stats you need to beat your current wall, send your build to **Tab 6 (Hit Calculator Sandbox)** and manually inspect the HP and Armor Breakpoints!")
             else:
-                st.info("💡 **Strategy Tip:**[INSERT ROI STRATEGY HERE - Explain that this tool evaluates +1 investments to show which upgrades yield the biggest immediate returns for your current farming target]")
+                st.info("""
+💡 **Strategy Tip: Finding your next best upgrade (ROI)**
+
+You just used the Optimizer to find the mathematically perfect build for your *current* stats. But what should you level up *next*?
+
+* **The Micro-Test:** The AI will temporarily add **+1 Level** to every single stat or un-maxed internal upgrade and run a quick batch of simulations.
+* **The Ranking:** It then sorts the results to show you exactly which upgrade gives you the biggest immediate boost to your Farming Yields (EXP, Fragments, or Cards per minute).
+
+**The Takeaway:** Use these tables as your personal shopping list! The upgrade at the very top of the list gives you the most "bang for your buck" right now.
+                """)
                 st.write("Run isolated micro-simulations to discover exactly where your next investments should go based on your current optimal build.")
                 
                 col_roi_1, col_roi_2 = st.columns(2)
