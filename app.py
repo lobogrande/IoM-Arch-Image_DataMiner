@@ -2532,9 +2532,9 @@ You might notice that running Synthesis multiple times gives slightly different 
 You just used the Optimizer to find the mathematically perfect build for your *current* stats. But what should you level up *next*?
 
 * **The Micro-Test:** The AI will temporarily add **+1 Level** to every single stat or un-maxed internal upgrade and run a quick batch of simulations.
-* **The Ranking:** It then sorts the results to show you exactly which upgrade gives you the biggest immediate boost to your Farming Yields (EXP, Fragments, or Cards per minute).
+* **The Ranking:** It then sorts the results to show you exactly which upgrade gives you the biggest immediate raw boost to your Farming Yields (EXP, Fragments, or Cards per minute).
 
-**The Takeaway:** Use these tables as your personal shopping list! The upgrade at the very top of the list gives you the most "bang for your buck" right now.
+⚠️ **Important Note on Costs:** This engine does *not* currently track the Fragment cost of upgrades. It only measures the **raw output gain**. When using this "shopping list," you must weigh the AI's top recommendations against your actual in-game fragment accumulation rates!
                 """)
                 st.write("Run isolated micro-simulations to discover exactly where your next investments should go based on your current optimal build.")
                 
