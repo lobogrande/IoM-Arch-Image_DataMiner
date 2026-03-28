@@ -142,35 +142,47 @@ def update_card_level(widget_key, card_id):
     st.session_state.player.set_card_level(card_id, int(val))
 
 # --- IMAGE CENTERING & SCALING HELPERS ---
+
+@st.cache_data(show_spinner=False)
+def _get_base64_image(img_path, target_width):
+    """Cached internal helper for rendering static path-based images."""
+    if not os.path.exists(img_path): return None
+    img = Image.open(img_path).convert("RGBA")
+    w_percent = (target_width / float(img.width))
+    target_height = int((float(img.height) * float(w_percent)))
+    img_resized = img.resize((target_width, target_height), Image.NEAREST)
+    buffered = BytesIO()
+    img_resized.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
 def render_centered_image(img_source, target_width):
     """
     Physically resizes the image using PIL Nearest Neighbor for razor-sharp 
     retro pixels, completely bypassing Streamlit CSS rendering bugs.
     """
-    # 1. Load image into PIL
+    encoded = None
     if isinstance(img_source, str):
-        img = Image.open(img_source).convert("RGBA")
+        # Cache hits for standard file paths
+        encoded = _get_base64_image(img_source, target_width)
     else:
+        # Dynamic processing for composited RAM images (handled by composite_card cache)
         img = img_source
+        w_percent = (target_width / float(img.width))
+        target_height = int((float(img.height) * float(w_percent)))
+        img_resized = img.resize((target_width, target_height), Image.NEAREST)
+        buffered = BytesIO()
+        img_resized.save(buffered, format="PNG")
+        encoded = base64.b64encode(buffered.getvalue()).decode()
         
-    # 2. Scale it physically in memory
-    w_percent = (target_width / float(img.width))
-    target_height = int((float(img.height) * float(w_percent)))
-    img_resized = img.resize((target_width, target_height), Image.NEAREST)
-    
-    # 3. Convert to Base64
-    buffered = BytesIO()
-    img_resized.save(buffered, format="PNG")
-    encoded = base64.b64encode(buffered.getvalue()).decode()
-        
-    # 4. Inject into centered HTML
-    html = f"""
-    <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-        <img src="data:image/png;base64,{encoded}">
-    </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+    if encoded:
+        html = f"""
+        <div style="display: flex; justify-content: center; margin-bottom: 10px;">
+            <img src="data:image/png;base64,{encoded}">
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
 
+@st.cache_data(show_spinner=False)
 def composite_card(bg_path, cblock_path, x_offset, y_offset):
     """Dynamically overlays ANY core asset onto a dynamic background."""
     try:
@@ -210,6 +222,7 @@ def find_external_image(upg_id):
     exact = os.path.join(ROOT_DIR, "assets", "upgrades", "external", f"{upg_id}.png")
     return exact if os.path.exists(exact) else None
 
+@st.cache_data(show_spinner=False)
 def get_scaled_image_uri(filepath, target_width):
     """Scales an image using NEAREST and returns a Base64 URI for Streamlit DataFrames."""
     if os.path.exists(filepath):
