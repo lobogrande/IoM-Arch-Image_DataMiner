@@ -1635,6 +1635,9 @@ if __name__ == "__main__":
                     prof_data = live_eta_profiles[prof_key]
                     step_size = prof_data['step']
                     st.info(f"⏱️ **Running {depth_choice} Search:** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
+                else:
+                    step_size = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
+                    st.info(f"⏱️ **Running {depth_choice} Search:** Building optimization grid...")
 
                 with st.spinner(f"Engine Running..."):
                     start_time = time.time()
@@ -1642,6 +1645,8 @@ if __name__ == "__main__":
                     if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                     DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
                     FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}
+                    cap_increase = int(p.u('H45'))
+                    EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
                     
                     # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
                     if sys.platform == "linux":
@@ -1662,35 +1667,50 @@ if __name__ == "__main__":
                     import traceback
                     try:
                         with mp.Pool(CPU_CORES) as pool:
-                            # Apply Stat Locks to Phase 1 bounds
+                            # --- PHASE 1 (Coarse) ---
                             bounds_p1 = {}
+                            locked_sum_p1 = 0
                             for s in STATS_TO_OPTIMIZE:
                                 if st.session_state.get(f"lock_check_{s}", False):
                                     val = int(st.session_state.get(f"lock_val_{s}", 0))
                                     bounds_p1[s] = (val, val)
+                                    locked_sum_p1 += val
                                 else:
                                     bounds_p1[s] = (0, EFFECTIVE_CAPS[s])
                                     
+                            if locked_sum_p1 > DYNAMIC_BUDGET:
+                                raise ValueError(f"You locked {locked_sum_p1} points, but your global budget is only {DYNAMIC_BUDGET}.")
+                                
+                            # Modulo Aligner: Ensures the grid perfectly divides the remaining budget
+                            rem_p1 = (DYNAMIC_BUDGET - locked_sum_p1) % step_size
+                            p1_budget = DYNAMIC_BUDGET - rem_p1
+                                    
                             best_p1, summary_p1 = run_optimization_phase(
                                 "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
-                                DYNAMIC_BUDGET, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
+                                p1_budget, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
                                 progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                 base_state_dict=base_state_dict
                             )
                             
+                            # --- PHASE 2 (Fine) ---
                             best_p2, summary_p2 = None, None
                             if best_p1 and (time.time() - start_time) < time_limit_secs:
                                 bounds_p2 = {}
                                 step_2 = max(2, step_size // 3)
+                                locked_sum_p2 = 0
                                 for s in STATS_TO_OPTIMIZE:
                                     if st.session_state.get(f"lock_check_{s}", False):
                                         bounds_p2[s] = bounds_p1[s]
+                                        locked_sum_p2 += bounds_p1[s][0]
                                     else:
                                         bounds_p2[s] = (max(0, best_p1[s] - step_size), min(EFFECTIVE_CAPS[s], best_p1[s] + step_size))
                                         
+                                rem_p2 = (DYNAMIC_BUDGET - locked_sum_p2) % step_2
+                                p2_budget = DYNAMIC_BUDGET - rem_p2
+                                        
                                 best_p2, summary_p2 = run_optimization_phase(
                                     "Phase 2 (Fine)", target_metric, STATS_TO_OPTIMIZE, 
-                                    DYNAMIC_BUDGET, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
+                                    p2_budget, step_2, ITER_P2, pool, FIXED_STATS, bounds_p2,
                                     progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                     base_state_dict=base_state_dict
                                 )
