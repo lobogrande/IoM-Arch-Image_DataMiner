@@ -1382,7 +1382,7 @@ if __name__ == "__main__":
 
         # --- DYNAMIC TUTORIAL TIPS ---
         if opt_goal == "Max Floor Push":
-            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To make the AI run much faster, try opening the **Stat Constraints** below and locking **Intelligence** `0` and Luck to your max stat cap!")
+            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To make the AI run much faster, try opening the **Stat Constraints** below and locking **Intelligence** to `0` and **Luck** to your max stat cap!")
         
         st.divider()
 
