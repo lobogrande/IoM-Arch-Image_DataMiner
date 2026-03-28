@@ -2402,6 +2402,26 @@ You might notice that running Synthesis multiple times gives slightly different 
                                             "abs_max": abs_max
                                         }
                                         
+                                        # --- APPEND TO SYNTHESIS HISTORY ---
+                                        if "synth_history" not in st.session_state:
+                                            st.session_state.synth_history =[]
+                                            
+                                        # Create a decoupled string snapshot of the parent runs to prevent deletion crashes
+                                        scores_list =[str(round(r.get("Metric Score", r.get("Max Floor", 0)), 1)) for r in valid_runs]
+                                        sources_str = f"{len(valid_runs)} runs (Scores: {', '.join(scores_list)})"
+                                        
+                                        synth_entry = {
+                                            "Keep": True,
+                                            "Target": run_target_metric,
+                                            "Ceiling Score": round(meta_score, 2),
+                                            "Sources": sources_str
+                                        }
+                                        if run_target_metric == "highest_floor":
+                                            synth_entry["God-Run Peak"] = int(abs_max)
+                                            
+                                        synth_entry.update(final_meta_dist)
+                                        st.session_state.synth_history.append(synth_entry)
+                                        
                                         st.rerun()
 
                         with col_synth2:
@@ -2516,6 +2536,52 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         st.session_state[f"sandbox_stat_{k}"] = int(v)
                                     st.toast("✅ Meta-Build piped to Tab 6 (Hit Calculator)!", icon="🧪")
                                     st.rerun()
+
+            # ==========================================
+            # META-BUILD HISTORY TABLE
+            # ==========================================
+            if "synth_history" in st.session_state and st.session_state.synth_history:
+                st.divider()
+                st.markdown("### 📚 Meta-Build History Log")
+                st.write("A permanent record of your synthesized God-Builds. Use the 'Keep' checkbox to select which ones to delete.")
+                
+                # Independent filter to prevent scope collisions with the primary history table
+                synth_targets = list(set(s.get("Target") for s in st.session_state.synth_history))
+                synth_view_targets = st.multiselect(
+                    "🔍 Filter Meta-Builds by target:", 
+                    options=synth_targets, 
+                    default=[t for t in synth_targets if t == run_target_metric] or synth_targets,
+                    key="synth_filter_ms"
+                )
+                
+                visible_synth =[s for s in st.session_state.synth_history if s.get("Target") in synth_view_targets]
+                
+                if visible_synth:
+                    df_synth = pd.DataFrame(visible_synth)
+                    
+                    # Force clean column ordering
+                    s_cols =['Keep', 'Target', 'Ceiling Score', 'God-Run Peak', 'Sources']
+                    s_cols +=[c for c in df_synth.columns if c not in s_cols]
+                    df_synth = df_synth[[c for c in s_cols if c in df_synth.columns]]
+                    
+                    edited_synth_df = st.data_editor(
+                        df_synth, 
+                        hide_index=True, 
+                        width="stretch",
+                        column_config={"Keep": st.column_config.CheckboxColumn("Keep")},
+                        disabled=[c for c in df_synth.columns if c != "Keep"],
+                        key="synth_history_editor"
+                    )
+                    
+                    if st.button("🗑️ Delete Unchecked Meta-Builds", width="stretch"):
+                        hidden_s =[s for s in st.session_state.synth_history if s.get("Target") not in synth_view_targets]
+                        kept_s =[]
+                        for i, row in edited_synth_df.iterrows():
+                            if row["Keep"]:
+                                kept_s.append(visible_synth[i])
+                        st.session_state.synth_history = hidden_s + kept_s
+                        st.toast("🗑️ Unchecked Meta-Builds deleted!", icon="🧹")
+                        st.rerun()
 
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
