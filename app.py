@@ -2223,7 +2223,16 @@ if __name__ == "__main__":
                         
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
-                        st.info("💡 **Strategy Tip:**[INSERT SYNTHESIS STRATEGY HERE - Explain when/why users should check multiple historical runs and synthesize them together]")
+                        st.info("""
+💡 **Strategy Tip: The "Stat Plateau" (Why do my stats change on re-runs?)**
+
+You might notice that running Synthesis multiple times gives slightly different stat numbers. Don't panic—the AI isn't guessing!
+
+* **The Math:** Enemies only take whole hits. If 50 Strength kills a boss in exactly 3 hits, having 54 Strength *also* kills it in 3 hits. This creates a "Stat Plateau" where several different builds are functionally identical and mathematically tied for 1st place.
+* **The Tie-Breaker (RNG):** To break the tie, the AI forces these top builds to race 500 times. Whichever tied build happens to get slightly luckier with Critical Hits during that specific race wins the gold medal!
+
+**The Takeaway:** If your stats bounce around slightly between runs, congratulations—you've reached the absolute peak! Send your results to the **Hit Calculator Sandbox** to prove to yourself that both builds kill your target blocks in the exact same number of hits.
+                        """)
                         st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test against your *current* UI target.")
                         
                         col_synth1, col_synth2 = st.columns(2)
