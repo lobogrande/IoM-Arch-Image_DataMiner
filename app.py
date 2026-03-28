@@ -1367,6 +1367,10 @@ if __name__ == "__main__":
             else:
                 target_metric = "highest_floor"
 
+        # --- DYNAMIC TUTORIAL TIPS ---
+        if opt_goal == "Max Floor Push":
+            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To make the AI run much faster, try opening the **Stat Constraints** below and locking **Intelligence** `0` and Luck to your max stat cap!")
+        
         st.divider()
 
         # --- NEW: STAT LOCKING ---
@@ -1552,8 +1556,25 @@ if __name__ == "__main__":
         # --- ACTIVE SETTINGS TRANSPARENCY ---
         st.info(f"⚙️ **Active Settings:** {depth_choice} Search Depth | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
         
+        # --- PRE-FLIGHT CHECK ---
+        # Calculate total locked points to prevent mathematically impossible runs
+        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
+        DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
+        
+        locked_sum = 0
+        for s in STATS_TO_OPTIMIZE:
+            if st.session_state.get(f"lock_check_{s}", False):
+                locked_sum += int(st.session_state.get(f"lock_val_{s}", 0))
+                
+        if locked_sum > DYNAMIC_BUDGET:
+            st.error(f"❌ **Invalid Stat Locks:** You have locked {locked_sum} points, but your total budget is only {DYNAMIC_BUDGET}. Please lower your locked values.")
+            btn_disabled = True
+        else:
+            btn_disabled = False
+
         st.caption("⚠️ **Note:** Do not change tabs or click other widgets while the engine is running, or it will abort the simulation!")
-        if st.button("🚀 Run Optimizer", width="stretch", type="primary"):
+        if st.button("🚀 Run Optimizer", use_container_width=True, type="primary", disabled=btn_disabled):
             st.write("---")
             
             # Clean up any stale ROI or Synthesis data from previous runs
