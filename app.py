@@ -2288,7 +2288,7 @@ You might notice that running Synthesis multiple times gives slightly different 
 
 **The Takeaway:** If your stats bounce around slightly between runs, congratulations—you've reached the absolute peak! Send your results to the **Hit Calculator Sandbox** to prove to yourself that both builds kill your target blocks in the exact same number of hits.
                         """)
-                        st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test against your *current* UI target.")
+                        st.write("Smooth out Monte Carlo RNG noise. This algorithm calculates the statistical center of your checked builds, generates adjacent stat combinations, and runs an exhaustive 500-iteration simulation across all of them to find the true mathematical peak.")
                         
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
@@ -2301,7 +2301,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 elif len(valid_runs) > 10:
                                     st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
-                                    with st.spinner("Calculating seed, mapping neighborhood, and running deep Gradient Polish..."):
+                                    with st.spinner("Calculating center, generating permutations, and running deep verification..."):
                                         stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor"]]
                                         
                                         synth_state_dict = {
@@ -2552,10 +2552,10 @@ You might notice that running Synthesis multiple times gives slightly different 
                             
                             # --- 📊 PERFORMANCE PROOF CHART ---
                             st.markdown("#### 📊 Synthesis Performance Proof")
-                            st.write("How the Gradient-Polished Meta-Build compares to the individual historical runs you selected.")
-                            st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated to 500 simulations to strip away their initial 'lucky' RNG variance).*")
+                            st.write("How the optimized Meta-Build compares to the individual historical runs you selected.")
+                            st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
                             
-                            chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] + ["🧬 Meta-Build"]
+                            chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
                             chart_scores = sr["history_scores"] + [sr["meta_score"]]
                             chart_colors = ["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
                             
@@ -2701,7 +2701,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                            f"**Infernal:** {calc_c(200000)}", unsafe_allow_html=True)
                             
                             # --- Hidden Source Runs ---
-                            with st.expander("🔍 View Source Runs (The original builds that were averaged)"):
+                            with st.expander("🔍 View Source Runs (The original builds used to generate this Meta-Build)"):
                                 if "Sources Data" in synth:
                                     source_df = pd.DataFrame(synth['Sources Data'])
                                     cols_to_drop = ['Include', 'Target'] 
