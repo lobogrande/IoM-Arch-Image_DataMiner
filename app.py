@@ -2657,12 +2657,17 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 
                             if "block_" in synth['Target'] and synth['Ceiling Score'] > 0:
                                 val = synth['Ceiling Score']
-                                kills_50 = 0.693 * 1500
-                                kills_90 = 2.302 * 1500
-                                arch_1k_50 = kills_50 / (val / 60.0) / 1000.0
-                                arch_1k_90 = kills_90 / (val / 60.0) / 1000.0
                                 b_name = synth['Target'].replace("block_", "").replace("_per_min", "").capitalize()
-                                st.caption(f"🎴 **Card Reality Check ({b_name}):** Base Card takes **~{arch_1k_50:.1f}k** Arch Secs (50% lucky) up to **~{arch_1k_90:.1f}k** Arch Secs (90% safe).")
+                                
+                                def calc_c(odds):
+                                    k50 = (0.693 * odds) / (val / 60.0) / 1000.0
+                                    k90 = (2.302 * odds) / (val / 60.0) / 1000.0
+                                    return f"~{k50:.1f}k / ~{k90:.1f}k"
+                                    
+                                st.caption(f"🎴 **Card Reality Check ({b_name})**[50% Lucky / 90% Safe Arch Secs] ➔ "
+                                           f"**Base:** {calc_c(1500)} &nbsp;|&nbsp; "
+                                           f"**Poly:** {calc_c(7500)} &nbsp;|&nbsp; "
+                                           f"**Infernal:** {calc_c(200000)}", unsafe_allow_html=True)
                             
                             # --- Hidden Source Runs ---
                             with st.expander("🔍 View Source Runs (The original builds that were averaged)"):
