@@ -1846,6 +1846,23 @@ if __name__ == "__main__":
         # UI RESULTS TELEMETRY (PERSISTENT RENDER)
         # ==========================================
         # Because this is OUTSIDE the st.button() block, it will survive tab changes!
+        
+        def cb_apply_stats(target, stats_dict, msg, icon):
+            """Streamlit callback to securely inject state before UI rendering."""
+            for k, v in stats_dict.items():
+                if target == "global":
+                    st.session_state[f"stat_{k}"] = int(v)
+                    st.session_state.player.base_stats[k] = int(v)
+                elif target == "sandbox":
+                    st.session_state[f"sandbox_stat_{k}"] = int(v)
+            st.toast(msg, icon=icon)
+
+        def cb_delete_hist(index):
+            """Streamlit callback to securely delete history rows."""
+            if "synth_history" in st.session_state and index < len(st.session_state.synth_history):
+                st.session_state.synth_history.pop(index)
+                st.toast("🗑️ Meta-Build permanently deleted!", icon="🧹")
+
         if "opt_results" in st.session_state:
             res = st.session_state.opt_results
             
@@ -1900,18 +1917,9 @@ if __name__ == "__main__":
             
             col_apply1, col_apply2 = st.columns(2)
             with col_apply1:
-                if st.button("✨ Apply Build Globally", width="stretch"):
-                    for k, v in best_final.items():
-                        st.session_state[f"stat_{k}"] = int(v)
-                        p.base_stats[k] = int(v)
-                    st.toast("✅ Optimal stats applied globally!", icon="🎉")
-                    st.rerun()
+                st.button("✨ Apply Build Globally", width="stretch", on_click=cb_apply_stats, args=("global", best_final, "✅ Optimal stats applied globally!", "🎉"))
             with col_apply2:
-                if st.button("🧪 Send to Sandbox", width="stretch"):
-                    for k, v in best_final.items():
-                        st.session_state[f"sandbox_stat_{k}"] = int(v)
-                    st.toast("✅ Optimal stats piped to Tab 6 (Hit Calculator)!", icon="🧪")
-                    st.rerun()
+                st.button("🧪 Send to Sandbox", width="stretch", on_click=cb_apply_stats, args=("sandbox", best_final, "✅ Optimal stats piped to Tab 6 (Hit Calculator)!", "🧪"))
 
             st.divider()
 
@@ -2547,8 +2555,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                             st.markdown("#### 🧬 Synthesized Stat Allocation")
                             
                             synth_stat_cols = st.columns(len(sr["stats"]))
-                            for idx, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
-                                with synth_stat_cols[idx]:
+                            for idx_s, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
+                                with synth_stat_cols[idx_s]:
                                     with st.container(border=True):
                                         img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
                                         if os.path.exists(img_path):
@@ -2562,18 +2570,9 @@ You might notice that running Synthesis multiple times gives slightly different 
                             
                             col_ma1, col_ma2 = st.columns(2)
                             with col_ma1:
-                                if st.button("✨ Apply Meta-Build Globally", width="stretch", key="apply_meta_build_btn"):
-                                    for k, v in sr["stats"].items():
-                                        st.session_state[f"stat_{k}"] = int(v)
-                                        p.base_stats[k] = int(v)
-                                    st.toast("✅ Meta-Build stats applied globally!", icon="🧬")
-                                    st.rerun()
+                                st.button("✨ Apply Meta-Build Globally", width="stretch", key="apply_meta_build_btn", on_click=cb_apply_stats, args=("global", sr["stats"], "✅ Meta-Build stats applied globally!", "🧬"))
                             with col_ma2:
-                                if st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn"):
-                                    for k, v in sr["stats"].items():
-                                        st.session_state[f"sandbox_stat_{k}"] = int(v)
-                                    st.toast("✅ Meta-Build piped to Tab 6 (Hit Calculator)!", icon="🧪")
-                                    st.rerun()
+                                st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn", on_click=cb_apply_stats, args=("sandbox", sr["stats"], "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
 
             # ==========================================
             # META-BUILD HISTORY TABLE (NESTED EXPANDERS)
@@ -2619,23 +2618,11 @@ You might notice that running Synthesis multiple times gives slightly different 
                             st.divider()
                             col_h1, col_h2, col_h3 = st.columns(3)
                             
-                            if col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch"):
-                                for k, v in stats_only.items():
-                                    st.session_state[f"stat_{k}"] = int(v)
-                                    p.base_stats[k] = int(v)
-                                st.toast("✅ Meta-Build stats applied globally!", icon="🧬")
-                                st.rerun()
+                            col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("global", stats_only, "✅ Meta-Build stats applied globally!", "🧬"))
                                 
-                            if col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch"):
-                                for k, v in stats_only.items():
-                                    st.session_state[f"sandbox_stat_{k}"] = int(v)
-                                st.toast("✅ Meta-Build piped to Tab 6 (Hit Calculator)!", icon="🧪")
-                                st.rerun()
+                            col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("sandbox", stats_only, "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
                                 
-                            if col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch"):
-                                st.session_state.synth_history.pop(idx)
-                                st.toast("🗑️ Meta-Build permanently deleted!", icon="🧹")
-                                st.rerun()
+                            col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch", on_click=cb_delete_hist, args=(idx,))
 
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
