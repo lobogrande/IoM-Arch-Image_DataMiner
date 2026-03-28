@@ -2242,10 +2242,26 @@ if __name__ == "__main__":
                         st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button below!)*")
                         
                         df_history = pd.DataFrame(visible_history)
-                        cols =['Include', 'Target', 'Metric Score', 'Avg Floor', 'Max Floor']
+
+                        # --- Inject Card Reality Check Columns for Farming ---
+                        is_block_farming = any("block_" in t for t in view_targets)
+                        if is_block_farming:
+                            def get_50_str(score, odds):
+                                if score <= 0: return "N/A"
+                                return f"~{(0.693 * odds) / (score / 60.0) / 1000.0:.1f}k"
+                            
+                            df_history["Base Card (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 1500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
+                        
+                        cols =[ 'Include', 'Target', 'Metric Score' ]
+                        if is_block_farming:
+                            cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
+                        cols += [ 'Avg Floor', 'Max Floor' ]
+                        
                         # Safe fallback in case old history rows don't have Max Floor yet
                         if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                        cols +=[c for c in df_history.columns if c not in cols]
+                        cols +=[ c for c in df_history.columns if c not in cols ]
                         df_history = df_history[cols]
                         
                         edited_df = st.data_editor(
@@ -2592,6 +2608,19 @@ You might notice that running Synthesis multiple times gives slightly different 
                                             st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({s_mins:,.1f} mins real-time)")
                                         else:
                                             st.warning("Target EXP must be greater than Current EXP.")
+                                elif "block_" in m_name and m_score > 0:
+                                    st.markdown("##### 🎴 Card Drop Reality Check (Arch Secs)")
+                                    b_name = m_name.replace("block_", "").replace("_per_min", "").capitalize()
+                                    
+                                    def calc_c_main(odds):
+                                        k50 = (0.693 * odds) / (m_score / 60.0) / 1000.0
+                                        k90 = (2.302 * odds) / (m_score / 60.0) / 1000.0
+                                        return f"~{k50:.1f}k / ~{k90:.1f}k"
+                                        
+                                    st.info(f"**{b_name} Card Projections [50% Lucky / 90% Safe]**\n\n"
+                                            f"**Base Card:** {calc_c_main(1500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                                            f"**Poly Frag:** {calc_c_main(7500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                                            f"**Infernal Frag:** {calc_c_main(200000)}")
                                             
                             st.divider()
                             
