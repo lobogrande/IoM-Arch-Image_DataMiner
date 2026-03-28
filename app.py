@@ -1548,7 +1548,8 @@ if __name__ == "__main__":
                 st.write("#### 3. Execution Time Limit")
                 time_limit_mins = st.slider(
                     "Safely abort and return best build if time exceeds:", 
-                    min_value=1, max_value=30, value=5, step=1, format="%d mins"
+                    min_value=1, max_value=30, value=5, step=1, format="%d mins",
+                    help="This is a 'Graceful Timeout'. To prevent data corruption, the engine will finish its currently active batch of math before stopping. Expect the final timer to overshoot your limit slightly!"
                 )
                 
                 step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
