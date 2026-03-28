@@ -2256,6 +2256,10 @@ if __name__ == "__main__":
                             disabled=[c for c in df_history.columns if c != "Include"] 
                         )
                         
+                        # Sync live UI checkboxes directly back to the backend dictionaries
+                        for i, row in edited_df.iterrows():
+                            visible_history[i]["Include"] = bool(row["Include"])
+                        
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
                         st.info("""
