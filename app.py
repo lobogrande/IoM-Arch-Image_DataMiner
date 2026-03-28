@@ -2393,28 +2393,26 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         st.session_state.opt_results["chart_hill_scores"] =[avg_history_score, meta_score]
                                         st.session_state.opt_results["chart_hist"] = dict(Counter(best_data['floors']))
                                         
+                                        abs_max_chance = best_data['floors'].count(abs_max) / 500.0
+                                        
                                         # Save locally with telemetry so we can chart it below the button!
                                         st.session_state.synthesis_result = {
                                             "stats": final_meta_dist,
                                             "meta_score": meta_score,
                                             "history_scores": same_target_runs,
                                             "metric_name": run_target_metric,
-                                            "abs_max": abs_max
+                                            "abs_max": abs_max,
+                                            "abs_max_chance": abs_max_chance
                                         }
                                         
                                         # --- APPEND TO SYNTHESIS HISTORY ---
                                         if "synth_history" not in st.session_state:
                                             st.session_state.synth_history =[]
                                             
-                                        # Create a decoupled string snapshot of the parent runs to prevent deletion crashes
-                                        scores_list =[str(round(r.get("Metric Score", r.get("Max Floor", 0)), 1)) for r in valid_runs]
-                                        sources_str = f"{len(valid_runs)} runs (Scores: {', '.join(scores_list)})"
-                                        
                                         synth_entry = {
-                                            "Keep": True,
                                             "Target": run_target_metric,
                                             "Ceiling Score": round(meta_score, 2),
-                                            "Sources": sources_str
+                                            "Sources Data": valid_runs # Save the full dictionaries for the sub-table!
                                         }
                                         if run_target_metric == "highest_floor":
                                             synth_entry["God-Run Peak"] = int(abs_max)
@@ -2480,6 +2478,14 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 c_m1, c_m2 = st.columns(2)
                                 c_m1.metric("🏔️ Top 5 Peak Average (Ceiling)", f"Floor {m_score:,.1f}")
                                 c_m2.metric("🏆 Absolute God-Run (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
+                                
+                                # --- 🎲 GOD-RUN REALITY CHECK ---
+                                chance = sr.get('abs_max_chance', 0)
+                                if chance > 0:
+                                    runs_needed = math.ceil(1.0 / chance)
+                                    # Base estimate: 1 run = Max Stamina spent
+                                    arch_secs = runs_needed * p.max_sta
+                                    st.info(f"🎲 **God-Run Reality Check:** The AI hit Floor {sr.get('abs_max')} in **{chance*100:.1f}%** of its simulations. Mathematically, you must execute an average of **{runs_needed} full runs** to see this happen once. At your current Max Stamina, expect to burn roughly **~{arch_secs/1000.0:.1f}k Arch Seconds** before you break through! *(If you spent less than this and didn't hit it, you just haven't banked enough arch seconds yet!)*")
                             else:
                                 m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
                                 r_1k = (m_score / 60.0) * 1000.0
@@ -2538,14 +2544,13 @@ You might notice that running Synthesis multiple times gives slightly different 
                                     st.rerun()
 
             # ==========================================
-            # META-BUILD HISTORY TABLE
+            # META-BUILD HISTORY TABLE (NESTED EXPANDERS)
             # ==========================================
             if "synth_history" in st.session_state and st.session_state.synth_history:
                 st.divider()
                 st.markdown("### 📚 Meta-Build History Log")
-                st.write("A permanent record of your synthesized God-Builds. Use the 'Keep' checkbox to select which ones to delete.")
+                st.write("A permanent record of your synthesized God-Builds. Expand a row to view the original builds that birthed it.")
                 
-                # Independent filter to prevent scope collisions with the primary history table
                 synth_targets = list(set(s.get("Target") for s in st.session_state.synth_history))
                 synth_view_targets = st.multiselect(
                     "🔍 Filter Meta-Builds by target:", 
@@ -2554,34 +2559,48 @@ You might notice that running Synthesis multiple times gives slightly different 
                     key="synth_filter_ms"
                 )
                 
-                visible_synth =[s for s in st.session_state.synth_history if s.get("Target") in synth_view_targets]
-                
-                if visible_synth:
-                    df_synth = pd.DataFrame(visible_synth)
-                    
-                    # Force clean column ordering
-                    s_cols =['Keep', 'Target', 'Ceiling Score', 'God-Run Peak', 'Sources']
-                    s_cols +=[c for c in df_synth.columns if c not in s_cols]
-                    df_synth = df_synth[[c for c in s_cols if c in df_synth.columns]]
-                    
-                    edited_synth_df = st.data_editor(
-                        df_synth, 
-                        hide_index=True, 
-                        width="stretch",
-                        column_config={"Keep": st.column_config.CheckboxColumn("Keep")},
-                        disabled=[c for c in df_synth.columns if c != "Keep"],
-                        key="synth_history_editor"
-                    )
-                    
-                    if st.button("🗑️ Delete Unchecked Meta-Builds", width="stretch"):
-                        hidden_s =[s for s in st.session_state.synth_history if s.get("Target") not in synth_view_targets]
-                        kept_s =[]
-                        for i, row in edited_synth_df.iterrows():
-                            if row["Keep"]:
-                                kept_s.append(visible_synth[i])
-                        st.session_state.synth_history = hidden_s + kept_s
-                        st.toast("🗑️ Unchecked Meta-Builds deleted!", icon="🧹")
-                        st.rerun()
+                # Iterate backwards so the newest Meta-Builds are always at the top!
+                for idx, synth in reversed(list(enumerate(st.session_state.synth_history))):
+                    if synth.get("Target") in synth_view_targets:
+                        
+                        title = f"🧬 Meta-Build | Target: {synth['Target']} | Ceiling: {synth['Ceiling Score']}"
+                        if "God-Run Peak" in synth: 
+                            title += f" | Peak: {synth['God-Run Peak']}"
+                            
+                        with st.expander(title):
+                            # Clean up the sources sub-table to hide UI flags
+                            source_df = pd.DataFrame(synth['Sources Data'])
+                            cols_to_drop =['Include', 'Target'] 
+                            source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
+                            
+                            st.markdown("##### 🔍 Source Runs (The original builds that were averaged)")
+                            st.dataframe(source_df, hide_index=True, width="stretch")
+                            
+                            # Render the exact stats of the Meta-Build itself
+                            st.markdown("##### ⚙️ Meta-Build Stat Output")
+                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "Sources Data"]}
+                            st.write(", ".join([f"**{k}:** {v}" for k, v in stats_only.items()]))
+                            
+                            st.divider()
+                            col_h1, col_h2, col_h3 = st.columns(3)
+                            
+                            if col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch"):
+                                for k, v in stats_only.items():
+                                    st.session_state[f"stat_{k}"] = int(v)
+                                    p.base_stats[k] = int(v)
+                                st.toast("✅ Meta-Build stats applied globally!", icon="🧬")
+                                st.rerun()
+                                
+                            if col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch"):
+                                for k, v in stats_only.items():
+                                    st.session_state[f"sandbox_stat_{k}"] = int(v)
+                                st.toast("✅ Meta-Build piped to Tab 6 (Hit Calculator)!", icon="🧪")
+                                st.rerun()
+                                
+                            if col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch"):
+                                st.session_state.synth_history.pop(idx)
+                                st.toast("🗑️ Meta-Build permanently deleted!", icon="🧹")
+                                st.rerun()
 
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
