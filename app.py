@@ -1846,6 +1846,23 @@ if __name__ == "__main__":
         # UI RESULTS TELEMETRY (PERSISTENT RENDER)
         # ==========================================
         # Because this is OUTSIDE the st.button() block, it will survive tab changes!
+        
+        def cb_apply_stats(target, stats_dict, msg, icon):
+            """Streamlit callback to securely inject state before UI rendering."""
+            for k, v in stats_dict.items():
+                if target == "global":
+                    st.session_state[f"stat_{k}"] = int(v)
+                    st.session_state.player.base_stats[k] = int(v)
+                elif target == "sandbox":
+                    st.session_state[f"sandbox_stat_{k}"] = int(v)
+            st.toast(msg, icon=icon)
+
+        def cb_delete_hist(index):
+            """Streamlit callback to securely delete history rows."""
+            if "synth_history" in st.session_state and index < len(st.session_state.synth_history):
+                st.session_state.synth_history.pop(index)
+                st.toast("🗑️ Meta-Build permanently deleted!", icon="🧹")
+
         if "opt_results" in st.session_state:
             res = st.session_state.opt_results
             
@@ -1900,18 +1917,9 @@ if __name__ == "__main__":
             
             col_apply1, col_apply2 = st.columns(2)
             with col_apply1:
-                if st.button("✨ Apply Build Globally", width="stretch"):
-                    for k, v in best_final.items():
-                        st.session_state[f"stat_{k}"] = int(v)
-                        p.base_stats[k] = int(v)
-                    st.toast("✅ Optimal stats applied globally!", icon="🎉")
-                    st.rerun()
+                st.button("✨ Apply Build Globally", width="stretch", on_click=cb_apply_stats, args=("global", best_final, "✅ Optimal stats applied globally!", "🎉"))
             with col_apply2:
-                if st.button("🧪 Send to Sandbox", width="stretch"):
-                    for k, v in best_final.items():
-                        st.session_state[f"sandbox_stat_{k}"] = int(v)
-                    st.toast("✅ Optimal stats piped to Tab 6 (Hit Calculator)!", icon="🧪")
-                    st.rerun()
+                st.button("🧪 Send to Sandbox", width="stretch", on_click=cb_apply_stats, args=("sandbox", best_final, "✅ Optimal stats piped to Tab 6 (Hit Calculator)!", "🧪"))
 
             st.divider()
 
@@ -2242,6 +2250,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 
                                 if len(valid_runs) == 0:
                                     st.error("⚠️ You must leave at least 1 run checked to synthesize!")
+                                elif len(valid_runs) > 10:
+                                    st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
                                     with st.spinner("Calculating seed, mapping neighborhood, and running deep Gradient Polish..."):
                                         stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor"]]
@@ -2298,15 +2308,35 @@ You might notice that running Synthesis multiple times gives slightly different 
                                                                 if neighbor not in candidates:
                                                                     candidates.append(neighbor)
                                                                     
+                                        # --- ETA & PROGRESS BAR CALCULATION ---
+                                        total_r1_sims = len(candidates) * 50
+                                        est_r2_count = min(5, len(candidates)) + len(original_b_ids)
+                                        total_r2_sims = est_r2_count * 450
+                                        total_sims = total_r1_sims + total_r2_sims
+                                        
+                                        # Fallback to 1000 if user skipped manual benchmark
+                                        spd = st.session_state.get('sims_per_sec', 1000)
+                                        sims_spd = spd if spd > 0 else 1000
+                                        eta_secs = total_sims / sims_spd
+                                        
+                                        synth_prog = st.progress(0, text=f"🧬 Prepping {len(candidates)} build permutations... (~{total_sims:,} sims | ETA: {eta_secs:.1f}s)")
+                                        
                                         # TOURNAMENT ROUND 1: 50 runs each
-                                        r1_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50)]
+                                        r1_args =[ {'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50) ]
+                                        res1 = [ ]
+                                        
                                         with mp.Pool(CPU_CORES) as pool:
-                                            res1 = pool.map(worker_simulate, r1_args)
+                                            # Using imap to stream results back and update the progress bar cleanly!
+                                            for i, r in enumerate(pool.imap(worker_simulate, r1_args, chunksize=max(1, len(r1_args)//100))):
+                                                res1.append(r)
+                                                if i % 50 == 0:
+                                                    pct = min(100, int((i / total_sims) * 100))
+                                                    synth_prog.progress(pct, text=f"⚔️ Round 1/2: Testing {len(candidates)} builds ({i}/{len(r1_args)} sims) | ETA: {eta_secs:.1f}s")
                                             
                                         build_res = {}
                                         for args, r in zip(r1_args, res1):
                                             b_id = args['_b_id']
-                                            if b_id not in build_res: build_res[b_id] = {'sum_t': 0.0, 'sum_f': 0, 'floors':[]}
+                                            if b_id not in build_res: build_res[b_id] = {'sum_t': 0.0, 'sum_f': 0, 'floors': [ ]}
                                             
                                             t_val = float(r.get(run_target_metric, 0.0))
                                             f_val = r.get("highest_floor", 0)
@@ -2331,9 +2361,19 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         r2_ids = list(set(top5_ids + original_b_ids))
                                         
                                         # TOURNAMENT ROUND 2: 450 runs on the finalists & original runs
-                                        r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in r2_ids for _ in range(450)]
+                                        r2_args =[ {'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in r2_ids for _ in range(450) ]
+                                        res2 = [ ]
+                                        
                                         with mp.Pool(CPU_CORES) as pool:
-                                            res2 = pool.map(worker_simulate, r2_args)
+                                            for i, r in enumerate(pool.imap(worker_simulate, r2_args, chunksize=max(1, len(r2_args)//100))):
+                                                res2.append(r)
+                                                if i % 50 == 0:
+                                                    current_sims = len(r1_args) + i
+                                                    pct = min(100, int((current_sims / total_sims) * 100))
+                                                    synth_prog.progress(pct, text=f"⚔️ Round 2/2: Deep verifying {len(r2_ids)} finalists ({current_sims}/{total_sims} sims) | ETA: {eta_secs:.1f}s")
+                                        
+                                        # Clear the progress bar when complete!
+                                        synth_prog.empty()
                                             
                                         for args, r in zip(r2_args, res2):
                                             b_id = args['_b_id']
@@ -2393,14 +2433,32 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         st.session_state.opt_results["chart_hill_scores"] =[avg_history_score, meta_score]
                                         st.session_state.opt_results["chart_hist"] = dict(Counter(best_data['floors']))
                                         
+                                        abs_max_chance = best_data['floors'].count(abs_max) / 500.0
+                                        
                                         # Save locally with telemetry so we can chart it below the button!
                                         st.session_state.synthesis_result = {
                                             "stats": final_meta_dist,
                                             "meta_score": meta_score,
                                             "history_scores": same_target_runs,
                                             "metric_name": run_target_metric,
-                                            "abs_max": abs_max
+                                            "abs_max": abs_max,
+                                            "abs_max_chance": abs_max_chance
                                         }
+                                        
+                                        # --- APPEND TO SYNTHESIS HISTORY ---
+                                        if "synth_history" not in st.session_state:
+                                            st.session_state.synth_history =[]
+                                            
+                                        synth_entry = {
+                                            "Target": run_target_metric,
+                                            "Ceiling Score": round(meta_score, 2),
+                                            "Sources Data": valid_runs # Save the full dictionaries for the sub-table!
+                                        }
+                                        if run_target_metric == "highest_floor":
+                                            synth_entry["God-Run Peak"] = int(abs_max)
+                                            
+                                        synth_entry.update(final_meta_dist)
+                                        st.session_state.synth_history.append(synth_entry)
                                         
                                         st.rerun()
 
@@ -2460,6 +2518,14 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 c_m1, c_m2 = st.columns(2)
                                 c_m1.metric("🏔️ Top 5 Peak Average (Ceiling)", f"Floor {m_score:,.1f}")
                                 c_m2.metric("🏆 Absolute God-Run (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
+                                
+                                # --- 🎲 GOD-RUN REALITY CHECK ---
+                                chance = sr.get('abs_max_chance', 0)
+                                if chance > 0:
+                                    runs_needed = math.ceil(1.0 / chance)
+                                    # Base estimate: 1 run = Max Stamina spent
+                                    arch_secs = runs_needed * p.max_sta
+                                    st.info(f"🎲 **God-Run Reality Check:** The AI hit Floor {sr.get('abs_max')} in **{chance*100:.1f}%** of its simulations. Mathematically, you must execute an average of **{runs_needed} full runs** to see this happen once. At your current Max Stamina, expect to burn roughly **~{arch_secs/1000.0:.1f}k Arch Seconds** before you break through! *(If you spent less than this and didn't hit it, you just haven't banked enough arch seconds yet!)*")
                             else:
                                 m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
                                 r_1k = (m_score / 60.0) * 1000.0
@@ -2489,8 +2555,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                             st.markdown("#### 🧬 Synthesized Stat Allocation")
                             
                             synth_stat_cols = st.columns(len(sr["stats"]))
-                            for idx, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
-                                with synth_stat_cols[idx]:
+                            for idx_s, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
+                                with synth_stat_cols[idx_s]:
                                     with st.container(border=True):
                                         img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
                                         if os.path.exists(img_path):
@@ -2504,18 +2570,59 @@ You might notice that running Synthesis multiple times gives slightly different 
                             
                             col_ma1, col_ma2 = st.columns(2)
                             with col_ma1:
-                                if st.button("✨ Apply Meta-Build Globally", width="stretch", key="apply_meta_build_btn"):
-                                    for k, v in sr["stats"].items():
-                                        st.session_state[f"stat_{k}"] = int(v)
-                                        p.base_stats[k] = int(v)
-                                    st.toast("✅ Meta-Build stats applied globally!", icon="🧬")
-                                    st.rerun()
+                                st.button("✨ Apply Meta-Build Globally", width="stretch", key="apply_meta_build_btn", on_click=cb_apply_stats, args=("global", sr["stats"], "✅ Meta-Build stats applied globally!", "🧬"))
                             with col_ma2:
-                                if st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn"):
-                                    for k, v in sr["stats"].items():
-                                        st.session_state[f"sandbox_stat_{k}"] = int(v)
-                                    st.toast("✅ Meta-Build piped to Tab 6 (Hit Calculator)!", icon="🧪")
-                                    st.rerun()
+                                st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn", on_click=cb_apply_stats, args=("sandbox", sr["stats"], "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
+
+            # ==========================================
+            # META-BUILD HISTORY TABLE (NESTED EXPANDERS)
+            # ==========================================
+            if "synth_history" in st.session_state and st.session_state.synth_history:
+                st.divider()
+                st.markdown("### 📚 Meta-Build History Log")
+                st.write("A permanent record of your synthesized God-Builds. Expand a row to view the original builds that birthed it.")
+                
+                synth_targets = list(set(s.get("Target") for s in st.session_state.synth_history))
+                synth_view_targets = st.multiselect(
+                    "🔍 Filter Meta-Builds by target:", 
+                    options=synth_targets, 
+                    default=[t for t in synth_targets if t == run_target_metric] or synth_targets,
+                    key="synth_filter_ms"
+                )
+                
+                # Iterate backwards so the newest Meta-Builds are always at the top!
+                for idx, synth in reversed(list(enumerate(st.session_state.synth_history))):
+                    if synth.get("Target") in synth_view_targets:
+                        
+                        title = f"🧬 Meta-Build | Target: {synth['Target']} | Ceiling: {synth['Ceiling Score']}"
+                        if "God-Run Peak" in synth: 
+                            title += f" | Peak: {synth['God-Run Peak']}"
+                            
+                        with st.expander(title):
+                            # Backward compatibility check for older session state formats
+                            if "Sources Data" in synth:
+                                source_df = pd.DataFrame(synth['Sources Data'])
+                                cols_to_drop = ['Include', 'Target'] 
+                                source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
+                                st.markdown("##### 🔍 Source Runs (The original builds that were averaged)")
+                                st.dataframe(source_df, hide_index=True, width="stretch")
+                            else:
+                                st.markdown("##### 🔍 Source Runs (Legacy Format)")
+                                st.write(synth.get("Sources", "*(No source data saved)*"))
+                            
+                            # Render the exact stats of the Meta-Build itself
+                            st.markdown("##### ⚙️ Meta-Build Stat Output")
+                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "God-Run Peak", "Sources Data", "Sources", "Keep"]}
+                            st.write(", ".join([f"**{k}:** {v}" for k, v in stats_only.items()]))
+                            
+                            st.divider()
+                            col_h1, col_h2, col_h3 = st.columns(3)
+                            
+                            col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("global", stats_only, "✅ Meta-Build stats applied globally!", "🧬"))
+                                
+                            col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("sandbox", stats_only, "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
+                                
+                            col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch", on_click=cb_delete_hist, args=(idx,))
 
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
