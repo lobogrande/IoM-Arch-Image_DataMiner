@@ -344,6 +344,30 @@ if __name__ == "__main__":
                 padding-left: 60px !important;
             }
         }
+        
+        /* 8. Floating Back to Top Button */
+        .back-to-top {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background-color: #ffa229;
+            color: #2b2b2b !important;
+            padding: 10px 16px;
+            border-radius: 20px;
+            text-decoration: none !important;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+            z-index: 99999;
+            transition: all 0.2s ease-in-out;
+            opacity: 0.8;
+        }
+        .back-to-top:hover {
+            background-color: #2b2b2b;
+            color: #ffa229 !important;
+            border: 1px solid #ffa229;
+            transform: translateY(-2px);
+            opacity: 1.0;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -489,6 +513,7 @@ if __name__ == "__main__":
     # ==========================================
     # MAIN WINDOW: Tabs
     # ==========================================
+    st.markdown('<div id="top-of-tabs"></div>', unsafe_allow_html=True)
     st.title("⛏️ AI Arch Mining Optimizer")
 
     # Calculate dynamic Base Stat caps (Base + Upgrade #45)
@@ -2777,3 +2802,6 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                         sorted_upgs = sorted(st.session_state.roi_upg_results.items(), key=lambda x: x[1], reverse=True)
                         df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain"])
                         st.dataframe(df_upg_roi, hide_index=True, width="stretch")
+
+    # --- GLOBAL FLOATING NAVIGATION ---
+    st.markdown('<a href="#top-of-tabs" class="back-to-top">⬆️ Back to Tabs</a>', unsafe_allow_html=True)
