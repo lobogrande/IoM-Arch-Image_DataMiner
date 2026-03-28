@@ -2242,6 +2242,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 
                                 if len(valid_runs) == 0:
                                     st.error("⚠️ You must leave at least 1 run checked to synthesize!")
+                                elif len(valid_runs) > 10:
+                                    st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
                                     with st.spinner("Calculating seed, mapping neighborhood, and running deep Gradient Polish..."):
                                         stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor"]]
@@ -2298,15 +2300,35 @@ You might notice that running Synthesis multiple times gives slightly different 
                                                                 if neighbor not in candidates:
                                                                     candidates.append(neighbor)
                                                                     
+                                        # --- ETA & PROGRESS BAR CALCULATION ---
+                                        total_r1_sims = len(candidates) * 50
+                                        est_r2_count = min(5, len(candidates)) + len(original_b_ids)
+                                        total_r2_sims = est_r2_count * 450
+                                        total_sims = total_r1_sims + total_r2_sims
+                                        
+                                        # Fallback to 1000 if user skipped manual benchmark
+                                        spd = st.session_state.get('sims_per_sec', 1000)
+                                        sims_spd = spd if spd > 0 else 1000
+                                        eta_secs = total_sims / sims_spd
+                                        
+                                        synth_prog = st.progress(0, text=f"🧬 Prepping {len(candidates)} build permutations... (~{total_sims:,} sims | ETA: {eta_secs:.1f}s)")
+                                        
                                         # TOURNAMENT ROUND 1: 50 runs each
-                                        r1_args =[{'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50)]
+                                        r1_args =[ {'stats': b, 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': tuple(b.items())} for b in candidates for _ in range(50) ]
+                                        res1 = [ ]
+                                        
                                         with mp.Pool(CPU_CORES) as pool:
-                                            res1 = pool.map(worker_simulate, r1_args)
+                                            # Using imap to stream results back and update the progress bar cleanly!
+                                            for i, r in enumerate(pool.imap(worker_simulate, r1_args, chunksize=max(1, len(r1_args)//100))):
+                                                res1.append(r)
+                                                if i % 50 == 0:
+                                                    pct = min(100, int((i / total_sims) * 100))
+                                                    synth_prog.progress(pct, text=f"⚔️ Round 1/2: Testing {len(candidates)} builds ({i}/{len(r1_args)} sims) | ETA: {eta_secs:.1f}s")
                                             
                                         build_res = {}
                                         for args, r in zip(r1_args, res1):
                                             b_id = args['_b_id']
-                                            if b_id not in build_res: build_res[b_id] = {'sum_t': 0.0, 'sum_f': 0, 'floors':[]}
+                                            if b_id not in build_res: build_res[b_id] = {'sum_t': 0.0, 'sum_f': 0, 'floors': [ ]}
                                             
                                             t_val = float(r.get(run_target_metric, 0.0))
                                             f_val = r.get("highest_floor", 0)
@@ -2331,9 +2353,19 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         r2_ids = list(set(top5_ids + original_b_ids))
                                         
                                         # TOURNAMENT ROUND 2: 450 runs on the finalists & original runs
-                                        r2_args =[{'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in r2_ids for _ in range(450)]
+                                        r2_args =[ {'stats': dict(b_id), 'fixed_stats': {}, 'state_dict': synth_state_dict, '_b_id': b_id} for b_id in r2_ids for _ in range(450) ]
+                                        res2 = [ ]
+                                        
                                         with mp.Pool(CPU_CORES) as pool:
-                                            res2 = pool.map(worker_simulate, r2_args)
+                                            for i, r in enumerate(pool.imap(worker_simulate, r2_args, chunksize=max(1, len(r2_args)//100))):
+                                                res2.append(r)
+                                                if i % 50 == 0:
+                                                    current_sims = len(r1_args) + i
+                                                    pct = min(100, int((current_sims / total_sims) * 100))
+                                                    synth_prog.progress(pct, text=f"⚔️ Round 2/2: Deep verifying {len(r2_ids)} finalists ({current_sims}/{total_sims} sims) | ETA: {eta_secs:.1f}s")
+                                        
+                                        # Clear the progress bar when complete!
+                                        synth_prog.empty()
                                             
                                         for args, r in zip(r2_args, res2):
                                             b_id = args['_b_id']
