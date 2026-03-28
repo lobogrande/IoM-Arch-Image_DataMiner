@@ -2432,7 +2432,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                             "worst_val": 0,
                                             "avg_val": avg_f,
                                             "runner_up_val": 0,
-                                            "avg_metrics": {} 
+                                            # Dynamically populate the target metric so the main UI Analytics tabs wake up!
+                                            "avg_metrics": {run_target_metric: best_data['sum_t'] / 500.0} 
                                         }
 
                                         # APPLES-TO-APPLES CHART MAPPING
@@ -2645,6 +2646,15 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 runs_needed = math.ceil(1.0 / chance)
                                 arch_secs = synth.get("Arch Secs Cost", 0)
                                 st.caption(f"🎲 **Reality Check:** Floor {synth.get('God-Run Peak')} hit in **{chance*100:.1f}%** of sims. Requires avg **{runs_needed} runs** (~**{arch_secs/1000.0:.1f}k Arch Secs**) to replicate.")
+                                
+                            if "block_" in synth['Target'] and synth['Ceiling Score'] > 0:
+                                val = synth['Ceiling Score']
+                                kills_50 = 0.693 * 1500
+                                kills_90 = 2.302 * 1500
+                                arch_1k_50 = kills_50 / (val / 60.0) / 1000.0
+                                arch_1k_90 = kills_90 / (val / 60.0) / 1000.0
+                                b_name = synth['Target'].replace("block_", "").replace("_per_min", "").capitalize()
+                                st.caption(f"🎴 **Card Reality Check ({b_name}):** Base Card takes **~{arch_1k_50:.1f}k** Arch Secs (50% lucky) up to **~{arch_1k_90:.1f}k** Arch Secs (90% safe).")
                             
                             # --- Hidden Source Runs ---
                             with st.expander("🔍 View Source Runs (The original builds that were averaged)"):
