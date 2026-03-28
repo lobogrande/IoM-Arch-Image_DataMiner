@@ -2223,7 +2223,16 @@ if __name__ == "__main__":
                         
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
-                        st.info("💡 **Strategy Tip:**[INSERT SYNTHESIS STRATEGY HERE - Explain when/why users should check multiple historical runs and synthesize them together]")
+                        st.info("""
+💡 **Strategy Tip: The "Stat Plateau" (Why do my stats change on re-runs?)**
+
+You might notice that running Synthesis multiple times gives slightly different stat numbers. Don't panic—the AI isn't guessing!
+
+* **The Math:** Enemies only take whole hits. If 50 Strength kills a boss in exactly 3 hits, having 54 Strength *also* kills it in 3 hits. This creates a "Stat Plateau" where several different builds are functionally identical and mathematically tied for 1st place.
+* **The Tie-Breaker (RNG):** To break the tie, the AI forces these top builds to race 500 times. Whichever tied build happens to get slightly luckier with Critical Hits during that specific race wins the gold medal!
+
+**The Takeaway:** If your stats bounce around slightly between runs, congratulations—you've reached the absolute peak! Send your results to the **Hit Calculator Sandbox** to prove to yourself that both builds kill your target blocks in the exact same number of hits.
+                        """)
                         st.write("Smooth out Monte Carlo RNG noise. This algorithm averages your checked builds, corrects for budget constraints, and runs a deep verification test against your *current* UI target.")
                         
                         col_synth1, col_synth2 = st.columns(2)
@@ -2364,21 +2373,17 @@ if __name__ == "__main__":
                                         for r in valid_runs:
                                             b_id = tuple({s: r[s] for s in stat_keys}.items())
                                             if run_target_metric == "highest_floor":
-                                                # PEAK VARIANCE: You cannot erase a God Run. 
-                                                # Chart the absolute highest floor this build has EVER achieved (History vs Tournament).
-                                                historic_max = r.get("Max Floor", r.get("Metric Score", 0))
-                                                tournament_max = max(build_res[b_id]['floors'])
-                                                same_target_runs.append(max(historic_max, tournament_max))
+                                                # CEILING SCORE: Absolute peaks are skewed by 1-in-a-million RNG. 
+                                                # We chart the Top 5 Peak Average to perfectly match the Engine's sorting logic.
+                                                ceiling = get_ceiling_score(build_res[b_id]['floors'], 5)
+                                                same_target_runs.append(ceiling)
                                             else:
                                                 # CONSISTENCY: Averages must be strictly regressed to the mean via 500 runs.
                                                 same_target_runs.append(build_res[b_id]['sum_t'] / 500.0)
                                                 
                                         if run_target_metric == "highest_floor":
-                                            meta_score = abs_max
+                                            meta_score = get_ceiling_score(best_data['floors'], 5)
                                             chart_label = "🏆 Verified God-Build"
-                                        else:
-                                            meta_score = best_data['sum_t'] / 500.0
-                                            chart_label = "🧬 Polished Meta-Build"
                                             
                                         avg_history_score = sum(same_target_runs)/len(same_target_runs) if same_target_runs else 0.0
                                         
@@ -2393,7 +2398,8 @@ if __name__ == "__main__":
                                             "stats": final_meta_dist,
                                             "meta_score": meta_score,
                                             "history_scores": same_target_runs,
-                                            "metric_name": run_target_metric
+                                            "metric_name": run_target_metric,
+                                            "abs_max": abs_max
                                         }
                                         
                                         st.rerun()
@@ -2451,7 +2457,9 @@ if __name__ == "__main__":
                             m_score = sr.get("meta_score", 0)
                             
                             if m_name == "highest_floor":
-                                st.metric("🏆 Projected Peak (Absolute Max Floor)", f"Floor {m_score:,.0f}")
+                                c_m1, c_m2 = st.columns(2)
+                                c_m1.metric("🏔️ Top 5 Peak Average (Ceiling)", f"Floor {m_score:,.1f}")
+                                c_m2.metric("🏆 Absolute God-Run (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
                             else:
                                 m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
                                 r_1k = (m_score / 60.0) * 1000.0
@@ -2518,7 +2526,16 @@ if __name__ == "__main__":
             if run_target_metric == "highest_floor":
                 st.warning("⚠️ **ROI Analyzer is Disabled for Max Floor Push:**\nBecause floor progression relies on large, discrete math 'Breakpoints' (e.g., shaving a 3-hit kill down to a 2-hit kill), adding a single +1 to a stat rarely shows an immediate gain. Additionally, the ROI engine compares a 15-run average to your absolute Peak God Run, which mathematically causes false negatives.\n\nTo calculate exactly what stats you need to beat your current wall, send your build to **Tab 6 (Hit Calculator Sandbox)** and manually inspect the HP and Armor Breakpoints!")
             else:
-                st.info("💡 **Strategy Tip:**[INSERT ROI STRATEGY HERE - Explain that this tool evaluates +1 investments to show which upgrades yield the biggest immediate returns for your current farming target]")
+                st.info("""
+💡 **Strategy Tip: Finding your next best upgrade (ROI)**
+
+You just used the Optimizer to find the mathematically perfect build for your *current* stats. But what should you level up *next*?
+
+* **The Micro-Test:** The AI will temporarily add **+1 Level** to every single stat or un-maxed internal upgrade and run a quick batch of simulations.
+* **The Ranking:** It then sorts the results to show you exactly which upgrade gives you the biggest immediate raw boost to your Farming Yields (EXP, Fragments, or Cards per minute).
+
+⚠️ **Important Note on Costs:** This engine does *not* currently track the Fragment cost of upgrades. It only measures the **raw output gain**. When using this "shopping list," you must weigh the AI's top recommendations against your actual in-game fragment accumulation rates!
+                """)
                 st.write("Run isolated micro-simulations to discover exactly where your next investments should go based on your current optimal build.")
                 
                 col_roi_1, col_roi_2 = st.columns(2)
