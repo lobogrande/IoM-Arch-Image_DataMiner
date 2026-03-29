@@ -1524,7 +1524,14 @@ if __name__ == "__main__":
         live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
         with st.expander("⚙️ Engine Tuning", expanded=False):
-            st.write(f"⚡ **Calculated Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second *(Silently auto-calibrates to perfect accuracy after your first run)*")
+            col_spd_1, col_spd_2 = st.columns([3, 1])
+            with col_spd_1:
+                st.write(f"⚡ **Calculated Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second *(Auto-calibrates after your first run)*")
+            with col_spd_2:
+                # Allows users to flush bad legacy speeds from browser memory instantly
+                if st.button("🔄 Reset Calibration", width="stretch"):
+                    if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
+                    st.rerun()
             
             col_prof_1, col_prof_2 = st.columns(2)
             
@@ -1691,8 +1698,9 @@ if __name__ == "__main__":
                     ui_prog_bar = st.progress(0, text="Booting up engine cores...")
                     sims_tracker = {}
                     def st_progress_callback(phase_name, r_idx, r_total, task_idx, task_total):
-                        # Track the highest number of simulations completed per phase
-                        sims_tracker[phase_name] = max(sims_tracker.get(phase_name, 0), task_idx)
+                        # Track simulations per phase AND per round, because task counts reset every halving round
+                        tracker_key = f"{phase_name}_R{r_idx}"
+                        sims_tracker[tracker_key] = max(sims_tracker.get(tracker_key, 0), task_idx)
                         pct = min(100, max(0, int((task_idx / task_total) * 100)))
                         elapsed_now = time.time() - start_time
                         ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims) | ⏱️ Elapsed: {elapsed_now:.1f}s / {time_limit_mins}m limit")
