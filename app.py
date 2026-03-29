@@ -427,10 +427,8 @@ if __name__ == "__main__":
             p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
             p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
             
-            if p.asc2_unlocked:
-                p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
-            else:
-                p.hades_idol_level = 0
+            # Hades Idol is a late-Asc1 unlock, available regardless of Asc2 status
+            p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
 
             # --- OVER-BUDGET AUTO-FIX ---
             current_allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
