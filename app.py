@@ -2221,6 +2221,10 @@ if __name__ == "__main__":
                             for r in st.session_state.run_history:
                                 if r.get("Target") in view_targets:
                                     r["Include"] = not r.get("Include", True)
+                            # Flush data editor memory so it redraws with the new backend boolean values
+                            for k in list(st.session_state.keys()):
+                                if k.startswith("history_editor_"):
+                                    del st.session_state[k]
                             st.rerun()
 
                     visible_history =[r for r in st.session_state.run_history if r.get("Target") in view_targets]
@@ -2253,12 +2257,17 @@ if __name__ == "__main__":
                         cols +=[ c for c in df_history.columns if c not in cols ]
                         df_history = df_history[cols]
                         
+                        # Create a robust, unique key to prevent Streamlit from losing checkbox states during rapid clicks
+                        view_targets_str = "_".join(view_targets)
+                        editor_key = f"history_editor_{len(visible_history)}_{view_targets_str}"
+                        
                         edited_df = st.data_editor(
                             df_history, 
                             hide_index=True, 
                             width="stretch",
                             column_config={"Include": st.column_config.CheckboxColumn("Include")},
-                            disabled=[c for c in df_history.columns if c != "Include"] 
+                            disabled=[c for c in df_history.columns if c != "Include"],
+                            key=editor_key
                         )
                         
                         # Sync live UI checkboxes directly back to the backend dictionaries
@@ -2531,6 +2540,12 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         
                                 # 3. Overwrite history (Unchecked runs are dropped into the void)
                                 st.session_state.run_history = hidden_runs + kept_visible_runs
+                                
+                                # Flush data editor memory to prevent shape mismatch errors
+                                for k in list(st.session_state.keys()):
+                                    if k.startswith("history_editor_"):
+                                        del st.session_state[k]
+                                        
                                 st.toast("🗑️ Unchecked runs permanently deleted!", icon="🧹")
                                 st.rerun()
                                 

@@ -135,6 +135,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     for round_idx, (run_count, keep_ratio) in enumerate(rounds):
         if len(active_keys) == 0: break
         
+        hard_abort_triggered = False
         if global_start_time and time_limit_seconds:
             if time.time() - global_start_time >= time_limit_seconds:
                 print(f"\n[TIMEOUT] Max time limit reached. Halting {phase_name} early!")
@@ -147,28 +148,34 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         total_tasks = len(tasks)
         chunk_size = max(1, total_tasks // 100)
         
-        results =[]
         for i, r in enumerate(pool.imap(worker_simulate, tasks, chunksize=chunk_size)):
-            results.append(r)
+            # Real-time incremental aggregation (Allows safe mid-round aborts)
+            k_idx = i // run_count
+            k = active_keys[k_idx]
+            
+            tracker[k]['sum_target'] += r.get(target_metric, 0.0)
+            tracker[k]['sum_floor'] += r.get('highest_floor', 0.0)
+            tracker[k]['runs'] += 1
+            tracker[k]['floors'].append(int(r.get('highest_floor', 0)))
+            
+            for m_k, m_v in r.items():
+                tracker[k]['metrics_sum'][m_k] = tracker[k]['metrics_sum'].get(m_k, 0.0) + m_v
+                
             if i % max(1, total_tasks // 20) == 0 or i == total_tasks - 1:
                 sys.stdout.write(f"\r      Progress: {i+1}/{total_tasks} simulations completed")
                 sys.stdout.flush()
                 if progress_callback:
                     progress_callback(phase_name, round_idx + 1, len(rounds), i + 1, total_tasks)
+                    
+            # Mid-Round Hard Abort Check
+            if global_start_time and time_limit_seconds:
+                if time.time() - global_start_time >= time_limit_seconds:
+                    print(f"\n[TIMEOUT] Hard Abort triggered mid-round! Safely dumping queue and exiting {phase_name}...")
+                    hard_abort_triggered = True
+                    break
+                    
         sys.stdout.write("\n")
         
-        for i, k in enumerate(active_keys):
-            chunk = results[i*run_count : (i+1)*run_count]
-            tracker[k]['sum_target'] += sum(r.get(target_metric, 0.0) for r in chunk)
-            tracker[k]['sum_floor'] += sum(r.get('highest_floor', 0.0) for r in chunk)
-            tracker[k]['runs'] += run_count
-            
-            # Aggregate specific telemetry for the Dashboard charts
-            for r in chunk:
-                tracker[k]['floors'].append(int(r.get('highest_floor', 0)))
-                for m_k, m_v in r.items():
-                    tracker[k]['metrics_sum'][m_k] = tracker[k]['metrics_sum'].get(m_k, 0.0) + m_v
-            
         # --- NEW TARGET SORTING LOGIC ---
         def get_sort_key(k):
             if target_metric == 'highest_floor':
@@ -191,6 +198,9 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
         if round_idx < len(rounds) - 1:
             keep_count = max(3, int(len(active_keys) * keep_ratio))
             active_keys = active_keys[:keep_count]
+
+        if hard_abort_triggered:
+            break
 
     best_key = active_keys[0]
     best_data = tracker[best_key]
