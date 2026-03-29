@@ -473,9 +473,11 @@ if __name__ == "__main__":
                     for k in list(st.session_state.keys()):
                         if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
                             del st.session_state[k]
+                    # Flush the benchmark so the ETA updates to match the new character's combat depth
+                    if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
                             
                     # Force a clean restart from Line 1 to sync the reordered sidebar
-                    st.rerun() 
+                    st.rerun()
             
         # --- 3. EXPORT DATA ---
         with st.expander("💾 Export Data", expanded=False):
@@ -579,6 +581,8 @@ if __name__ == "__main__":
                     for k in list(st.session_state.keys()):
                         if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
                             del st.session_state[k]
+                    # Flush the benchmark so the ETA updates to match the new preset's combat depth
+                    if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
                     st.rerun()
 
                 with col_p1:
@@ -1494,13 +1498,35 @@ if __name__ == "__main__":
         st.divider()
 
         # --- HARDWARE BENCHMARKING & ETA ---
-        if "sims_per_sec" not in st.session_state:
-            st.session_state.sims_per_sec = 0
-
-        # --- LIVE ETA RECALCULATION ---
         STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
         
+        # Auto-benchmark ONCE per session (or when stats reset)
+        if st.session_state.get("sims_per_sec", 0) == 0:
+            with st.spinner("⏱️ Auto-calibrating engine to your hardware and current stats..."):
+                # Use their ACTUAL live stats for the benchmark to guarantee accurate combat loop depth
+                bench_stats = {s: int(p.base_stats.get(s, 0)) for s in STATS_TO_OPTIMIZE}
+                
+                base_state_dict = {
+                    'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
+                    'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
+                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                    'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
+                    'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
+                    'total_infernal_cards': p.total_infernal_cards
+                }
+                
+                payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
+                
+                if sys.platform == "linux": CPU_CORES = min(2, mp.cpu_count()) 
+                else: CPU_CORES = max(1, mp.cpu_count() - 1)
+                
+                with mp.Pool(CPU_CORES) as pool:
+                    spd = benchmark_hardware(payload, pool)
+                    # Safety clamp to prevent div by zero
+                    st.session_state.sims_per_sec = max(1, spd)
+
+        # --- LIVE ETA RECALCULATION ---
         DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
         cap_increase = int(p.u('H45'))
         EFFECTIVE_CAPS = {s: cfg.BASE_STAT_CAPS[s] + cap_increase for s in STATS_TO_OPTIMIZE}
@@ -1515,55 +1541,13 @@ if __name__ == "__main__":
                 
         live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
-        with st.expander("⚙️ Engine Tuning & Hardware Benchmark (Optional)", expanded=False):
+        with st.expander("⚙️ Engine Tuning", expanded=False):
+            st.write(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second *(Auto-calibrated to your current build)*")
             
-            # Keep the interactive controls at the absolute top
-            col_bench, col_prof = st.columns([1, 1.5])
+            col_prof_1, col_prof_2 = st.columns(2)
             
-            with col_bench:
-                st.write("#### 1. Hardware Benchmark")
-                st.write("*(Optional: Runs automatically on start if skipped)*")
-                if st.button("⏱️ Benchmark CPU & Calculate ETAs", width="stretch"):
-                    with st.spinner("Running 200 micro-simulations to test CPU speed..."):
-                        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
-                        if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-                        
-                        base_state_dict = {
-                            'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
-                            'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                            'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
-                            'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
-                            'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
-                            'total_infernal_cards': p.total_infernal_cards
-                        }
-                        
-                        # --- GUARANTEED STRESS-TEST BENCHMARK ---
-                        # Force a heavy mid-game build (50 Str / 50 Agi / 20 Int) to guarantee the CPU actually
-                        # performs deep simulated combat loops, regardless of the user's current level.
-                        bench_stats = {s: 5 for s in STATS_TO_OPTIMIZE}
-                        bench_stats['Str'] = 50
-                        bench_stats['Agi'] = 50
-                        bench_stats['Int'] = 20
-                                
-                        payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
-                        
-                        if sys.platform == "linux":
-                            CPU_CORES = min(2, mp.cpu_count()) 
-                        else:
-                            CPU_CORES = max(1, mp.cpu_count() - 1)
-                            
-                        with mp.Pool(CPU_CORES) as pool:
-                            spd = benchmark_hardware(payload, pool)
-                            st.session_state.sims_per_sec = spd
-                            st.rerun() 
-                
-                if st.session_state.sims_per_sec > 0:
-                    st.success(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second")
-                else:
-                    st.info("Awaiting Benchmark...")
-
-            with col_prof:
-                st.write("#### 2. Search Depth (Initial Step Size)")
+            with col_prof_1:
+                st.write("#### 1. Search Depth (Initial Step Size)")
                 
                 depth_labels = {
                     "Fast": "Fast (Step 15) - Best for quick checks",
@@ -1580,35 +1564,31 @@ if __name__ == "__main__":
                     label_visibility="collapsed"
                 )
 
-                st.divider()
-                st.write("#### 3. Execution Time Limit")
+            with col_prof_2:
+                st.write("#### 2. Execution Time Limit")
                 time_limit_mins = st.slider(
                     "Safely abort and return best build if time exceeds:", 
                     min_value=1, max_value=30, value=5, step=1, format="%d mins",
                     help="This is a 'Graceful Timeout'. To prevent data corruption, the engine will finish its currently active batch of math before stopping. Expect the final timer to overshoot your limit slightly!"
                 )
                 
-                step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
-                step_2 = max(2, step_1 // 3)
-                step_3 = 1
-                
-                preview_html = f"""
-                <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
-                    <b>Engine Execution Plan:</b><br>
-                    🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
-                    🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
-                    🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.
-                """
-                
-                if st.session_state.sims_per_sec > 0:
-                    prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
-                    prof_data = live_eta_profiles[prof_key]
-                    preview_html += f"<br><br>⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>"
-                else:
-                    preview_html += "<br><br>⏱️ <b>Estimated Time:</b> Awaiting Benchmark..."
-                    
-                preview_html += "</div>"
-                st.markdown(preview_html, unsafe_allow_html=True)
+            step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
+            step_2 = max(2, step_1 // 3)
+            step_3 = 1
+            
+            prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
+            prof_data = live_eta_profiles[prof_key]
+            
+            preview_html = f"""
+            <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
+                <b>Engine Execution Plan:</b><br>
+                🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
+                🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
+                🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.<br><br>
+                ⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>
+            </div>
+            """
+            st.markdown(preview_html, unsafe_allow_html=True)
 
             # --- UN-INDENTED EXPLANATION TEXT ---
             st.divider()
@@ -1699,30 +1679,6 @@ if __name__ == "__main__":
                     'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                     'total_infernal_cards': p.total_infernal_cards
                 }
-
-                # AUTO-BENCHMARK FAILSAFE
-                if st.session_state.sims_per_sec == 0:
-                    with st.spinner("⏱️ First-time setup: Benchmarking your CPU..."):
-                        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
-                        if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
-                        
-                        # Force a heavy mid-game build to guarantee deep combat simulation loops
-                        bench_stats = {s: 5 for s in STATS_TO_OPTIMIZE}
-                        bench_stats['Str'] = 50
-                        bench_stats['Agi'] = 50
-                        bench_stats['Int'] = 20
-
-                        payload = {'stats': bench_stats, 'fixed_stats': {}, 'state_dict': base_state_dict}
-                        # Cloud OOM Protection: Streamlit Linux containers only have 1GB RAM
-                        if sys.platform == "linux":
-                            CPU_CORES = min(2, mp.cpu_count()) 
-                        else:
-                            CPU_CORES = max(1, mp.cpu_count() - 1)
-                        with mp.Pool(CPU_CORES) as pool:
-                            spd = benchmark_hardware(payload, pool)
-                            st.session_state.sims_per_sec = spd
-                            # Recalculate live profiles now that we have a speed
-                            live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, spd)
 
                 prof_key = next((k for k in live_eta_profiles.keys() if k.startswith(depth_choice)), None)
                 if prof_key:
