@@ -257,6 +257,7 @@ class Player:
         val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2 + enrage_mult) * bb_mult
         return self._excel_round(val, 0)
     
+    @property
     def armor_pen(self):
         stat_calc = self.stat('Per') * (2 + self.u('H33'))
         base_ap = self.u('F10') + self.u('F17') + self.u('H36') + stat_calc + self.inf('leg3')
