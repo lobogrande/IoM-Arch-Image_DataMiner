@@ -417,17 +417,26 @@ if __name__ == "__main__":
         # --- 1. GLOBAL SETTINGS ---
         with st.expander("⚙️ Global Settings", expanded=True):
             # Initialize session state for global settings so they don't throw warnings
+            if "set_asc1" not in st.session_state: st.session_state["set_asc1"] = p.asc1_unlocked
             if "set_asc2" not in st.session_state: st.session_state["set_asc2"] = p.asc2_unlocked
             if "set_arch" not in st.session_state: st.session_state["set_arch"] = int(p.arch_level)
             if "set_floor" not in st.session_state: st.session_state["set_floor"] = int(p.current_max_floor)
             if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
             
             # Render widgets with explicit keys
-            p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2")
+            p.asc1_unlocked = st.checkbox("Ascension 1 Unlocked", key="set_asc1")
+            
+            # Force Asc2 to uncheck if Asc1 is disabled
+            if not p.asc1_unlocked:
+                st.session_state["set_asc2"] = False
+                p.asc2_unlocked = False
+                
+            p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2", disabled=not p.asc1_unlocked)
             p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
             p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
             
-            if p.asc2_unlocked:
+            # Hades Idol is a late-Asc1 unlock
+            if p.asc1_unlocked:
                 p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
             else:
                 p.hades_idol_level = 0
@@ -666,7 +675,10 @@ if __name__ == "__main__":
             render_stat("Intelligence", 'Int')
         with col3:
             render_stat("Luck", 'Luck')
-            render_stat("Divine", 'Div')
+            if p.asc1_unlocked:
+                render_stat("Divine", 'Div')
+            else:
+                p.base_stats['Div'] = 0
         with col4:
             if p.asc2_unlocked:
                 render_stat("Corruption", 'Corr')
@@ -683,13 +695,14 @@ if __name__ == "__main__":
             hide_maxed = st.toggle("👀 Hide Maxed Upgrades", value=False)
             st.divider()
 
+            asc1_locked_rows =[12, 17, 24, 32, 40, 47, 48, 49, 50, 51, 53, 54]
             asc2_locked_rows =[19, 27, 34, 46, 52, 55]
             
             # 1. Pre-filter active upgrades
             active_upgrades = list()
             for upg_id, upg_data in p.UPGRADE_DEF.items():
-                if not p.asc2_unlocked and upg_id in asc2_locked_rows:
-                    continue
+                if not p.asc1_unlocked and upg_id in asc1_locked_rows: continue
+                if not p.asc2_unlocked and upg_id in asc2_locked_rows: continue
                     
                 max_lvl = int(cfg.INTERNAL_UPGRADE_CAPS.get(upg_id, 99))
                 current_lvl = int(p.upgrade_levels.get(upg_id, 0))
@@ -756,6 +769,9 @@ if __name__ == "__main__":
                 ui_type = group['ui_type']
                 rows = group['rows']
                 
+                # Hide Hestia Idol if pre-Asc1
+                if not p.asc1_unlocked and 4 in rows: continue
+
                 current_val = int(p.external_levels.get(rows[0], 0))
                 if widget_key not in st.session_state:
                     st.session_state[widget_key] = current_val
@@ -897,36 +913,49 @@ if __name__ == "__main__":
                     st.session_state[widget_key] = current_lvl
                     
                 with cols_cards[col_idx]:
-                    with st.container(border=True):
-                        # Title
-                        st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{card_id.capitalize()}</b></div>", unsafe_allow_html=True)
-                        
-                        user_tier = st.session_state[widget_key]
-                        
-                        # --- DYNAMIC CARD COMPOSITING ---
-                        if user_tier > 0:
-                            bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{user_tier}.png")
-                            cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
+                        with st.container(border=True):
+                            # Title
+                            st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{card_id.capitalize()}</b></div>", unsafe_allow_html=True)
                             
-                            # Passing the new X Offset!
-                            comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
-                            if comp_img:
-                                render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                            # --- DETERMINE LOCK STATE ---
+                            is_locked = False
+                            if card_id.endswith('4') and not p.asc2_unlocked: is_locked = True
+                            if card_id.startswith('div') and not p.asc1_unlocked: is_locked = True
+                            
+                            # Flush invalid states if they toggle Asc2/Asc1 off
+                            if is_locked and st.session_state[widget_key] != 0:
+                                st.session_state[widget_key] = 0
+                            elif not is_locked and not p.asc1_unlocked and st.session_state[widget_key] == 4:
+                                st.session_state[widget_key] = 3
+                                
+                            user_tier = st.session_state[widget_key]
+                            p.set_card_level(card_id, user_tier)
+                            
+                            # --- DYNAMIC CARD COMPOSITING ---
+                            if user_tier > 0 and not is_locked:
+                                bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{user_tier}.png")
+                                cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
+                                
+                                # Passing the new X Offset!
+                                comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
+                                if comp_img:
+                                    render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                                else:
+                                    st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div><br>", unsafe_allow_html=True)
                             else:
-                                st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div><br>", unsafe_allow_html=True)
-                        else:
-                            st.markdown("<div style='text-align: center; color: gray;'><br><small>(Not Unlocked)</small><br><br></div>", unsafe_allow_html=True)
+                                st.markdown("<div style='text-align: center; color: gray;'><br><small>(Not Unlocked)</small><br><br></div>", unsafe_allow_html=True)
+                                
+                            st.divider()
                             
-                        st.divider()
-                        
-                        # Render native input without the spoiler red text logic
-                        st.number_input(
-                            f"Lvl##{card_id}", min_value=0, max_value=4,
-                            key=widget_key, step=1,
-                            on_change=update_card_level, args=(widget_key, card_id),
-                            label_visibility="collapsed"
-                        )
-                        p.set_card_level(card_id, st.session_state[widget_key])
+                            max_card_level = 4 if p.asc1_unlocked else 3
+                            
+                            st.number_input(
+                                f"Lvl##{card_id}", min_value=0, max_value=max_card_level,
+                                key=widget_key, step=1,
+                                on_change=update_card_level, args=(widget_key, card_id),
+                                label_visibility="collapsed",
+                                disabled=is_locked
+                            )
 
     # --- TAB 4: CALCULATED STATS ---
     with tab_calc_stats:
@@ -1089,6 +1118,7 @@ if __name__ == "__main__":
         table_data =[]
         
         for block_id, base in cfg.BLOCK_BASE_STATS.items():
+            if not p.asc1_unlocked and block_id.startswith('div'): continue
             # Hide Tier 4 blocks if Asc2 is not unlocked
             if not p.asc2_unlocked and block_id.endswith('4'):
                 continue
@@ -1240,7 +1270,8 @@ if __name__ == "__main__":
                 render_sandbox_stat("Perception", 'Per', scol1)
                 render_sandbox_stat("Intelligence", 'Int', scol2)
                 render_sandbox_stat("Luck", 'Luck', scol1)
-                render_sandbox_stat("Divine", 'Div', scol2)
+                if p.asc1_unlocked:
+                    render_sandbox_stat("Divine", 'Div', scol2)
                 if p.asc2_unlocked:
                     render_sandbox_stat("Corruption", 'Corr', scol1)
 
@@ -1289,6 +1320,8 @@ if __name__ == "__main__":
             # Generate the Table
             sb_table_data =[]
             for block_id in cfg.BLOCK_BASE_STATS.keys():
+                if block_id.startswith('div') and not sandbox_p.asc1_unlocked: continue
+                
                 tier = int(block_id[-1])
                 
                 if not show_unreachable:
@@ -1487,14 +1520,16 @@ if __name__ == "__main__":
             render_lock_stat("Perception", 'Per', lcol3)
             render_lock_stat("Intelligence", 'Int', lcol4)
             render_lock_stat("Luck", 'Luck', lcol1)
-            render_lock_stat("Divine", 'Div', lcol2)
+            if p.asc1_unlocked:
+                render_lock_stat("Divine", 'Div', lcol2)
             if p.asc2_unlocked:
                 render_lock_stat("Corruption", 'Corr', lcol3)
 
         st.divider()
 
         # --- HARDWARE BENCHMARKING & ETA ---
-        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
+        if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
         
         if st.session_state.get("sims_per_sec", 0) == 0:
@@ -1603,7 +1638,8 @@ if __name__ == "__main__":
         
         # --- PRE-FLIGHT CHECK ---
         # Calculate total locked points to prevent mathematically impossible runs
-        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
+        if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
         DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
         
@@ -1663,7 +1699,8 @@ if __name__ == "__main__":
                 base_state_dict = {
                     'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                     'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                    'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 
+                    'arch_level': p.arch_level,
                     'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                     'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                     'total_infernal_cards': p.total_infernal_cards
@@ -1680,7 +1717,8 @@ if __name__ == "__main__":
 
                 with st.spinner(f"Engine Running..."):
                     start_time = time.time()
-                    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
+                    if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
                     if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                     DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
                     FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}
@@ -2221,6 +2259,10 @@ if __name__ == "__main__":
                             for r in st.session_state.run_history:
                                 if r.get("Target") in view_targets:
                                     r["Include"] = not r.get("Include", True)
+                            # Flush data editor memory so it redraws with the new backend boolean values
+                            for k in list(st.session_state.keys()):
+                                if k.startswith("history_editor_"):
+                                    del st.session_state[k]
                             st.rerun()
 
                     visible_history =[r for r in st.session_state.run_history if r.get("Target") in view_targets]
@@ -2253,12 +2295,17 @@ if __name__ == "__main__":
                         cols +=[ c for c in df_history.columns if c not in cols ]
                         df_history = df_history[cols]
                         
+                        # Create a robust, unique key to prevent Streamlit from losing checkbox states during rapid clicks
+                        view_targets_str = "_".join(view_targets)
+                        editor_key = f"history_editor_{len(visible_history)}_{view_targets_str}"
+                        
                         edited_df = st.data_editor(
                             df_history, 
                             hide_index=True, 
                             width="stretch",
                             column_config={"Include": st.column_config.CheckboxColumn("Include")},
-                            disabled=[c for c in df_history.columns if c != "Include"] 
+                            disabled=[c for c in df_history.columns if c != "Include"],
+                            key=editor_key
                         )
                         
                         # Sync live UI checkboxes directly back to the backend dictionaries
@@ -2296,7 +2343,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         synth_state_dict = {
                                             'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                                             'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                            'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                            'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                             'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                                             'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                                             'total_infernal_cards': p.total_infernal_cards
@@ -2531,6 +2578,12 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         
                                 # 3. Overwrite history (Unchecked runs are dropped into the void)
                                 st.session_state.run_history = hidden_runs + kept_visible_runs
+                                
+                                # Flush data editor memory to prevent shape mismatch errors
+                                for k in list(st.session_state.keys()):
+                                    if k.startswith("history_editor_"):
+                                        del st.session_state[k]
+                                        
                                 st.toast("🗑️ Unchecked runs permanently deleted!", icon="🧹")
                                 st.rerun()
                                 
@@ -2751,7 +2804,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                             roi_state_dict = {
                                 'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                                 'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                 'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                                 'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                                 'total_infernal_cards': p.total_infernal_cards
@@ -2817,7 +2870,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                     roi_state_dict = {
                                         'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                                         'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                        'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                        'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                         'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                                         'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                                         'total_infernal_cards': p.total_infernal_cards

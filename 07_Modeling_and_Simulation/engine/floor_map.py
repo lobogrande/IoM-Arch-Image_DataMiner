@@ -132,6 +132,10 @@ class FloorGenerator:
             # Roll Top-Down: Check Divine first, down to Dirt
             for rarity in range(6, -1, -1):
                 
+                # Divine blocks (rarity 6) do not exist pre-Asc1
+                if rarity == 6 and not player.asc1_unlocked:
+                    continue
+                    
                 # If this rarity isn't unlocked yet, skip
                 if floor_id < self.TIER_UNLOCKS[rarity][0]:
                     continue
