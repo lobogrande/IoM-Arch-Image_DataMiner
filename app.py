@@ -2401,7 +2401,7 @@ if __name__ == "__main__":
                         st.info("No runs match the selected filters. Run the optimizer to build history.")
                     else:
                         st.markdown("#### 🏆 Run Tie-Breaker Tournament")
-                        st.markdown("Once you have checked the **Include** box for your top 2-5 runs in the history table below, click the Synthesize button to merge them into the ultimate Meta-Build.")
+                        st.markdown("Once you have checked the **Include** box for a few of your top runs (we recommend 2 to 5, max 10) in the history table below, click the Synthesize button to merge them into the ultimate Meta-Build.")
                         
                         # Full-width placeholder to pull the progress bar out of the squished columns!
                         synth_progress_ui = st.empty()
@@ -2681,7 +2681,7 @@ if __name__ == "__main__":
                                 
                         st.divider()
                         st.markdown("#### 📋 Run History Table")
-                        st.write("*(Check the **Include** box for your top 2-5 runs to mix them into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
+                        st.write("*(Check the **Include** box for your top runs (recommend 2 to 5, max 10) to mix them into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
                         
                         df_history = pd.DataFrame(visible_history)
 
