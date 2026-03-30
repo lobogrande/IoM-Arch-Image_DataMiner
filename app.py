@@ -83,7 +83,7 @@ from core.player import Player
 from core.block import Block
 from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
-from tools.parallel_worker import run_optimization_phase, benchmark_hardware, get_optimal_step_profile, worker_simulate
+from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_optimal_step_profile, worker_simulate
 
 # --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
