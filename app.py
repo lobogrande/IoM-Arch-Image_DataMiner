@@ -2135,7 +2135,7 @@ if __name__ == "__main__":
                                 if cur_xp > 0 or tar_xp > 0:
                                     if tar_xp > cur_xp and val > 0:
                                         mins_req = (tar_xp - cur_xp) / val
-                                        st.success(f"**Required:** ~{(mins_req * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({mins_req:,.1f} mins real-time)")
+                                        st.success(f"**Required:** ~{(mins_req * 60.0) / 1000.0:,.1f}k Arch Seconds ({mins_req:,.1f} mins real-time)")
                                     elif tar_xp <= cur_xp:
                                         st.warning("Target EXP must be greater than Current EXP.")
     
@@ -2265,9 +2265,9 @@ if __name__ == "__main__":
                                                 rt_90, bk_90 = format_time(kills_90)
                                                 rt_99, bk_99 = format_time(kills_99)
                                                 
-                                                st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
-                                                st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
-                                                st.markdown(f"<small><b>99% Chance (Guaranteed):</b><br>~{rt_99} | ~{bk_99:.1f}k Banked</small>", unsafe_allow_html=True)
+                                                st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Arch Seconds</small>", unsafe_allow_html=True)
+                                                st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Arch Seconds</small>", unsafe_allow_html=True)
+                                                st.markdown(f"<small><b>99% Chance (Guaranteed):</b><br>~{rt_99} | ~{bk_99:.1f}k Arch Seconds</small>", unsafe_allow_html=True)
                                             else:
                                                 st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
     
@@ -2803,7 +2803,7 @@ if __name__ == "__main__":
                                     if s_cur_xp > 0 or s_tar_xp > 0:
                                         if s_tar_xp > s_cur_xp and m_score > 0:
                                             s_mins = (s_tar_xp - s_cur_xp) / m_score
-                                            st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Banked Arch Seconds ({s_mins:,.1f} mins real-time)")
+                                            st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Arch Seconds ({s_mins:,.1f} mins real-time)")
                                         else:
                                             st.warning("Target EXP must be greater than Current EXP.")
                                 elif "block_" in m_name and m_score > 0:
