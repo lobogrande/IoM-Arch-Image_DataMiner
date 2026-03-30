@@ -436,7 +436,7 @@ if __name__ == "__main__":
 
     # Pre-define the Simulation sub-tabs so we can seamlessly route content to them later
     with tab_sims:
-        tab_optimizer, tab_synth, tab_sandbox = st.tabs(["🚀 Optimizer", "🧬 Synthesizer & History", "🧪 Hit Calculator (Sandbox)"])
+        tab_optimizer, tab_synth, tab_sandbox = st.tabs(["🚀 Optimizer", "🧬 Build Synthesis & History", "🧪 Hit Calculator (Sandbox)"])
 
     # ==========================================
     # PLAYER SETUP & SIDEBAR MIGRATION
@@ -2350,9 +2350,19 @@ if __name__ == "__main__":
             # RUN HISTORY & SYNTHESIS (TAB ROUTING)
             # ==========================================
             with tab_synth:
-                st.markdown("### 📚 Run History & Hybrid Synthesis")
-                st.write("Because the combat math is highly balanced, optimizations often land on a 'Plateau' where wildly different builds perform identically. Track your runs here to spot these patterns.")
+                st.markdown("### 🧬 Build Synthesis & Tie-Breakers")
+                st.markdown("Because blocks only take whole hits, multiple different stat builds can tie for 1st place (a **Stat Plateau**). Use this tool to merge your best historical runs and calculate the absolute mathematical peak.")
                 
+                with st.expander("🤓 Deep Dive: The Stat Plateau & RNG Tie-Breakers"):
+                    st.markdown("""
+                    * **The Math:** If 50 Strength kills a block in exactly 3 hits, having 54 Strength *also* kills it in 3 hits. This creates a "Stat Plateau" where wildly different builds are mathematically identical.
+                    * **The Tie-Breaker (RNG):** To break the tie, the AI forces your selected builds to race 500 times. Whichever tied build happens to get slightly luckier with Critical Hits across a massive sample size wins the gold medal!
+                    * **The Synthesis:** The engine calculates the statistical center of your checked builds, generates nearby hybrid combinations, and runs the exhaustive 500-iteration tournament to find the true Meta-Build.
+                    
+                    **The Takeaway:** If your stats bounce around slightly between 1-minute scout runs, congratulations—you've reached the absolute peak!
+                    """)
+                st.divider()
+
                 if "run_history" in st.session_state and st.session_state.run_history:
                     # State migration failsafe: Normalize stale runs from older app versions
                     for r in st.session_state.run_history:
@@ -2388,22 +2398,15 @@ if __name__ == "__main__":
                     if not visible_history:
                         st.info("No runs match the selected filters. Run the optimizer to build history.")
                     else:
-                        st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
-                        with st.expander("💡 Strategy Tip: The Stat Plateau (Why do my stats change on re-runs?)", expanded=False):
-                            st.write("""
-* **The Math:** Enemies only take whole hits. If 50 Strength kills a boss in exactly 3 hits, having 54 Strength *also* kills it in 3 hits. This creates a "Stat Plateau" where several different builds are functionally identical and mathematically tied for 1st place.
-* **The Tie-Breaker (RNG):** To break the tie, the AI forces these top builds to race 500 times. Whichever tied build happens to get slightly luckier with Critical Hits during that specific race wins the gold medal!
-
-**The Takeaway:** If your stats bounce around slightly between runs, congratulations—you've reached the absolute peak! Send your results to the **Hit Calculator Sandbox** to prove to yourself that both builds kill your target blocks in the exact same number of hits.
-                            """)
-                        st.write("Smooth out Monte Carlo RNG noise. This algorithm calculates the statistical center of your checked builds, generates adjacent stat combinations, and runs an exhaustive 500-iteration simulation across all of them to find the true mathematical peak.")
+                        st.markdown("#### 🏆 Run Tie-Breaker Tournament")
+                        st.markdown("Once you have checked the **Include** box for your top 2-5 runs in the history table below, click the Synthesize button to merge them into the ultimate Meta-Build.")
                         
                         # Full-width placeholder to pull the progress bar out of the squished columns!
                         synth_progress_ui = st.empty()
                         
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
-                            if st.button("🧬 Synthesize & Verify Meta-Build", width="stretch"):
+                            if st.button("🧬 Synthesize Ultimate Meta-Build", width="stretch"):
                                 # WYSIWYG Guard: Only synthesize runs that are currently visible in the UI filter!
                                 valid_runs =[r for r in visible_history if r.get("Include", False)]
                                 
@@ -2675,8 +2678,8 @@ if __name__ == "__main__":
                                 st.rerun()
                                 
                         st.divider()
-                        st.markdown("#### 📋 Select Runs for Synthesis")
-                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
+                        st.markdown("#### 📋 Run History Table")
+                        st.write("*(Check the **Include** box for your top 2-5 runs to mix them into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
                         
                         df_history = pd.DataFrame(visible_history)
 
