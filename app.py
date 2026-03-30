@@ -491,7 +491,7 @@ if __name__ == "__main__":
                     st.button("✂️ Auto-Trim Stats", width="stretch", on_click=trim_stats, type="primary")
 
             # --- 2. IMPORT DATA ---
-            with st.expander("📂 Import Data", expanded=False):
+            with st.expander("📂 Import Data", expanded=True):
                 uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
                 
                 if uploaded_file is not None:
