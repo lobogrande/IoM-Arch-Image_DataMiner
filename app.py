@@ -2278,10 +2278,13 @@ if __name__ == "__main__":
                     with ui_tabs[tab_idx]:
                         tab_idx += 1
                         st.markdown("#### Collateral Loot Distribution")
-                        st.write("On average, each minute of simulated combat yields the following collateral rewards alongside your target:")
+                        st.write("On average, every **1k Arch Seconds** of simulated mining yields the following collateral fragments alongside your target:")
                         
-                        total_loot = sum(chart_loot.values()) if chart_loot else 1
-                        df_loot = pd.DataFrame(list(chart_loot.items()), columns=['Loot Tier', 'Amount'])
+                        # Transform values from per-minute to per 1k Arch Seconds
+                        scaled_loot = {k: (v / 60.0) * 1000.0 for k, v in chart_loot.items()}
+                        
+                        total_loot = sum(scaled_loot.values()) if scaled_loot else 1
+                        df_loot = pd.DataFrame(list(scaled_loot.items()), columns=['Loot Tier', 'Amount'])
                         df_loot['Label'] = df_loot['Amount'].apply(lambda x: f"{x:,.1f}  ({(x/total_loot)*100:.1f}%)")
                         
                         fig_loot = px.bar(
