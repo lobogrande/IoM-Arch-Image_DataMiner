@@ -1743,6 +1743,23 @@ if __name__ == "__main__":
         if st.button("🚀 Run Optimizer", use_container_width=True, type="primary", disabled=btn_disabled):
             st.write("---")
             
+            # --- AUTO-SCROLL TO PROGRESS BAR ---
+            st.markdown("<div id='opt-progress-anchor'></div>", unsafe_allow_html=True)
+            import streamlit.components.v1 as components
+            components.html(
+                '''
+                <script>
+                    const parent = window.parent.document;
+                    const el = parent.getElementById("opt-progress-anchor");
+                    if (el) {
+                        /* block: "center" keeps both the button and the progress bar visible */
+                        el.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }
+                </script>
+                ''',
+                height=0
+            )
+            
             # Clean up any stale ROI or Synthesis data from previous runs
             if "roi_stat_results" in st.session_state: del st.session_state["roi_stat_results"]
             if "roi_upg_results" in st.session_state: del st.session_state["roi_upg_results"]
