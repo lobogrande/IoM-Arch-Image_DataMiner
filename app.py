@@ -83,7 +83,7 @@ from core.player import Player
 from core.block import Block
 from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
-from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_eta_profiles, worker_simulate
+from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_optimal_step_profile, worker_simulate
 
 # --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
@@ -1569,8 +1569,6 @@ if __name__ == "__main__":
                 eta_bounds[s] = (val, val)
             else:
                 eta_bounds[s] = (0, EFFECTIVE_CAPS[s])
-                
-        live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
         with st.expander("⚙️ Engine Tuning", expanded=False):
             col_spd_1, col_spd_2 = st.columns([3, 1])
@@ -1582,44 +1580,24 @@ if __name__ == "__main__":
                     if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
                     st.rerun()
             
-            col_prof_1, col_prof_2 = st.columns(2)
+            st.write("#### Hardware-Aware Execution Limit")
+            time_limit_mins = st.slider(
+                "Safely scale the math to finish within:", 
+                min_value=1, max_value=30, value=5, step=1, format="%d mins",
+                help="The engine will automatically tighten or loosen the Phase 1 search grid to ensure it generates the mathematically safest number of combinations that your hardware can process in this timeframe."
+            )
             
-            with col_prof_1:
-                st.write("#### 1. Search Depth (Initial Step Size)")
-                
-                depth_labels = {
-                    "Fast": "Fast (Step 15) - Best for quick checks",
-                    "Standard": "Standard (Step 10) - Recommended balance",
-                    "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
-                }
-                
-                depth_choice = st.radio(
-                    "Select Search Depth", 
-                    options=list(depth_labels.keys()), 
-                    index=1,
-                    format_func=lambda x: depth_labels[x],
-                    horizontal=False, 
-                    label_visibility="collapsed"
-                )
-
-            with col_prof_2:
-                st.write("#### 2. Execution Time Limit")
-                time_limit_mins = st.slider(
-                    "Safely abort and return best build if time exceeds:", 
-                    min_value=1, max_value=30, value=5, step=1, format="%d mins",
-                    help="This is a 'Graceful Timeout'. To prevent data corruption, the engine will finish its currently active batch of math before stopping. Expect the final timer to overshoot your limit slightly!"
-                )
-                
-            step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
-            step_2 = max(2, step_1 // 3)
-            step_3 = 1
+            time_limit_secs = time_limit_mins * 60
             
-            prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
-            prof_data = live_eta_profiles[prof_key]
+            prof_data = get_optimal_step_profile(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec, time_limit_secs)
+            
+            step_1 = prof_data['step_1']
+            step_2 = prof_data['step_2']
+            step_3 = prof_data['step_3']
             
             preview_html = f"""
             <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
-                <b>Engine Execution Plan:</b><br>
+                <b>Auto-Scaling Execution Plan:</b><br>
                 🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
                 🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
                 🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.<br><br>
@@ -1647,8 +1625,8 @@ if __name__ == "__main__":
         # dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
         dev_mode = False
         
-        # --- ACTIVE SETTINGS TRANSPARENCY ---
-        st.info(f"⚙️ **Active Settings:** {depth_choice} Search Depth | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
+       # --- ACTIVE SETTINGS TRANSPARENCY ---
+        st.info(f"⚙️ **Active Settings:** Auto-Scaled Step {step_1} | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
         
         # --- PRE-FLIGHT CHECK ---
         # Calculate total locked points to prevent mathematically impossible runs
@@ -1720,14 +1698,8 @@ if __name__ == "__main__":
                     'total_infernal_cards': p.total_infernal_cards
                 }
 
-                prof_key = next((k for k in live_eta_profiles.keys() if k.startswith(depth_choice)), None)
-                if prof_key:
-                    prof_data = live_eta_profiles[prof_key]
-                    step_size = prof_data['step']
-                    st.info(f"⏱️ **Running {depth_choice} Search:** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
-                else:
-                    step_size = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
-                    st.info(f"⏱️ **Running {depth_choice} Search:** Building optimization grid...")
+                step_size = step_1
+                st.info(f"⏱️ **Running Auto-Scaled Search (Step {step_size}):** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
 
                 with st.spinner(f"Engine Running..."):
                     start_time = time.time()
