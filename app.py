@@ -1610,7 +1610,10 @@ if __name__ == "__main__":
             # Instead of a blocking spinner, we use an OS baseline that will 
             # invisibly self-correct to 100% accuracy at the end of their very first run.
             if sys.platform == "linux":
-                st.session_state.sims_per_sec = 50 # Humble default for Streamlit Cloud
+                # Humble default for Streamlit Community Cloud. 
+                # Free Linux containers only provide 1 vCPU and ~1GB RAM. 
+                # Starting at 50 prevents the Auto-Scaler from over-promising on the first run.
+                st.session_state.sims_per_sec = 50 
             elif sys.platform == "darwin":
                 st.session_state.sims_per_sec = 500
             else:
@@ -1803,15 +1806,21 @@ if __name__ == "__main__":
                             b = build.copy()
                             current_sum = sum(b.get(s, 0) for s in STATS_TO_OPTIMIZE)
                             missing = DYNAMIC_BUDGET - current_sum
+                            
                             if missing > 0:
-                                for s in STATS_TO_OPTIMIZE:
+                                # SMART TOP-UP: Sort unlocked stats by their current allocation (descending).
+                                # By dumping remainder points into the stat the AI already deemed "most valuable", 
+                                # we mathematically honor the optimization curve instead of guessing randomly.
+                                unlocked_stats =[s for s in STATS_TO_OPTIMIZE if not st.session_state.get(f"lock_check_{s}", False)]
+                                unlocked_stats.sort(key=lambda s: b.get(s, 0), reverse=True)
+                                
+                                for s in unlocked_stats:
                                     if missing <= 0: break
-                                    if not st.session_state.get(f"lock_check_{s}", False):
-                                        room = EFFECTIVE_CAPS[s] - b.get(s, 0)
-                                        if room > 0:
-                                            add = min(room, missing)
-                                            b[s] += add
-                                            missing -= add
+                                    room = EFFECTIVE_CAPS[s] - b.get(s, 0)
+                                    if room > 0:
+                                        add = min(room, missing)
+                                        b[s] += add
+                                        missing -= add
                             return b
 
                         with mp.Pool(CPU_CORES) as pool:
