@@ -897,7 +897,6 @@ if __name__ == "__main__":
         # Build the ordered list: Type then Tier
         ordered_card_ids =[]
         for o_type in block_types:
-            if o_type == 'div' and not p.asc1_unlocked: continue
             for tier_num in range(1, 5):
                 ordered_card_ids.append(f"{o_type}{tier_num}")
                 
@@ -914,38 +913,49 @@ if __name__ == "__main__":
                     st.session_state[widget_key] = current_lvl
                     
                 with cols_cards[col_idx]:
-                    with st.container(border=True):
-                        # Title
-                        st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{card_id.capitalize()}</b></div>", unsafe_allow_html=True)
-                        
-                        user_tier = st.session_state[widget_key]
-                        
-                        # --- DYNAMIC CARD COMPOSITING ---
-                        if user_tier > 0:
-                            bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{user_tier}.png")
-                            cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
+                        with st.container(border=True):
+                            # Title
+                            st.markdown(f"<div style='text-align: center; margin-bottom: 5px;'><b>{card_id.capitalize()}</b></div>", unsafe_allow_html=True)
                             
-                            # Passing the new X Offset!
-                            comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
-                            if comp_img:
-                                render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                            # --- DETERMINE LOCK STATE ---
+                            is_locked = False
+                            if card_id.endswith('4') and not p.asc2_unlocked: is_locked = True
+                            if card_id.startswith('div') and not p.asc1_unlocked: is_locked = True
+                            
+                            # Flush invalid states if they toggle Asc2/Asc1 off
+                            if is_locked and st.session_state[widget_key] != 0:
+                                st.session_state[widget_key] = 0
+                            elif not is_locked and not p.asc1_unlocked and st.session_state[widget_key] == 4:
+                                st.session_state[widget_key] = 3
+                                
+                            user_tier = st.session_state[widget_key]
+                            p.set_card_level(card_id, user_tier)
+                            
+                            # --- DYNAMIC CARD COMPOSITING ---
+                            if user_tier > 0 and not is_locked:
+                                bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{user_tier}.png")
+                                cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{card_id}.png")
+                                
+                                # Passing the new X Offset!
+                                comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
+                                if comp_img:
+                                    render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                                else:
+                                    st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div><br>", unsafe_allow_html=True)
                             else:
-                                st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div><br>", unsafe_allow_html=True)
-                        else:
-                            st.markdown("<div style='text-align: center; color: gray;'><br><small>(Not Unlocked)</small><br><br></div>", unsafe_allow_html=True)
+                                st.markdown("<div style='text-align: center; color: gray;'><br><small>(Not Unlocked)</small><br><br></div>", unsafe_allow_html=True)
+                                
+                            st.divider()
                             
-                        st.divider()
-                        
-                        # Limit max level to 3 if Asc1 is not unlocked (No Infernal cards)
-                        max_card_level = 4 if p.asc1_unlocked else 3
-                        
-                        st.number_input(
-                            f"Lvl##{card_id}", min_value=0, max_value=max_card_level,
-                            key=widget_key, step=1,
-                            on_change=update_card_level, args=(widget_key, card_id),
-                            label_visibility="collapsed"
-                        )
-                        p.set_card_level(card_id, st.session_state[widget_key])
+                            max_card_level = 4 if p.asc1_unlocked else 3
+                            
+                            st.number_input(
+                                f"Lvl##{card_id}", min_value=0, max_value=max_card_level,
+                                key=widget_key, step=1,
+                                on_change=update_card_level, args=(widget_key, card_id),
+                                label_visibility="collapsed",
+                                disabled=is_locked
+                            )
 
     # --- TAB 4: CALCULATED STATS ---
     with tab_calc_stats:
