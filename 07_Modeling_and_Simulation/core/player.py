@@ -82,6 +82,7 @@ class Player:
     }
 
     def __init__(self):
+        self.asc1_unlocked = False
         self.asc2_unlocked = False     
         self.arch_level = 1            
         self.current_max_floor = 100   
@@ -155,6 +156,11 @@ class Player:
             elif lvl == 4: w['W20'] = self.arch_ability_infernal_bonus
 
     def u(self, cell): 
+        if not self.asc1_unlocked:
+            locked_rows =[12, 17, 24, 32, 40, 47, 48, 49, 50, 51, 53, 54]
+            try:
+                if int(cell[1:]) in locked_rows: return 0.0
+            except ValueError: pass
         if not self.asc2_unlocked:
             locked_rows =[19, 27, 34, 46, 52, 55]
             try:
@@ -163,12 +169,14 @@ class Player:
         return self.upgrades.get(cell, 0.0)
 
     def w(self, cell, default=0.0): 
+        if cell == 'W4' and not self.asc1_unlocked: return 0.0 
         if cell == 'W8':
             cap = 0.75 if self.asc2_unlocked else 0.50
             return min(cap, self.external.get('W8_raw', 0.0))
         return self.external.get(cell, default)
     
     def stat(self, stat_name):
+        if not self.asc1_unlocked and stat_name == 'Div': return 0.0
         if not self.asc2_unlocked and stat_name == 'Corr': return 0.0
         return self.base_stats.get(stat_name, 0.0)
 
@@ -191,7 +199,9 @@ class Player:
         return hp_mult, exp_mult, loot_mult
 
     @property
-    def arch_infernal_cards(self): return sum(1 for lvl in self.cards.values() if lvl == 4)
+    def arch_infernal_cards(self): 
+        if not self.asc1_unlocked: return 0
+        return sum(1 for lvl in self.cards.values() if lvl == 4)
     @property
     def infernal_multiplier(self):
         hades_bonus = (self.hades_idol_level * 0.000045) if self.asc2_unlocked else 0.0
@@ -200,7 +210,7 @@ class Player:
 
     def inf(self, block_id):
         if block_id.endswith('4') and not self.asc2_unlocked: return 0.0
-        if self.cards.get(block_id, 0) == 4:
+        if self.cards.get(block_id, 0) == 4 and self.asc1_unlocked:
             inf_mult = self.infernal_multiplier
             bases = {
                 'dirt1': (0.1, 4), 'dirt2': (0.12, 4), 'dirt3': (0.08, 4), 'com1': (0.06, 4), 'com2': (0.07, 4), 'com3': (0.08, 4),

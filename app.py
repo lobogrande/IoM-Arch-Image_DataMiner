@@ -417,18 +417,29 @@ if __name__ == "__main__":
         # --- 1. GLOBAL SETTINGS ---
         with st.expander("⚙️ Global Settings", expanded=True):
             # Initialize session state for global settings so they don't throw warnings
+            if "set_asc1" not in st.session_state: st.session_state["set_asc1"] = p.asc1_unlocked
             if "set_asc2" not in st.session_state: st.session_state["set_asc2"] = p.asc2_unlocked
             if "set_arch" not in st.session_state: st.session_state["set_arch"] = int(p.arch_level)
             if "set_floor" not in st.session_state: st.session_state["set_floor"] = int(p.current_max_floor)
             if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
             
             # Render widgets with explicit keys
-            p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2")
+            p.asc1_unlocked = st.checkbox("Ascension 1 Unlocked", key="set_asc1")
+            
+            # Force Asc2 to uncheck if Asc1 is disabled
+            if not p.asc1_unlocked:
+                st.session_state["set_asc2"] = False
+                p.asc2_unlocked = False
+                
+            p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2", disabled=not p.asc1_unlocked)
             p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
             p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
             
-            # Hades Idol is a late-Asc1 unlock, available regardless of Asc2 status
-            p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
+            # Hades Idol is a late-Asc1 unlock
+            if p.asc1_unlocked:
+                p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
+            else:
+                p.hades_idol_level = 0
 
             # --- OVER-BUDGET AUTO-FIX ---
             current_allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
@@ -664,7 +675,10 @@ if __name__ == "__main__":
             render_stat("Intelligence", 'Int')
         with col3:
             render_stat("Luck", 'Luck')
-            render_stat("Divine", 'Div')
+            if p.asc1_unlocked:
+                render_stat("Divine", 'Div')
+            else:
+                p.base_stats['Div'] = 0
         with col4:
             if p.asc2_unlocked:
                 render_stat("Corruption", 'Corr')
@@ -681,13 +695,14 @@ if __name__ == "__main__":
             hide_maxed = st.toggle("👀 Hide Maxed Upgrades", value=False)
             st.divider()
 
+            asc1_locked_rows =[12, 17, 24, 32, 40, 47, 48, 49, 50, 51, 53, 54]
             asc2_locked_rows =[19, 27, 34, 46, 52, 55]
             
             # 1. Pre-filter active upgrades
             active_upgrades = list()
             for upg_id, upg_data in p.UPGRADE_DEF.items():
-                if not p.asc2_unlocked and upg_id in asc2_locked_rows:
-                    continue
+                if not p.asc1_unlocked and upg_id in asc1_locked_rows: continue
+                if not p.asc2_unlocked and upg_id in asc2_locked_rows: continue
                     
                 max_lvl = int(cfg.INTERNAL_UPGRADE_CAPS.get(upg_id, 99))
                 current_lvl = int(p.upgrade_levels.get(upg_id, 0))
@@ -754,6 +769,9 @@ if __name__ == "__main__":
                 ui_type = group['ui_type']
                 rows = group['rows']
                 
+                # Hide Hestia Idol if pre-Asc1
+                if not p.asc1_unlocked and 4 in rows: continue
+
                 current_val = int(p.external_levels.get(rows[0], 0))
                 if widget_key not in st.session_state:
                     st.session_state[widget_key] = current_val
@@ -879,6 +897,7 @@ if __name__ == "__main__":
         # Build the ordered list: Type then Tier
         ordered_card_ids =[]
         for o_type in block_types:
+            if o_type == 'div' and not p.asc1_unlocked: continue
             for tier_num in range(1, 5):
                 ordered_card_ids.append(f"{o_type}{tier_num}")
                 
@@ -917,9 +936,11 @@ if __name__ == "__main__":
                             
                         st.divider()
                         
-                        # Render native input without the spoiler red text logic
+                        # Limit max level to 3 if Asc1 is not unlocked (No Infernal cards)
+                        max_card_level = 4 if p.asc1_unlocked else 3
+                        
                         st.number_input(
-                            f"Lvl##{card_id}", min_value=0, max_value=4,
+                            f"Lvl##{card_id}", min_value=0, max_value=max_card_level,
                             key=widget_key, step=1,
                             on_change=update_card_level, args=(widget_key, card_id),
                             label_visibility="collapsed"
@@ -1087,6 +1108,7 @@ if __name__ == "__main__":
         table_data =[]
         
         for block_id, base in cfg.BLOCK_BASE_STATS.items():
+            if not p.asc1_unlocked and block_id.startswith('div'): continue
             # Hide Tier 4 blocks if Asc2 is not unlocked
             if not p.asc2_unlocked and block_id.endswith('4'):
                 continue
@@ -1238,7 +1260,8 @@ if __name__ == "__main__":
                 render_sandbox_stat("Perception", 'Per', scol1)
                 render_sandbox_stat("Intelligence", 'Int', scol2)
                 render_sandbox_stat("Luck", 'Luck', scol1)
-                render_sandbox_stat("Divine", 'Div', scol2)
+                if p.asc1_unlocked:
+                    render_sandbox_stat("Divine", 'Div', scol2)
                 if p.asc2_unlocked:
                     render_sandbox_stat("Corruption", 'Corr', scol1)
 
@@ -1287,6 +1310,8 @@ if __name__ == "__main__":
             # Generate the Table
             sb_table_data =[]
             for block_id in cfg.BLOCK_BASE_STATS.keys():
+                if block_id.startswith('div') and not sandbox_p.asc1_unlocked: continue
+                
                 tier = int(block_id[-1])
                 
                 if not show_unreachable:
@@ -1485,14 +1510,16 @@ if __name__ == "__main__":
             render_lock_stat("Perception", 'Per', lcol3)
             render_lock_stat("Intelligence", 'Int', lcol4)
             render_lock_stat("Luck", 'Luck', lcol1)
-            render_lock_stat("Divine", 'Div', lcol2)
+            if p.asc1_unlocked:
+                render_lock_stat("Divine", 'Div', lcol2)
             if p.asc2_unlocked:
                 render_lock_stat("Corruption", 'Corr', lcol3)
 
         st.divider()
 
         # --- HARDWARE BENCHMARKING & ETA ---
-        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
+        if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
         
         if st.session_state.get("sims_per_sec", 0) == 0:
@@ -1601,7 +1628,8 @@ if __name__ == "__main__":
         
         # --- PRE-FLIGHT CHECK ---
         # Calculate total locked points to prevent mathematically impossible runs
-        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+        STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
+        if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
         if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
         DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
         
@@ -1678,7 +1706,8 @@ if __name__ == "__main__":
 
                 with st.spinner(f"Engine Running..."):
                     start_time = time.time()
-                    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck', 'Div']
+                    STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
+                    if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
                     if p.asc2_unlocked: STATS_TO_OPTIMIZE.append('Corr')
                     DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
                     FIXED_STATS = {k: v for k, v in p.base_stats.items() if k not in STATS_TO_OPTIMIZE}

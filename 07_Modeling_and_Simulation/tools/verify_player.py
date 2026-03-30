@@ -41,7 +41,9 @@ def load_state_from_json(player: Player, filepath: str):
     # 1. Load Settings
     if 'settings' in data:
         s = data['settings']
+        player.asc1_unlocked = s.get('asc1_unlocked', False)
         player.asc2_unlocked = s.get('asc2_unlocked', False)
+        if player.asc2_unlocked: player.asc1_unlocked = True
         player.arch_level = s.get('arch_level', 1)
         player.current_max_floor = s.get('current_max_floor', 100)
         player.base_damage_const = s.get('base_damage_const', 10)
@@ -101,6 +103,7 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
     
     # Prune Settings
     settings_out = {
+        "asc1_unlocked": player.asc1_unlocked,
         "asc2_unlocked": player.asc2_unlocked,
         "arch_level": player.arch_level,
         "current_max_floor": player.current_max_floor,
@@ -109,12 +112,15 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
         "total_infernal_cards": player.total_infernal_cards,
         "arch_ability_infernal_bonus": player.arch_ability_infernal_bonus
     }
-    if hide_locked and not player.asc2_unlocked:
+    if hide_locked and not player.asc1_unlocked:
         if 'hades_idol_level' in settings_out:
             del settings_out['hades_idol_level']
 
     # Prune Base Stats
     base_stats_out = player.base_stats.copy()
+    if hide_locked and not player.asc1_unlocked:
+        if 'Div' in base_stats_out:
+            del base_stats_out['Div']
     if hide_locked and not player.asc2_unlocked:
         if 'Corr' in base_stats_out:
             del base_stats_out['Corr']
@@ -122,8 +128,12 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
     # Prune Cards
     cards_out = {}
     for k, v in player.cards.items():
+        if hide_locked and not player.asc1_unlocked and k.startswith('div'):
+            continue
         if hide_locked and not player.asc2_unlocked and k.endswith('4'):
             continue
+        if hide_locked and not player.asc1_unlocked and v > 3:
+            v = 3
         cards_out[k] = v
 
     data = {
@@ -134,10 +144,13 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
         "cards": cards_out
     }
 
+    asc1_locked_rows =[12, 17, 24, 32, 40, 47, 48, 49, 50, 51, 53, 54]
     asc2_locked_rows =[19, 27, 34, 46, 52, 55]
 
     # Populate Internal Upgrades
     for k, v in player.upgrade_levels.items():
+        if hide_locked and not player.asc1_unlocked and k in asc1_locked_rows:
+            continue
         if hide_locked and not player.asc2_unlocked and k in asc2_locked_rows:
             continue
             
