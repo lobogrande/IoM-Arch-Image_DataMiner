@@ -2279,72 +2279,33 @@ if __name__ == "__main__":
                                     del st.session_state[k]
                             st.rerun()
 
+                    # Inject global index to securely map frontend edits back to the session state array
+                    for i, r in enumerate(st.session_state.run_history):
+                        r["_global_idx"] = i
+
                     visible_history =[r for r in st.session_state.run_history if r.get("Target") in view_targets]
                     
                     if not visible_history:
                         st.info("No runs match the selected filters. Run the optimizer to build history.")
                     else:
-                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button below!)*")
-                        
-                        df_history = pd.DataFrame(visible_history)
-
-                        # --- Inject Card Reality Check Columns for Farming ---
-                        is_block_farming = any("block_" in t for t in view_targets)
-                        if is_block_farming:
-                            def get_50_str(score, odds):
-                                if score <= 0: return "N/A"
-                                return f"~{(0.693 * odds) / (score / 60.0) / 1000.0:.1f}k"
-                            
-                            df_history["Base Card (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 1500) if "block_" in row.get("Target", "") else "-", axis=1)
-                            df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
-                            df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
-                        
-                        cols =[ 'Include', 'Target', 'Metric Score' ]
-                        if is_block_farming:
-                            cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
-                        cols += [ 'Avg Floor', 'Max Floor' ]
-                        
-                        # Safe fallback in case old history rows don't have Max Floor yet
-                        if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                        cols +=[ c for c in df_history.columns if c not in cols ]
-                        df_history = df_history[cols]
-                        
-                        # Create a robust, unique key to prevent Streamlit from losing checkbox states during rapid clicks
-                        view_targets_str = "_".join(view_targets)
-                        editor_key = f"history_editor_{len(visible_history)}_{view_targets_str}"
-                        
-                        edited_df = st.data_editor(
-                            df_history, 
-                            hide_index=True, 
-                            width="stretch",
-                            column_config={"Include": st.column_config.CheckboxColumn("Include")},
-                            disabled=[c for c in df_history.columns if c != "Include"],
-                            key=editor_key
-                        )
-                        
-                        # Sync live UI checkboxes directly back to the backend dictionaries
-                        for i, row in edited_df.iterrows():
-                            visible_history[i]["Include"] = bool(row["Include"])
-                        
-                        st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
-                        st.info("""
-💡 **Strategy Tip: The "Stat Plateau" (Why do my stats change on re-runs?)**
-
-You might notice that running Synthesis multiple times gives slightly different stat numbers. Don't panic—the AI isn't guessing!
-
+                        with st.expander("💡 Strategy Tip: The Stat Plateau (Why do my stats change on re-runs?)", expanded=False):
+                            st.write("""
 * **The Math:** Enemies only take whole hits. If 50 Strength kills a boss in exactly 3 hits, having 54 Strength *also* kills it in 3 hits. This creates a "Stat Plateau" where several different builds are functionally identical and mathematically tied for 1st place.
 * **The Tie-Breaker (RNG):** To break the tie, the AI forces these top builds to race 500 times. Whichever tied build happens to get slightly luckier with Critical Hits during that specific race wins the gold medal!
 
 **The Takeaway:** If your stats bounce around slightly between runs, congratulations—you've reached the absolute peak! Send your results to the **Hit Calculator Sandbox** to prove to yourself that both builds kill your target blocks in the exact same number of hits.
-                        """)
+                            """)
                         st.write("Smooth out Monte Carlo RNG noise. This algorithm calculates the statistical center of your checked builds, generates adjacent stat combinations, and runs an exhaustive 500-iteration simulation across all of them to find the true mathematical peak.")
+                        
+                        # Full-width placeholder to pull the progress bar out of the squished columns!
+                        synth_progress_ui = st.empty()
                         
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
                             if st.button("🧬 Synthesize & Verify Meta-Build", width="stretch"):
                                 # WYSIWYG Guard: Only synthesize runs that are currently visible in the UI filter!
-                                valid_runs = [r for r in visible_history if r.get("Include", False)]
+                                valid_runs =[r for r in visible_history if r.get("Include", False)]
                                 
                                 if len(valid_runs) == 0:
                                     st.error("⚠️ You must have at least 1 visible run checked to synthesize!")
@@ -2352,7 +2313,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                     st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
                                     with st.spinner("Calculating center, generating permutations, and running deep verification..."):
-                                        stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor"]]
+                                        stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor", "_global_idx"]]
                                         
                                         synth_state_dict = {
                                             'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
@@ -2417,7 +2378,23 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         sims_spd = spd if spd > 0 else 1000
                                         eta_secs = total_sims / sims_spd
                                         
-                                        synth_prog = st.progress(0, text=f"🧬 Prepping {len(candidates)} build permutations... (~{total_sims:,} sims | ETA: {eta_secs:.1f}s)")
+                                        # Teleport the progress UI out of the column and into the full-width placeholder above!
+                                        with synth_progress_ui.container():
+                                            st.markdown("""
+                                            <style>
+                                                /* Fade out the stale legacy UI below the buttons to prevent duplicate confusion */
+                                                div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesis Performance Proof")),
+                                                div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesized Stat Allocation")),
+                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Meta-Build History Log")),
+                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Next Steps: Marginal Value")) {
+                                                    opacity: 0.1 !important;
+                                                    pointer-events: none !important;
+                                                }
+                                            </style>
+                                            <h3 style='text-align: center; color: #ffa229; border: 2px solid #ffa229; padding: 10px; border-radius: 10px; background-color: rgba(255, 162, 41, 0.1); margin-bottom: 20px;'>⚙️ Meta-Build Synthesis in Progress...</h3>
+                                            """, unsafe_allow_html=True)
+                                            synth_prog = st.progress(0, text=f"🧬 Prepping {len(candidates)} build permutations... (~{total_sims:,} sims | ETA: {eta_secs:.1f}s)")
+                                            
                                         synth_start_time = time.time()
                                         
                                         # TOURNAMENT ROUND 1: 50 runs each
@@ -2471,8 +2448,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                                     pct = min(100, int((current_sims / total_sims) * 100))
                                                     synth_prog.progress(pct, text=f"⚔️ Round 2/2: Deep verifying {len(r2_ids)} finalists ({current_sims}/{total_sims} sims) | ETA: {eta_secs:.1f}s")
                                         
-                                        # Clear the progress bar when complete!
-                                        synth_prog.empty()
+                                        # Clear the progress bar and restore the UI opacity when complete!
+                                        synth_progress_ui.empty()
                                         
                                         # Auto-Calibrate hardware speed using this deep run
                                         synth_elapsed = time.time() - synth_start_time
@@ -2585,10 +2562,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 hidden_runs =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
                                 
                                 # 2. Preserve only the visible runs that the user left CHECKED
-                                kept_visible_runs =[]
-                                for i, row in edited_df.iterrows():
-                                    if row["Include"]:
-                                        kept_visible_runs.append(visible_history[i])
+                                kept_visible_runs =[r for r in visible_history if r.get("Include", False)]
                                         
                                 # 3. Overwrite history (Unchecked runs are dropped into the void)
                                 st.session_state.run_history = hidden_runs + kept_visible_runs
@@ -2600,6 +2574,58 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         
                                 st.toast("🗑️ Unchecked runs permanently deleted!", icon="🧹")
                                 st.rerun()
+                                
+                        st.divider()
+                        st.markdown("#### 📋 Select Runs for Synthesis")
+                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
+                        
+                        df_history = pd.DataFrame(visible_history)
+
+                        # --- Inject Card Reality Check Columns for Farming ---
+                        is_block_farming = any("block_" in t for t in view_targets)
+                        if is_block_farming:
+                            def get_50_str(score, odds):
+                                if score <= 0: return "N/A"
+                                return f"~{(0.693 * odds) / (score / 60.0) / 1000.0:.1f}k"
+                            
+                            df_history["Base Card (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 1500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
+                        
+                        cols =[ 'Include', 'Target', 'Metric Score' ]
+                        if is_block_farming:
+                            cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
+                        cols +=[ 'Avg Floor', 'Max Floor' ]
+                        
+                        # Safe fallback in case old history rows don't have Max Floor yet
+                        if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
+                        cols +=[ c for c in df_history.columns if c not in cols and c != "_global_idx" ]
+                        df_history = df_history[cols]
+                        
+                        # Create a robust, unique key to anchor the frontend state
+                        view_targets_str = "_".join(view_targets)
+                        editor_key = f"history_editor_{len(visible_history)}_{view_targets_str}"
+                        
+                        def on_history_change():
+                            """Callback to map frontend edits securely to the backend BEFORE the script reruns."""
+                            if editor_key not in st.session_state: return
+                            edits = st.session_state[editor_key].get("edited_rows", {})
+                            for row_idx_str, edit_dict in edits.items():
+                                if "Include" in edit_dict:
+                                    row_idx = int(row_idx_str)
+                                    # Use the closure's visible_history from the previous render to map the index
+                                    global_idx = visible_history[row_idx]["_global_idx"]
+                                    st.session_state.run_history[global_idx]["Include"] = edit_dict["Include"]
+
+                        edited_df = st.data_editor(
+                            df_history, 
+                            hide_index=True, 
+                            width="stretch",
+                            column_config={"Include": st.column_config.CheckboxColumn("Include")},
+                            disabled=[c for c in df_history.columns if c != "Include"],
+                            key=editor_key,
+                            on_change=on_history_change
+                        )
                                 
                         # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
                         if "synthesis_result" in st.session_state:
