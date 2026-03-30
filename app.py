@@ -1884,14 +1884,17 @@ if __name__ == "__main__":
                             p1_budget = DYNAMIC_BUDGET - rem_p1
                                     
                             best_p1, summary_p1 = run_optimization_phase(
-                                "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
-                                p1_budget, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
-                                progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
-                                base_state_dict=base_state_dict
-                            )
+                                    "Phase 1 (Coarse)", target_metric, STATS_TO_OPTIMIZE, 
+                                    p1_budget, step_size, ITER_P1, pool, FIXED_STATS, bounds_p1,
+                                    progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
+                                    base_state_dict=base_state_dict
+                                )
                             best_p1 = top_up_build(best_p1)
                             
-                            # --- PHASE 2 (Fine) ---
+                            if best_p1 is None:
+                                raise ValueError(f"**Curse of Dimensionality!** The AI was forced to use a massive Step Size ({step_size}) to scan all {len(STATS_TO_OPTIMIZE)} unlocked stats within the time limit. Because this step size is larger than some of your stat caps (like Div/Corr), exactly **0 valid combinations** were generated.\n\n💡 **HOW TO FIX THIS:**\n1. **Calibrate:** Lock 4 stats and do a fast '10 Second' run. This will teach the AI your true hardware speed, drastically lowering future Step Sizes!\n2. **Lock Stats:** Lock Agility/Stamina if early farming, or Lock Int/Luck to max.")
+                                
+                                # --- PHASE 2 (Fine) ---
                             best_p2, summary_p2 = None, None
                             if best_p1 and (time.time() - start_time) < time_limit_secs:
                                 bounds_p2 = {}
@@ -1934,6 +1937,9 @@ if __name__ == "__main__":
                                     base_state_dict=base_state_dict
                                 )
                                 best_p3 = top_up_build(best_p3)
+                    except ValueError as val_err:
+                        st.error(f"⚠️ **Simulation Aborted (Invalid Grid):**\n{str(val_err)}")
+                        best_p3, final_summary = None, None
                     except Exception as crash_err:
                         st.error(f"🚨 **CRITICAL ENGINE CRASH:** The background worker was unexpectedly killed. This is almost always caused by the Streamlit Cloud server temporarily running out of memory.")
                         st.error(f"**Technical Details:** `{type(crash_err).__name__}: {str(crash_err)}`")
@@ -3241,10 +3247,13 @@ if __name__ == "__main__":
                 
                 # Easily add/remove names from this list!
                 testers =[
-                    "DiscordUser1",
-                    "DiscordUser2",
-                    "DiscordUser3",
-                    "DiscordUser4"
+                    "Sans",
+                    "Doctorcool",
+                    "Eugloopy☆Dilemma",
+                    "Saronitian",
+                    "Dustin",
+                    "Dave",
+                    "Koksuone"
                 ]
                 
                 # Render names in a nice compact 2-column grid
