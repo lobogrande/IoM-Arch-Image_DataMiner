@@ -2340,11 +2340,14 @@ You might notice that running Synthesis multiple times gives slightly different 
                         """)
                         st.write("Smooth out Monte Carlo RNG noise. This algorithm calculates the statistical center of your checked builds, generates adjacent stat combinations, and runs an exhaustive 500-iteration simulation across all of them to find the true mathematical peak.")
                         
+                        # Full-width placeholder to pull the progress bar out of the squished columns!
+                        synth_progress_ui = st.empty()
+                        
                         col_synth1, col_synth2 = st.columns(2)
                         with col_synth1:
                             if st.button("🧬 Synthesize & Verify Meta-Build", width="stretch"):
                                 # WYSIWYG Guard: Only synthesize runs that are currently visible in the UI filter!
-                                valid_runs = [r for r in visible_history if r.get("Include", False)]
+                                valid_runs =[r for r in visible_history if r.get("Include", False)]
                                 
                                 if len(valid_runs) == 0:
                                     st.error("⚠️ You must have at least 1 visible run checked to synthesize!")
@@ -2417,7 +2420,23 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         sims_spd = spd if spd > 0 else 1000
                                         eta_secs = total_sims / sims_spd
                                         
-                                        synth_prog = st.progress(0, text=f"🧬 Prepping {len(candidates)} build permutations... (~{total_sims:,} sims | ETA: {eta_secs:.1f}s)")
+                                        # Teleport the progress UI out of the column and into the full-width placeholder above!
+                                        with synth_progress_ui.container():
+                                            st.markdown("""
+                                            <style>
+                                                /* Fade out the stale legacy UI below the buttons to prevent duplicate confusion */
+                                                div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesis Performance Proof")),
+                                                div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesized Stat Allocation")),
+                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Meta-Build History Log")),
+                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Next Steps: Marginal Value")) {
+                                                    opacity: 0.1 !important;
+                                                    pointer-events: none !important;
+                                                }
+                                            </style>
+                                            <h3 style='text-align: center; color: #ffa229; border: 2px solid #ffa229; padding: 10px; border-radius: 10px; background-color: rgba(255, 162, 41, 0.1); margin-bottom: 20px;'>⚙️ Meta-Build Synthesis in Progress...</h3>
+                                            """, unsafe_allow_html=True)
+                                            synth_prog = st.progress(0, text=f"🧬 Prepping {len(candidates)} build permutations... (~{total_sims:,} sims | ETA: {eta_secs:.1f}s)")
+                                            
                                         synth_start_time = time.time()
                                         
                                         # TOURNAMENT ROUND 1: 50 runs each
@@ -2471,8 +2490,8 @@ You might notice that running Synthesis multiple times gives slightly different 
                                                     pct = min(100, int((current_sims / total_sims) * 100))
                                                     synth_prog.progress(pct, text=f"⚔️ Round 2/2: Deep verifying {len(r2_ids)} finalists ({current_sims}/{total_sims} sims) | ETA: {eta_secs:.1f}s")
                                         
-                                        # Clear the progress bar when complete!
-                                        synth_prog.empty()
+                                        # Clear the progress bar and restore the UI opacity when complete!
+                                        synth_progress_ui.empty()
                                         
                                         # Auto-Calibrate hardware speed using this deep run
                                         synth_elapsed = time.time() - synth_start_time
