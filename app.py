@@ -22,6 +22,7 @@ from io import BytesIO
 from collections import Counter
 from PIL import Image
 import pandas as pd
+import requests
 
 # ==============================================================================
 # 🎨 UI TWEAK PANEL 🎨
