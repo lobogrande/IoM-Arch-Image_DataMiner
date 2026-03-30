@@ -974,13 +974,13 @@ if __name__ == "__main__":
             if troubleshoot_stat != "(Select a Stat...)":
                 # Hardcoded Dependency Maps based on Player.py formulas
                 TROUBLESHOOT_MAP = {
-                    "Damage": {"stats": ["Str", "Corr", "Div"], "upgs":[9, 15, 20, 25, 32, 34, 36, 47, 49, 51, 52], "exts":["Dino Skin", "Hestia Idol"]},
-                    "Armor Pen": {"stats": ["Per", "Int"], "upgs": [10, 17, 29, 33, 36], "exts": []},
-                    "Max Stamina": {"stats": ["Agi", "Corr"], "upgs":[3, 14, 23, 26, 28, 39, 54], "exts": []},
-                    "Crit Chances & Multipliers": {"stats":["Luck", "Div"], "upgs":[13, 18, 20, 30, 37, 40, 47, 49, 53], "exts":[]},
-                    "EXP & Fragment Gain": {"stats": ["Int", "Per", "Div"], "upgs":[4, 11, 21, 28, 35, 42, 45, 51], "exts": ["Axolotl Skin", "Geoduck Tribute"]},
-                    "Mod Chances & Multipliers": {"stats": ["Luck", "Div", "Corr"], "upgs":[5, 14, 16, 23, 24, 26, 33, 35, 38, 40, 43, 44, 48, 50, 52, 53, 54, 55], "exts": ["Archaeology Bundle"]},
-                    "Abilities (Instacharge / Cooldowns)": {"stats": ["Int", "Div"], "upgs":[18, 22, 29, 31, 32, 39, 50], "exts":["Arch Ability Card", "Avada Keda- Skill", "Block Bonker Skill"]}
+                    "Damage": {"stats":["Str", "Corr", "Div"], "upgs":[9, 15, 20, 25, 32, 34, 36, 47, 49, 51, 52], "exts":["Dino Skin", "Hestia Idol"], "infs":["rare2", "div1"]},
+                    "Armor Pen": {"stats": ["Per", "Int"], "upgs":[10, 17, 29, 33, 36], "exts": [], "infs":["leg3", "rare3"]},
+                    "Max Stamina": {"stats": ["Agi", "Corr"], "upgs":[3, 14, 23, 26, 28, 39, 54], "exts": [], "infs":["epic3"]},
+                    "Crit Chances & Multipliers": {"stats":["Luck", "Div"], "upgs":[13, 18, 20, 30, 37, 40, 47, 49, 53], "exts":[], "infs":["com1", "com2", "com3", "epic2"]},
+                    "EXP & Fragment Gain": {"stats": ["Int", "Per", "Div"], "upgs":[4, 11, 21, 28, 35, 42, 45, 51], "exts": ["Axolotl Skin", "Geoduck Tribute"], "infs":["dirt2", "dirt3", "leg1"]},
+                    "Mod Chances & Multipliers": {"stats":["Luck", "Div", "Corr"], "upgs":[5, 14, 16, 23, 24, 26, 33, 35, 38, 40, 43, 44, 48, 50, 52, 53, 54, 55], "exts": ["Archaeology Bundle"], "infs":["dirt1", "rare1", "epic1", "leg2", "myth2", "myth3", "div3"]},
+                    "Abilities (Instacharge / Cooldowns)": {"stats": ["Int", "Div"], "upgs":[18, 22, 29, 31, 32, 39, 50], "exts":["Arch Ability Card", "Avada Keda- Skill", "Block Bonker Skill"], "infs":[]}
                 }
                 
                 data = TROUBLESHOOT_MAP[troubleshoot_stat]
@@ -990,7 +990,7 @@ if __name__ == "__main__":
                 for group in cfg.EXTERNAL_UI_GROUPS:
                     ext_vals[group['name']] = int(p.external_levels.get(group['rows'][0], 0))
                 
-                t_col1, t_col2, t_col3 = st.columns(3)
+                t_col1, t_col2, t_col3, t_col4 = st.columns(4)
                 
                 with t_col1:
                     st.markdown("##### 📊 Base Stats")
@@ -1016,6 +1016,20 @@ if __name__ == "__main__":
                         for e in data["exts"]:
                             val = ext_vals.get(e, 0)
                             st.markdown(f"**{e}:** `{val}`")
+                            
+                with t_col4:
+                    st.markdown("##### 🎴 Infernal Cards")
+                    if not data.get("infs"):
+                        st.markdown("*(None apply)*")
+                    else:
+                        for c in data["infs"]:
+                            val = p.inf(c)
+                            card_label = c.capitalize()
+                            # Differentiate between Flat bonuses (decimals=0) and Percentage multipliers
+                            if c in ['rare2', 'leg3', 'div3']:
+                                st.markdown(f"**{card_label}:** `+{val:,.1f}`")
+                            else:
+                                st.markdown(f"**{card_label}:** `+{val*100:,.2f}%`")
                             
                 # Add conditional warning for common traps
                 if troubleshoot_stat == "Damage":
