@@ -2470,8 +2470,7 @@ if __name__ == "__main__":
                                                 /* Fade out the stale legacy UI below the buttons to prevent duplicate confusion */
                                                 div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesis Performance Proof")),
                                                 div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesized Stat Allocation")),
-                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Meta-Build History Log")),
-                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Next Steps: Marginal Value")) {
+                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Meta-Build History Log")) {
                                                     opacity: 0.1 !important;
                                                     pointer-events: none !important;
                                                 }
@@ -2731,7 +2730,7 @@ if __name__ == "__main__":
                                 del st.session_state["synthesis_result"]
                                 st.rerun()
                                 
-                            st.success("✅ Synthesis Complete! The main charts above have been updated to reflect this build.")
+                            st.success("✅ Synthesis Complete! The main Advanced Analytics charts on the **Optimizer** tab have been updated to reflect this new Meta-Build.")
                             
                             # --- 📊 PERFORMANCE PROOF CHART ---
                             st.markdown("#### 📊 Synthesis Performance Proof")
