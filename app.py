@@ -2237,6 +2237,7 @@ if __name__ == "__main__":
                                     if val > 0:
                                         kills_50 = 0.693 * base_odds
                                         kills_90 = 2.302 * base_odds
+                                        kills_99 = 4.605 * base_odds
                                         
                                         def format_time(req_kills):
                                             rt_mins = req_kills / val
@@ -2247,9 +2248,11 @@ if __name__ == "__main__":
 
                                         rt_50, bk_50 = format_time(kills_50)
                                         rt_90, bk_90 = format_time(kills_90)
+                                        rt_99, bk_99 = format_time(kills_99)
                                         
                                         st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
                                         st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
+                                        st.markdown(f"<small><b>99% Chance (Guaranteed):</b><br>~{rt_99} | ~{bk_99:.1f}k Banked</small>", unsafe_allow_html=True)
                                     else:
                                         st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
 
