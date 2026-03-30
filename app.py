@@ -431,8 +431,8 @@ if __name__ == "__main__":
         'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
     }
 
-    tab_welcome, tab_setup, tab_calc_stats, tab_block_stats, tab_sims = st.tabs([
-        "🏠 Welcome", "⚙️ Player Setup", "📋 Calculated Stats", "🪨 Block Compendium", "🧪 Simulations"
+    tab_welcome, tab_setup, tab_calc_stats, tab_block_stats, tab_sims, tab_about = st.tabs([
+        "🏠 Welcome", "⚙️ Player Setup", "📋 Calculated Stats", "🪨 Block Compendium", "🧪 Simulations", "📚 About & Feedback"
     ])
 
     # Pre-define the Simulation sub-tabs so we can seamlessly route content to them later
@@ -570,47 +570,61 @@ if __name__ == "__main__":
 
     # --- TAB 0: WELCOME ---
     with tab_welcome:
-        with st.container(border=True):
-            st.markdown("### 👋 Welcome to the Optimizer!")
-            st.write("If you are new here, follow these 3 steps to get started:")
-            st.markdown("1. **Input your Stats & Upgrades:** Go to the **Player Setup** tab to manually enter your player info or **Import** your own json player data, or click a **Preset Build** below to auto-fill realistic data.\n2. **Select your Goal:** Go to the **Simulations -> Optimizer** tab and choose your target.\n3. **Run the Engine:** Let the Monte Carlo simulations find your perfect mathematical build.")
-            
-            st.divider()
-            st.markdown("#### 🚀 Quick Start: Load a Preset Build")
-            
-            col_p1, col_p2, col_p3 = st.columns(3)
-            
-            def apply_preset(preset_dict=None, reset=False):
-                if reset:
-                    st.session_state.player = Player()
-                else:
-                    import uuid
-                    temp_path = os.path.join(ROOT_DIR, f"temp_preset_{uuid.uuid4().hex}.json")
-                    with open(temp_path, "w") as f:
-                        json.dump(preset_dict, f)
-                    load_state_from_json(st.session_state.player, temp_path)
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
+        
+        # --- PERSONAL NOTE ---
+        st.info("### 📝 A note from the developer...\nWelcome! I built this Monte Carlo simulator because Idle Obelisk Miner's mechanics (like strict truncation and multiplicative scaling) make it incredibly difficult to 'guess' the perfect stat distribution. \n\nMy goal is to give you a tool that completely eliminates the guesswork. Whether you want to push for a new Max Floor or farm Block Cards with maximum efficiency, this AI engine will simulate hundreds of thousands of hits to find the exact mathematical peak for your specific character. I hope it helps you crush those progression walls!")
+        
+        col_w_guide, col_w_tips = st.columns([1.5, 1])
+        with col_w_guide:
+            with st.container(border=True):
+                st.markdown("### 👋 How to use this app")
+                st.write("If you are new here, follow these 3 steps to get started:")
+                st.markdown("1. **Input your Stats:** Go to the **Player Setup** tab to manually enter your info, **Import** your json data, or click a **Preset Build** below.\n2. **Select your Goal:** Go to the **Simulations -> Optimizer** tab and choose your target.\n3. **Run the Engine:** Let the AI find your perfect mathematical build.")
+        
+        with col_w_tips:
+            with st.expander("💡 Quick Tips & Tricks", expanded=True):
+                st.markdown("""
+                * **The "Suicide Farming" Paradox:** Buying survival stats (Agility/Stamina) when farming early-game blocks pushes you to deeper floors where blocks have exponentially more HP, mathematically lowering your kills/min!
+                * **Stat Plateaus:** Because blocks only take whole hits, 50 Strength and 54 Strength might both result in a '3-hit kill'. Use the **Sandbox Tab** to find these exact breakpoints.
+                * **Use Stat Locks:** When running the Optimizer, locking obvious stats (like setting Agility to 0 for early farming) makes the AI run exponentially faster and more accurately!
+                """)
                 
-                # Flush all UI widget keys to force sync with the new player state
-                for k in list(st.session_state.keys()):
-                    if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
-                        del st.session_state[k]
-                st.rerun()
+        st.divider()
+        st.markdown("#### 🚀 Quick Start: Load a Preset Build")
+        
+        col_p1, col_p2, col_p3 = st.columns(3)
+        
+        def apply_preset(preset_dict=None, reset=False):
+            if reset:
+                st.session_state.player = Player()
+            else:
+                import uuid
+                temp_path = os.path.join(ROOT_DIR, f"temp_preset_{uuid.uuid4().hex}.json")
+                with open(temp_path, "w") as f:
+                    json.dump(preset_dict, f)
+                load_state_from_json(st.session_state.player, temp_path)
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            
+            # Flush all UI widget keys to force sync with the new player state
+            for k in list(st.session_state.keys()):
+                if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
+                    del st.session_state[k]
+            st.rerun()
 
-            with col_p1:
-                if st.button("🌱 Load Early-Game Build\n(Asc 1, Floor 40)", width="stretch"):
-                    early_game = {"settings": {"asc2_unlocked": False, "arch_level": 45, "current_max_floor": 40, "base_damage_const": 10, "total_infernal_cards": 0}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 0, "Luck": 20, "Div": 10}, "internal_upgrades": {"3 - Gem Stamina": 25, "4 - Gem Exp": 12, "5 - Gem Loot": 12, "9 - Flat Damage": 15, "10 - Armor Pen.": 15, "11 - Exp. Gain": 15, "12 - Stat Points": 3, "13 - Crit Chance/Damage": 12, "14 - Max Sta/Sta Mod Chance": 12, "15 - Flat Damage": 8, "16 - Loot Mod Gain": 6, "17 - Unlock Fairy/Armor Pen": 6, "18 - Enrage&Crit Dmg/Enrage Cooldown": 5, "20 - Flat Dmg/Super Crit Chance": 5, "21 - Exp Gain/Fragment Gain": 4, "22 - Flurry Sta Gain/Flurr Cooldown": 4, "23 - Max Sta/Sta Mod Gain": 4, "24 - All Mod Chances": 3, "25 - Flat Dmg/Damage Up": 0, "26 - Max Sta/Mod Chance": 0, "28 - Exp Gain/Max Sta": 3, "29 - Armor Pen/Ability Cooldowns": 3, "30 - Crit Dmg/Super Crit Dmg": 3, "31 - Quake Atks/Cooldown": 3, "32 - Flat Dmg/Enrage Cooldown": 0, "33 - Mod Chance/Armor Pen": 0, "35 - Exp Gain/Mod Ch.": 0, "36 - Damage Up/Armor Pen": 0, "37 - Super Crit/Ultra Crit Chance": 0, "38 - Exp Mod Gain/Chance": 0, "39 - Ability Insta Chance/Max Sta": 0, "40 - Ultra Crit Dmg/Sta Mod Chance": 0, "41 - Poly Card Bonus": 0, "42 - Frag Gain Mult": 0, "43 - Sta Mod Gain": 0, "44 - All Mod Chances": 0, "45 - Exp Gain/All Stat Cap Inc.": 0, "47 - Damage Up/Crit Dmg Up": 0, "48 - Gold Crosshair Chance/Auto-Tap Chance": 0, "49 - Flat Dmg/Ultra Crit Chance": 0, "50 - Ability Insta Chance/Sta Mod Chance": 0, "51 - Dmg Up/Exp Gain": 0, "53 - Super Crit Dmg/Exp Mod Gain": 0, "54 - Max Sta/Crosshair Auto-Tap Chance": 0}, "external_upgrades": {"Hestia Idol": 0, "Axolotl Skin": 9, "Dino Skin": 9, "Geoduck Tribute": 750, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 0, "Ascension Bundle": 0, "Arch Ability Card": 3, "Arch Ability Infernal Bonus": 0.0}, "cards": {"dirt1": 3, "dirt2": 2, "dirt3": 2, "com1": 3, "com2": 2, "com3": 2, "rare1": 3, "rare2": 2, "rare3": 2, "epic1": 2, "epic2": 2, "epic3": 2, "leg1": 2, "leg2": 2, "leg3": 2, "myth1": 2, "myth2": 2, "myth3": 2, "div1": 2, "div2": 0, "div3": 0}}
-                    apply_preset(early_game)
+        with col_p1:
+            if st.button("🌱 Load Early-Game Build\n(Asc 1, Floor 40)", width="stretch"):
+                early_game = {"settings": {"asc2_unlocked": False, "arch_level": 45, "current_max_floor": 40, "base_damage_const": 10, "total_infernal_cards": 0}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 0, "Luck": 20, "Div": 10}, "internal_upgrades": {"3 - Gem Stamina": 25, "4 - Gem Exp": 12, "5 - Gem Loot": 12, "9 - Flat Damage": 15, "10 - Armor Pen.": 15, "11 - Exp. Gain": 15, "12 - Stat Points": 3, "13 - Crit Chance/Damage": 12, "14 - Max Sta/Sta Mod Chance": 12, "15 - Flat Damage": 8, "16 - Loot Mod Gain": 6, "17 - Unlock Fairy/Armor Pen": 6, "18 - Enrage&Crit Dmg/Enrage Cooldown": 5, "20 - Flat Dmg/Super Crit Chance": 5, "21 - Exp Gain/Fragment Gain": 4, "22 - Flurry Sta Gain/Flurr Cooldown": 4, "23 - Max Sta/Sta Mod Gain": 4, "24 - All Mod Chances": 3, "25 - Flat Dmg/Damage Up": 0, "26 - Max Sta/Mod Chance": 0, "28 - Exp Gain/Max Sta": 3, "29 - Armor Pen/Ability Cooldowns": 3, "30 - Crit Dmg/Super Crit Dmg": 3, "31 - Quake Atks/Cooldown": 3, "32 - Flat Dmg/Enrage Cooldown": 0, "33 - Mod Chance/Armor Pen": 0, "35 - Exp Gain/Mod Ch.": 0, "36 - Damage Up/Armor Pen": 0, "37 - Super Crit/Ultra Crit Chance": 0, "38 - Exp Mod Gain/Chance": 0, "39 - Ability Insta Chance/Max Sta": 0, "40 - Ultra Crit Dmg/Sta Mod Chance": 0, "41 - Poly Card Bonus": 0, "42 - Frag Gain Mult": 0, "43 - Sta Mod Gain": 0, "44 - All Mod Chances": 0, "45 - Exp Gain/All Stat Cap Inc.": 0, "47 - Damage Up/Crit Dmg Up": 0, "48 - Gold Crosshair Chance/Auto-Tap Chance": 0, "49 - Flat Dmg/Ultra Crit Chance": 0, "50 - Ability Insta Chance/Sta Mod Chance": 0, "51 - Dmg Up/Exp Gain": 0, "53 - Super Crit Dmg/Exp Mod Gain": 0, "54 - Max Sta/Crosshair Auto-Tap Chance": 0}, "external_upgrades": {"Hestia Idol": 0, "Axolotl Skin": 9, "Dino Skin": 9, "Geoduck Tribute": 750, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 0, "Ascension Bundle": 0, "Arch Ability Card": 3, "Arch Ability Infernal Bonus": 0.0}, "cards": {"dirt1": 3, "dirt2": 2, "dirt3": 2, "com1": 3, "com2": 2, "com3": 2, "rare1": 3, "rare2": 2, "rare3": 2, "epic1": 2, "epic2": 2, "epic3": 2, "leg1": 2, "leg2": 2, "leg3": 2, "myth1": 2, "myth2": 2, "myth3": 2, "div1": 2, "div2": 0, "div3": 0}}
+                apply_preset(early_game)
+                
+        with col_p2:
+            if st.button("🌌 Load Late-Game Build\n(Asc 2, Floor 158)", width="stretch"):
+                late_game = {"settings": {"asc2_unlocked": True, "arch_level": 99, "current_max_floor": 158, "base_damage_const": 10, "hades_idol_level": 129, "total_infernal_cards": 303}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 29, "Luck": 30, "Div": 15, "Corr": 15}, "internal_upgrades": {"3 - Gem Stamina": 50, "4 - Gem Exp": 25, "5 - Gem Loot": 25, "9 - Flat Damage": 25, "10 - Armor Pen.": 25, "11 - Exp. Gain": 25, "12 - Stat Points": 5, "13 - Crit Chance/Damage": 25, "14 - Max Sta/Sta Mod Chance": 20, "15 - Flat Damage": 20, "16 - Loot Mod Gain": 10, "17 - Unlock Fairy/Armor Pen": 15, "18 - Enrage&Crit Dmg/Enrage Cooldown": 15, "19 - Gleaming Floor Chance": 30, "20 - Flat Dmg/Super Crit Chance": 25, "21 - Exp Gain/Fragment Gain": 20, "22 - Flurry Sta Gain/Flurr Cooldown": 10, "23 - Max Sta/Sta Mod Gain": 5, "24 - All Mod Chances": 30, "25 - Flat Dmg/Damage Up": 5, "26 - Max Sta/Mod Chance": 5, "27 - Unlock Ability Fairy/Loot Mod Gain": 20, "28 - Exp Gain/Max Sta": 15, "29 - Armor Pen/Ability Cooldowns": 10, "30 - Crit Dmg/Super Crit Dmg": 20, "31 - Quake Atks/Cooldown": 10, "32 - Flat Dmg/Enrage Cooldown": 5, "33 - Mod Chance/Armor Pen": 5, "34 - Buff Divinity[Div Stats Up]": 5, "35 - Exp Gain/Mod Ch.": 5, "36 - Damage Up/Armor Pen": 20, "37 - Super Crit/Ultra Crit Chance": 20, "38 - Exp Mod Gain/Chance": 20, "39 - Ability Insta Chance/Max Sta": 20, "40 - Ultra Crit Dmg/Sta Mod Chance": 20, "41 - Poly Card Bonus": 1, "42 - Frag Gain Mult": 1, "43 - Sta Mod Gain": 1, "44 - All Mod Chances": 1, "45 - Exp Gain/All Stat Cap Inc.": 1, "46 - Gleaming Floor Multi": 24, "47 - Damage Up/Crit Dmg Up": 1, "48 - Gold Crosshair Chance/Auto-Tap Chance": 5, "49 - Flat Dmg/Ultra Crit Chance": 5, "50 - Ability Insta Chance/Sta Mod Chance": 25, "51 - Dmg Up/Exp Gain": 5, "52 - [Corruption Buff] Dmg Up / Mod Multi Up": 10, "53 - Super Crit Dmg/Exp Mod Gain": 30, "54 - Max Sta/Crosshair Auto-Tap Chance": 28, "55 - All Mod Multipliers": 10}, "external_upgrades": {"Hestia Idol": 1929, "Axolotl Skin": 11, "Dino Skin": 11, "Geoduck Tribute": 1047, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 1, "Ascension Bundle": 1, "Arch Ability Card": 4, "Arch Ability Infernal Bonus": -0.1509}, "cards": {"dirt1": 4, "dirt2": 4, "dirt3": 4, "dirt4": 3, "com1": 3, "com2": 3, "com3": 4, "com4": 2, "rare1": 3, "rare2": 3, "rare3": 3, "rare4": 2, "epic1": 3, "epic2": 3, "epic3": 4, "epic4": 2, "leg1": 3, "leg2": 3, "leg3": 4, "leg4": 2, "myth1": 3, "myth2": 3, "myth3": 3, "myth4": 2, "div1": 3, "div2": 3, "div3": 3, "div4": 0}}
+                apply_preset(late_game)
                     
-            with col_p2:
-                if st.button("🌌 Load Late-Game Build\n(Asc 2, Floor 158)", width="stretch"):
-                    late_game = {"settings": {"asc2_unlocked": True, "arch_level": 99, "current_max_floor": 158, "base_damage_const": 10, "hades_idol_level": 129, "total_infernal_cards": 303}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 29, "Luck": 30, "Div": 15, "Corr": 15}, "internal_upgrades": {"3 - Gem Stamina": 50, "4 - Gem Exp": 25, "5 - Gem Loot": 25, "9 - Flat Damage": 25, "10 - Armor Pen.": 25, "11 - Exp. Gain": 25, "12 - Stat Points": 5, "13 - Crit Chance/Damage": 25, "14 - Max Sta/Sta Mod Chance": 20, "15 - Flat Damage": 20, "16 - Loot Mod Gain": 10, "17 - Unlock Fairy/Armor Pen": 15, "18 - Enrage&Crit Dmg/Enrage Cooldown": 15, "19 - Gleaming Floor Chance": 30, "20 - Flat Dmg/Super Crit Chance": 25, "21 - Exp Gain/Fragment Gain": 20, "22 - Flurry Sta Gain/Flurr Cooldown": 10, "23 - Max Sta/Sta Mod Gain": 5, "24 - All Mod Chances": 30, "25 - Flat Dmg/Damage Up": 5, "26 - Max Sta/Mod Chance": 5, "27 - Unlock Ability Fairy/Loot Mod Gain": 20, "28 - Exp Gain/Max Sta": 15, "29 - Armor Pen/Ability Cooldowns": 10, "30 - Crit Dmg/Super Crit Dmg": 20, "31 - Quake Atks/Cooldown": 10, "32 - Flat Dmg/Enrage Cooldown": 5, "33 - Mod Chance/Armor Pen": 5, "34 - Buff Divinity[Div Stats Up]": 5, "35 - Exp Gain/Mod Ch.": 5, "36 - Damage Up/Armor Pen": 20, "37 - Super Crit/Ultra Crit Chance": 20, "38 - Exp Mod Gain/Chance": 20, "39 - Ability Insta Chance/Max Sta": 20, "40 - Ultra Crit Dmg/Sta Mod Chance": 20, "41 - Poly Card Bonus": 1, "42 - Frag Gain Mult": 1, "43 - Sta Mod Gain": 1, "44 - All Mod Chances": 1, "45 - Exp Gain/All Stat Cap Inc.": 1, "46 - Gleaming Floor Multi": 24, "47 - Damage Up/Crit Dmg Up": 1, "48 - Gold Crosshair Chance/Auto-Tap Chance": 5, "49 - Flat Dmg/Ultra Crit Chance": 5, "50 - Ability Insta Chance/Sta Mod Chance": 25, "51 - Dmg Up/Exp Gain": 5, "52 - [Corruption Buff] Dmg Up / Mod Multi Up": 10, "53 - Super Crit Dmg/Exp Mod Gain": 30, "54 - Max Sta/Crosshair Auto-Tap Chance": 28, "55 - All Mod Multipliers": 10}, "external_upgrades": {"Hestia Idol": 1929, "Axolotl Skin": 11, "Dino Skin": 11, "Geoduck Tribute": 1047, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 1, "Ascension Bundle": 1, "Arch Ability Card": 4, "Arch Ability Infernal Bonus": -0.1509}, "cards": {"dirt1": 4, "dirt2": 4, "dirt3": 4, "dirt4": 3, "com1": 3, "com2": 3, "com3": 4, "com4": 2, "rare1": 3, "rare2": 3, "rare3": 3, "rare4": 2, "epic1": 3, "epic2": 3, "epic3": 4, "epic4": 2, "leg1": 3, "leg2": 3, "leg3": 4, "leg4": 2, "myth1": 3, "myth2": 3, "myth3": 3, "myth4": 2, "div1": 3, "div2": 3, "div3": 3, "div4": 0}}
-                    apply_preset(late_game)
-                        
-            with col_p3:
-                if st.button("🗑️ Factory Reset\n(Wipe All Data)", width="stretch", type="secondary"):
-                    apply_preset(reset=True)
+        with col_p3:
+            if st.button("🗑️ Factory Reset\n(Wipe All Data)", width="stretch", type="secondary"):
+                apply_preset(reset=True)
 
     # --- TAB 1: BASE STATS ---
     with tab_stats:
@@ -3157,6 +3171,93 @@ if __name__ == "__main__":
                             col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("sandbox", stats_only, "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪", "synthesizer"))
                                 
                             col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch", on_click=cb_delete_hist, args=(idx,))
+
+    # --- TAB 8: ABOUT & FEEDBACK ---
+    with tab_about:
+        st.header("📚 About & Feedback")
+        
+        col_abt_1, col_abt_2 = st.columns([1, 1])
+        
+        with col_abt_1:
+            # --- FEEDBACK FORM (DISCORD WEBHOOK) ---
+            with st.form("feedback_form", border=True):
+                st.markdown("#### 🐛 Submit Feedback")
+                st.write("Found a bug? Have a feature request? Submit it directly to my developer dashboard here!")
+                
+                fb_type = st.selectbox("Type",["Bug Report", "Feature Request", "UI/UX Suggestion", "General Feedback"])
+                fb_text = st.text_area("Details", placeholder="Describe the issue or feature in detail...", height=150)
+                fb_contact = st.text_input("Discord Username (Optional)", placeholder="So I can follow up with you if needed")
+                
+                submitted = st.form_submit_button("📤 Send Feedback", use_container_width=True, type="primary")
+                
+                if submitted:
+                    if not fb_text.strip():
+                        st.error("⚠️ Feedback details cannot be empty!")
+                    else:
+                        # Fetch the webhook URL securely from the Streamlit Cloud / local secrets
+                        webhook_url = st.secrets.get("DISCORD_WEBHOOK", None)
+                        
+                        if webhook_url:
+                            payload = {
+                                "embeds":[{
+                                    "title": f"🚨 New {fb_type}",
+                                    "color": 16753920 if "Bug" in fb_type else 5025616, # Orange for bug, Green otherwise
+                                    "fields":[
+                                        {"name": "User", "value": fb_contact if fb_contact else "Anonymous", "inline": True},
+                                        {"name": "Details", "value": fb_text, "inline": False}
+                                    ],
+                                    "footer": {"text": "IoM Arch Optimizer Engine"}
+                                }]
+                            }
+                            try:
+                                response = requests.post(webhook_url, json=payload)
+                                if response.status_code in[200, 204]:
+                                    st.success("✅ Feedback successfully sent! Thank you.")
+                                else:
+                                    st.error(f"❌ Failed to send feedback (HTTP {response.status_code}).")
+                            except Exception as e:
+                                st.error(f"❌ Network error: {e}")
+                        else:
+                            st.info("ℹ️ **Developer Note:** The `DISCORD_WEBHOOK` URL is not configured in `.streamlit/secrets.toml` yet. Your feedback was caught locally, but not broadcasted.")
+                            st.write(f"**Caught Data:** {fb_type} - {fb_text}")
+
+            # --- RESOURCES ---
+            with st.container(border=True):
+                st.markdown("#### ⚙️ How the Engine Works")
+                st.markdown("""
+                This app runs a **Python Multiprocessing Engine** to emulate the exact C# source code math of the live game.
+                * It uses **Monte Carlo Simulation** to rapidly 'play' the game hundreds of times in the background.
+                * It uses a **Successive Halving** algorithm (3-Phase Zoom) to narrow down the perfect stat distribution.
+                * To handle hardware limits, it dynamically auto-scales its workload based on your OS (`fork` on Linux vs `spawn` on Windows/Mac).
+                """)
+
+        with col_abt_2:
+            # --- WALL OF FAME ---
+            with st.container(border=True):
+                st.markdown("#### 🏆 Beta Testers Wall of Fame")
+                st.write("A massive thank you to the dedicated Discord community members who helped stress-test the math engine, uncover edge cases, and shape the UI into what it is today.")
+                
+                st.divider()
+                
+                # Easily add/remove names from this list!
+                testers =[
+                    "DiscordUser1",
+                    "DiscordUser2",
+                    "DiscordUser3",
+                    "DiscordUser4"
+                ]
+                
+                # Render names in a nice compact 2-column grid
+                t_col1, t_col2 = st.columns(2)
+                for i, tester in enumerate(testers):
+                    target_col = t_col1 if i % 2 == 0 else t_col2
+                    target_col.markdown(f"⭐ **{tester}**")
+
+            # --- OPEN SOURCE INFO ---
+            with st.container(border=True):
+                st.markdown("#### 📂 Source Code & Updates")
+                st.write("Once the engine is fully validated and hits Phase 3, the complete source code and mathematical documentation will be made publicly available.")
+                st.button("🔗 View GitHub Repository", disabled=True, use_container_width=True, help="Link will be active upon public V1.0 Launch!")
 
     # --- GLOBAL FLOATING NAVIGATION ---
     st.markdown('<a href="#top-of-tabs" class="back-to-top">⬆️ Back to Tabs</a>', unsafe_allow_html=True)
