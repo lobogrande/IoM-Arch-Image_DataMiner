@@ -2003,14 +2003,13 @@ if __name__ == "__main__":
                         rate_1k = (val / 60.0) * 1000.0
                         metric_str = "Fragments" if "frag" in run_target_metric else "Kills" if "block" in run_target_metric else "EXP"
                         
-                        # Clean, consolidated Banked Time readout
-                        st.markdown(f"#### 💰 Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds</span>", unsafe_allow_html=True)
+                        # Elevate the prominence of the Arch Seconds metric
+                        st.markdown(f"#### 💰 Banked Yields<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per <b>1k Arch Seconds</b></span>", unsafe_allow_html=True)
                         st.metric("Yield", f"{rate_1k:,.1f}", label_visibility="collapsed")
                         
                         st.divider()
                         
-                        # Clean, consolidated Real-Time readout
-                        # Clean, consolidated Real-Time readout
+                        # Demote real-time yield
                         st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                         st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
                         
@@ -2039,16 +2038,22 @@ if __name__ == "__main__":
                         st.metric("Avg Floor", f"Floor {avg_flr:,.1f}", label_visibility="collapsed")
 
                 with perf_col2:
+                    # UI Transformation: Scale values to 1k Arch Secs for relevant targets
+                    is_floor_target = (run_target_metric == "highest_floor")
+                    def scale_score(v): return v if is_floor_target else (v / 60.0) * 1000.0
+                    
+                    unit_label = "Floor Reached" if is_floor_target else "Yield per 1k Arch Secs"
+
                     # Streamlit Markdown header completely fixes the Plotly overlap bug
                     st.markdown(
-                        "#### AI Convergence (Hill Climb) "
+                        f"#### AI Convergence (Hill Climb)<br><span style='font-size: 0.8em; color: gray;'>Y-Axis: {unit_label}</span> "
                         "<span title='This chart shows how the AI narrowed down the best build across the 3 optimization phases. "
                         "An upward curve means the engine successfully found significantly better builds as it zoomed in. "
                         "A flat line means Phase 1 already hit the near-perfect build.' "
                         "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
                         unsafe_allow_html=True
                     )
-                    df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score": chart_hill_scores})
+                    df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score":[scale_score(s) for s in chart_hill_scores]})
                     fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True)
                     fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
                     fig_hill.update_layout(margin=dict(l=10, r=20, t=10, b=20), height=200)
@@ -2056,7 +2061,7 @@ if __name__ == "__main__":
                     
                     # Streamlit Markdown header
                     st.markdown(
-                        "#### Engine Confidence Analysis "
+                        f"#### Engine Confidence Analysis<br><span style='font-size: 0.8em; color: gray;'>X-Axis: {unit_label}</span> "
                         "<span title='Compares the Optimal build against the Worst, Average, and Runner-Up builds tested. "
                         "A large gap between Optimal and Average proves your stats highly impact this target. A small gap between Runner-Up and Optimal "
                         "shows the AI fine-tuned the absolute perfect micro-adjustments.' "
@@ -2065,7 +2070,7 @@ if __name__ == "__main__":
                     )
                     df_conf = pd.DataFrame({
                         "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
-                        "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[run_target_metric]]
+                        "Performance":[scale_score(worst_val), scale_score(avg_val), scale_score(runner_up_val), scale_score(final_summary_out[run_target_metric])]
                     })
                     fig_conf = px.bar(
                         df_conf, x="Performance", y="Build Category", orientation='h', text_auto='.3s', color="Build Category",
@@ -2569,14 +2574,20 @@ if __name__ == "__main__":
                             df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
                             df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
                         
-                        cols =[ 'Include', 'Target', 'Metric Score' ]
+                        # Transform the display column for non-floor targets securely without breaking the backend
+                        df_history["Yield (1k Arch Secs)"] = df_history.apply(
+                            lambda row: row["Metric Score"] if row.get("Target") == "highest_floor" else round((row["Metric Score"] / 60.0) * 1000.0, 1), 
+                            axis=1
+                        )
+                        
+                        cols =[ 'Include', 'Target', 'Yield (1k Arch Secs)' ]
                         if is_block_farming:
                             cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
                         cols +=[ 'Avg Floor', 'Max Floor' ]
                         
                         # Safe fallback in case old history rows don't have Max Floor yet
                         if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                        cols +=[ c for c in df_history.columns if c not in cols and c != "_global_idx" ]
+                        cols +=[ c for c in df_history.columns if c not in cols and c != "_global_idx" and c != "Metric Score" ]
                         df_history = df_history[cols]
                         
                         # Create a robust, unique key to anchor the frontend state
@@ -2621,7 +2632,11 @@ if __name__ == "__main__":
                             st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
                             
                             chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
-                            chart_scores = sr["history_scores"] + [sr["meta_score"]]
+                            
+                            is_floor_target = (sr.get("metric_name", "highest_floor") == "highest_floor")
+                            def scale_sr(v): return v if is_floor_target else (v / 60.0) * 1000.0
+                            
+                            chart_scores = [scale_sr(s) for s in sr["history_scores"]] +[scale_sr(sr["meta_score"])]
                             chart_colors = ["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
                             
                             df_comp = pd.DataFrame({"Build": chart_labels, "Score": chart_scores, "Type": chart_colors})
@@ -2735,7 +2750,12 @@ if __name__ == "__main__":
                         
                         with st.container(border=True):
                             # --- Header & Visible Stats ---
-                            title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{synth['Ceiling Score']}`"
+                            is_floor_target = (synth.get('Target', 'highest_floor') == 'highest_floor')
+                            disp_score = synth['Ceiling Score'] if is_floor_target else round((synth['Ceiling Score'] / 60.0) * 1000.0, 1)
+                            
+                            title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{disp_score}`"
+                            if not is_floor_target: title += " *(per 1k Arch Secs)*"
+                            
                             if "Theoretical Peak" in synth: 
                                 title += f" | Peak: `{synth['Theoretical Peak']}`"
                             elif "God-Run Peak" in synth: # Legacy state fallback
@@ -2854,8 +2874,9 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                         stat_results[t_s]['sum'] += val
                                         stat_results[t_s]['count'] += 1
                                         
+                                base_val = final_summary_out.get(run_target_metric, 0)
                                 st.session_state.roi_stat_results = {
-                                    k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
+                                    k: (((v['sum']/v['count']) - base_val) / 60.0) * 1000.0 
                                     for k, v in stat_results.items()
                                 }
                                 st.rerun() 
@@ -2864,7 +2885,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                 
                     if "roi_stat_results" in st.session_state:
                         sorted_stats = sorted(st.session_state.roi_stat_results.items(), key=lambda x: x[1], reverse=True)
-                        df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain"])
+                        df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain (1k Arch Secs)"])
                         st.dataframe(df_stat_roi, hide_index=True, width="stretch")
 
                 with col_roi_2:
@@ -2913,8 +2934,9 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                         upg_results[t_u]['sum'] += val
                                         upg_results[t_u]['count'] += 1
                                         
+                                base_val = final_summary_out.get(run_target_metric, 0)
                                 st.session_state.roi_upg_results = {
-                                    k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
+                                    k: (((v['sum']/v['count']) - base_val) / 60.0) * 1000.0 
                                     for k, v in upg_results.items()
                                 }
                                 st.rerun() 
@@ -2923,7 +2945,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                 
                     if "roi_upg_results" in st.session_state:
                         sorted_upgs = sorted(st.session_state.roi_upg_results.items(), key=lambda x: x[1], reverse=True)
-                        df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain"])
+                        df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain (1k Arch Secs)"])
                         st.dataframe(df_upg_roi, hide_index=True, width="stretch")
 
     # --- GLOBAL FLOATING NAVIGATION ---
