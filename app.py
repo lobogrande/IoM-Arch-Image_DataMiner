@@ -242,10 +242,15 @@ def get_scaled_image_uri(filepath, target_width):
 if __name__ == "__main__":
 
     # --- SESSION STATE INITIALIZATION ---
-    # Failsafe: If a user has a stale Streamlit session from an older version of the app, 
-    # their cached Player object will lack new attributes and crash the UI.
-    if 'player' not in st.session_state or not hasattr(st.session_state.player, 'asc1_unlocked'):
+    if 'player' not in st.session_state:
         st.session_state.player = Player()
+    else:
+        # Graceful Schema Migration Failsafe: 
+        # Instead of wiping their entire memory on a hot-reload, we surgically inject missing attributes.
+        dummy_player = Player()
+        for attr, default_val in dummy_player.__dict__.items():
+            if not hasattr(st.session_state.player, attr):
+                setattr(st.session_state.player, attr, default_val)
 
     p = st.session_state.player
 
