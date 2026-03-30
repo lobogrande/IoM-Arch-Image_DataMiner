@@ -1992,7 +1992,7 @@ if __name__ == "__main__":
         # ==========================================
         # Because this is OUTSIDE the st.button() block, it will survive tab changes!
         
-        def cb_apply_stats(target, stats_dict, msg, icon):
+        def cb_apply_stats(target, stats_dict, msg, icon, context="optimizer"):
             """Streamlit callback to securely inject state before UI rendering."""
             for k, v in stats_dict.items():
                 if target == "global":
@@ -2000,6 +2000,8 @@ if __name__ == "__main__":
                     st.session_state.player.base_stats[k] = int(v)
                 elif target == "sandbox":
                     st.session_state[f"sandbox_stat_{k}"] = int(v)
+            if context == "synthesizer":
+                st.session_state.scroll_to_synth = True
             st.toast(msg, icon=icon)
 
         def cb_delete_hist(index):
@@ -2067,9 +2069,9 @@ if __name__ == "__main__":
                 
                 col_apply1, col_apply2 = st.columns(2)
                 with col_apply1:
-                    st.button("✨ Apply Build Globally", width="stretch", key=f"apply_{context}", on_click=cb_apply_stats, args=("global", best_final, "✅ Optimal stats applied globally!", "🎉"))
+                    st.button("✨ Apply Build Globally", width="stretch", key=f"apply_{context}", on_click=cb_apply_stats, args=("global", best_final, "✅ Optimal stats applied globally!", "🎉", context))
                 with col_apply2:
-                    st.button("🧪 Send to Sandbox", width="stretch", key=f"sandbox_{context}", on_click=cb_apply_stats, args=("sandbox", best_final, "✅ Optimal stats piped to Tab 6 (Hit Calculator)!", "🧪"))
+                    st.button("🧪 Send to Sandbox", width="stretch", key=f"sandbox_{context}", on_click=cb_apply_stats, args=("sandbox", best_final, "✅ Optimal stats piped to Tab 6 (Hit Calculator)!", "🧪", context))
 
             # ==========================================
             # ADVANCED ANALYTICS DASHBOARD (TABS)
@@ -2396,6 +2398,8 @@ if __name__ == "__main__":
                                         k: (((v['sum']/v['count']) - base_val) / 60.0) * 1000.0 
                                         for k, v in stat_results.items()
                                     }
+                                    if context == "synthesizer":
+                                        st.session_state.scroll_to_synth = True
                                     st.rerun() 
                                 else:
                                     st.warning("All stats are already maxed out! No further points can be tested.")
@@ -2456,6 +2460,8 @@ if __name__ == "__main__":
                                         k: (((v['sum']/v['count']) - base_val) / 60.0) * 1000.0 
                                         for k, v in upg_results.items()
                                     }
+                                    if context == "synthesizer":
+                                        st.session_state.scroll_to_synth = True
                                     st.rerun() 
                                 else:
                                     st.warning("All internal upgrades are maxed out! No further upgrades can be tested.")
