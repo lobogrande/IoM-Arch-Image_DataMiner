@@ -420,24 +420,6 @@ if __name__ == "__main__":
     # MAIN WINDOW: Tabs & Navigation
     # ==========================================
     st.markdown('<div id="top-of-tabs"></div>', unsafe_allow_html=True)
-    
-    if st.session_state.get("scroll_to_top", False):
-        import streamlit.components.v1 as components
-        components.html(
-            f'''
-            <script>
-                /* Force iframe reload: {time.time()} */
-                const parent = window.parent.document;
-                const el = parent.getElementById("top-of-tabs");
-                if (el) {{
-                    el.scrollIntoView({{ behavior: "smooth", block: "start" }});
-                }}
-            </script>
-            ''',
-            height=0
-        )
-        st.session_state.scroll_to_top = False
-        
     st.title("⛏️ AI Arch Mining Optimizer")
 
     # Calculate dynamic Base Stat caps (Base + Upgrade #45)
@@ -2974,8 +2956,8 @@ if __name__ == "__main__":
                             if "synthesis_result" in st.session_state: del st.session_state["synthesis_result"]
                             if "roi_stat_results_optimizer" in st.session_state: del st.session_state["roi_stat_results_optimizer"]
                             if "roi_upg_results_optimizer" in st.session_state: del st.session_state["roi_upg_results_optimizer"]
-                            st.session_state.scroll_to_top = True
-                            st.toast("✅ Dashboard restored! Click the 'Optimizer' tab to view it.", icon="🚀")
+                            st.session_state.switch_to_optimizer = True
+                            st.toast("✅ Dashboard restored! Redirecting to Optimizer tab...", icon="🚀")
                         else:
                             st.toast("No telemetry saved for this legacy run.", icon="⚠️")
                             
@@ -2988,6 +2970,35 @@ if __name__ == "__main__":
 
                     # --- ANCHOR FOR SCROLLING ---
                     st.markdown("<div id='synth-results-anchor'></div>", unsafe_allow_html=True)
+                    
+                    if st.session_state.get("switch_to_optimizer", False):
+                        import streamlit.components.v1 as components
+                        import time
+                        components.html(
+                            f'''
+                            <script>
+                                /* Force iframe reload: {time.time()} */
+                                const parent = window.parent.document;
+                                
+                                /* Automatically click the Optimizer tab */
+                                const elements = parent.querySelectorAll('button,[data-baseweb="tab"],[role="tab"]');
+                                elements.forEach(el => {{
+                                    if(el.innerText && el.innerText.includes("🚀 Optimizer")) {{
+                                        el.click();
+                                    }}
+                                }});
+                                
+                                /* Ensure view is pinned to the top */
+                                const el = parent.getElementById("top-of-tabs");
+                                if (el) {{
+                                    el.scrollIntoView({{ behavior: "smooth", block: "start" }});
+                                }}
+                            </script>
+                            ''',
+                            height=0
+                        )
+                        st.session_state.switch_to_optimizer = False
+
                     if st.session_state.get("scroll_to_synth", False):
                         import streamlit.components.v1 as components
                         components.html(
