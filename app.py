@@ -1848,7 +1848,10 @@ if __name__ == "__main__":
                                 
                             if best_p2 and (time.time() - start_time) < time_limit_secs:
                                 bounds_p3 = {}
-                                p3_radius = min(2, step_2) 
+                                # Read the dynamically calculated Phase 3 constraints from the Auto-Scaler!
+                                p3_radius = prof_data.get('p3_radius', min(2, step_2)) 
+                                step_3 = prof_data.get('step_3', 1)
+                                
                                 for s in STATS_TO_OPTIMIZE:
                                     if st.session_state.get(f"lock_check_{s}", False):
                                         bounds_p3[s] = bounds_p1[s]
@@ -1856,8 +1859,8 @@ if __name__ == "__main__":
                                         bounds_p3[s] = (max(0, best_p2[s] - p3_radius), min(EFFECTIVE_CAPS[s], best_p2[s] + p3_radius))
                                         
                                 best_p3, final_summary = run_optimization_phase(
-                                    "Phase 3 (Exact)", target_metric, STATS_TO_OPTIMIZE, 
-                                    DYNAMIC_BUDGET, 1, ITER_P3, pool, FIXED_STATS, bounds_p3,
+                                    f"Phase 3 (Radius ±{p3_radius})", target_metric, STATS_TO_OPTIMIZE, 
+                                    DYNAMIC_BUDGET, step_3, ITER_P3, pool, FIXED_STATS, bounds_p3,
                                     progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                     base_state_dict=base_state_dict
                                 )

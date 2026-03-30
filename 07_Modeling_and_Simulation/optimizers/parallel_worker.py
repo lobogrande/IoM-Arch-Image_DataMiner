@@ -309,63 +309,66 @@ def get_optimal_step_profile(stats_list, budget, bounds, sims_per_second, target
     best_profile = None
     
     # Start from the finest possible step and get coarser until it safely fits the time budget
-    for step_1 in range(3, 31):
-        step_2 = max(2, step_1 // 3)
-        p3_radius = min(2, step_2)
-        
-        p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
-        p1_sims = get_expected_runs(p1_builds, iter_p1)
-        
-        # Positive-Shifted Bounds with Edge-Clipping Factor
-        # Real builds hug the 0 and Max Cap walls, cutting the theoretical hypercube search space
-        # down by roughly 75%. We generate the full shape, then apply the clipping factor.
-        if num_free > 0:
-            p2_mock_bounds = { s: (0, 2 * step_1) for s in free_stats }
-            p2_budget = ((num_free * step_1) // step_2) * step_2
-            raw_p2_builds = len(generate_distributions(free_stats, p2_budget, step_2, p2_mock_bounds))
+    for step_1 in range(3, max(100, budget + 1)):
+        # Compress Phase 2 bounding boxes dynamically based on coarse size
+        if step_1 <= 15: step_2 = max(2, step_1 // 3)
+        elif step_1 <= 30: step_2 = max(2, int(step_1 / 2.5))
+        elif step_1 <= 50: step_2 = max(2, step_1 // 2)
+        else: step_2 = max(2, int(step_1 / 1.5))
             
-            p3_mock_bounds = { s: (0, 2 * p3_radius) for s in free_stats }
-            p3_budget = ((num_free * p3_radius) // 1) * 1
-            raw_p3_builds = len(generate_distributions(free_stats, p3_budget, 1, p3_mock_bounds))
+        # DYNAMIC PHASE 3: With 7 free stats, a radius of 2 explodes into millions of combinations.
+        # We allow the engine to fallback to a tighter radius (1) if it cannot fit the time limit.
+        for p3_radius, step_3 in[(2, 1), (1, 1), (2, 2)]:
+            p1_builds = len(generate_distributions(stats_list, budget, step_1, bounds))
+            p1_sims = get_expected_runs(p1_builds, iter_p1)
             
-            EDGE_CLIP = 0.25
-            p2_builds = max(1, int(raw_p2_builds * EDGE_CLIP))
-            p3_builds = max(1, int(raw_p3_builds * EDGE_CLIP))
-        else:
-            p2_builds, p3_builds = 0, 0
+            # Positive-Shifted Bounds with Edge-Clipping Factor
+            # Real builds hug the 0 and Max Cap walls, cutting the theoretical hypercube search space
+            # down by roughly 75%. We generate the full shape, then apply the clipping factor.
+            if num_free > 0:
+                p2_mock_bounds = { s: (0, 2 * step_1) for s in free_stats }
+                p2_budget = ((num_free * step_1) // step_2) * step_2
+                raw_p2_builds = len(generate_distributions(free_stats, p2_budget, step_2, p2_mock_bounds))
+                
+                p3_mock_bounds = { s: (0, 2 * p3_radius) for s in free_stats }
+                p3_budget = ((num_free * p3_radius) // step_3) * step_3
+                raw_p3_builds = len(generate_distributions(free_stats, p3_budget, step_3, p3_mock_bounds))
+                
+                EDGE_CLIP = 0.25
+                p2_builds = max(1, int(raw_p2_builds * EDGE_CLIP))
+                p3_builds = max(1, int(raw_p3_builds * EDGE_CLIP))
+            else:
+                p2_builds, p3_builds = 0, 0
+                
+            p2_sims = get_expected_runs(p2_builds, iter_p2)
+            p3_sims = get_expected_runs(p3_builds, iter_p3)
             
-        p2_sims = get_expected_runs(p2_builds, iter_p2)
-        p3_sims = get_expected_runs(p3_builds, iter_p3)
-        
-        total_estimated_builds = p1_builds + p2_builds + p3_builds
-        
-        # --- REMOVED SURVIVAL WEIGHTING ---
-        # The sims_per_sec telemetry is derived from full runs, meaning it already
-        # naturally averages the speed of fast deaths and slow deaths. 
-        # Weighting them artificially lowered the ETA, causing Phase 1 to over-promise.
-        total_expected_sims = p1_sims + p2_sims + p3_sims
-        
-        # Add a flat 3.0s penalty for Multiprocessing Pool spin-up/teardown and array sorting overhead
-        estimated_seconds = (total_expected_sims / effective_sims_sec) + 3.0
-        
-        if estimated_seconds < 60:
-            time_str = f"~{int(estimated_seconds)} seconds"
-        else:
-            time_str = f"~{estimated_seconds/60:.1f} minutes"
+            total_estimated_builds = p1_builds + p2_builds + p3_builds
             
-        best_profile = {
-            "step_1": step_1,
-            "step_2": step_2,
-            "step_3": 1,
-            "builds": total_estimated_builds,
-            "eta_seconds": estimated_seconds,
-            "time_label": time_str
-        }
-        
-        # STRICT BUFFER: RNG survival variance pushes highly optimized Phase 3 builds
-        # to take slightly longer than average. We enforce a strict 20% safety margin (0.80) 
-        # to guarantee the engine completes Phase 3 cleanly without triggering timeouts.
-        if estimated_seconds <= (target_time_seconds * 0.80):
-            break
+            # --- REMOVED SURVIVAL WEIGHTING ---
+            total_expected_sims = p1_sims + p2_sims + p3_sims
             
+            # Add a flat 3.0s penalty for Multiprocessing Pool spin-up/teardown overhead
+            estimated_seconds = (total_expected_sims / effective_sims_sec) + 3.0
+            
+            if estimated_seconds < 60:
+                time_str = f"~{int(estimated_seconds)} seconds"
+            else:
+                time_str = f"~{estimated_seconds/60:.1f} minutes"
+                
+            profile = {
+                "step_1": step_1,
+                "step_2": step_2,
+                "step_3": step_3,
+                "p3_radius": p3_radius,
+                "builds": total_estimated_builds,
+                "eta_seconds": estimated_seconds,
+                "time_label": time_str
+            }
+            best_profile = profile
+            
+            # STRICT BUFFER: Enforce a strict 20% safety margin (0.80) to guarantee completion
+            if estimated_seconds <= (target_time_seconds * 0.80):
+                return best_profile
+                
     return best_profile
