@@ -2574,13 +2574,17 @@ if __name__ == "__main__":
                             df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
                             df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
                         
+                        # Dynamically name the score column based on what the user is viewing
+                        is_only_floor = all(t == "highest_floor" for t in view_targets)
+                        score_col = "Score (Floor)" if is_only_floor else "Yield (1k Arch Secs)"
+
                         # Transform the display column for non-floor targets securely without breaking the backend
-                        df_history["Yield (1k Arch Secs)"] = df_history.apply(
+                        df_history[score_col] = df_history.apply(
                             lambda row: row["Metric Score"] if row.get("Target") == "highest_floor" else round((row["Metric Score"] / 60.0) * 1000.0, 1), 
                             axis=1
                         )
                         
-                        cols =[ 'Include', 'Target', 'Yield (1k Arch Secs)' ]
+                        cols =[ 'Include', 'Target', score_col ]
                         if is_block_farming:
                             cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
                         cols +=[ 'Avg Floor', 'Max Floor' ]
