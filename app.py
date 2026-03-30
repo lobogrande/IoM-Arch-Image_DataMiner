@@ -991,7 +991,7 @@ if __name__ == "__main__":
             with col_hestia:
                 with st.container(border=True):
                     st.markdown("<div style='text-align: center; margin-bottom: 5px;'><b>Hestia Idol</b></div>", unsafe_allow_html=True)
-                    img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", "4_hestia.png")
+                    img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "idols", "hestia_idol.png")
                     if os.path.exists(img_path): render_centered_image(img_path, UI_EXT_IMG_STD)
                     st.divider()
                     
@@ -1004,8 +1004,7 @@ if __name__ == "__main__":
             with col_hades:
                 with st.container(border=True):
                     st.markdown("<div style='text-align: center; margin-bottom: 5px;'><b>Hades Idol</b></div>", unsafe_allow_html=True)
-                    # Use a fallback placeholder until the new asset is extracted
-                    img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", "hades_idol.png")
+                    img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "idols", "hades_idol.png")
                     if os.path.exists(img_path): render_centered_image(img_path, UI_EXT_IMG_STD)
                     else: st.markdown("<div style='text-align: center; color: gray; height: 120px; display: flex; align-items: center; justify-content: center;'>(Missing Asset)</div>", unsafe_allow_html=True)
                     st.divider()
