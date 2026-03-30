@@ -1761,8 +1761,8 @@ if __name__ == "__main__":
             )
             
             # Clean up any stale ROI or Synthesis data from previous runs
-            if "roi_stat_results" in st.session_state: del st.session_state["roi_stat_results"]
-            if "roi_upg_results" in st.session_state: del st.session_state["roi_upg_results"]
+            if "roi_stat_results_optimizer" in st.session_state: del st.session_state["roi_stat_results_optimizer"]
+            if "roi_upg_results_optimizer" in st.session_state: del st.session_state["roi_upg_results_optimizer"]
             if "synthesis_result" in st.session_state: del st.session_state["synthesis_result"]
             
             # ==========================================
@@ -2588,6 +2588,10 @@ if __name__ == "__main__":
                     col_synth1, col_synth2 = st.columns(2)
                     with col_synth1:
                         if st.button("🧬 Synthesize Ultimate Meta-Build", width="stretch"):
+                            # Clean up any stale ROI data from previous Meta-Builds
+                            if "roi_stat_results_synthesizer" in st.session_state: del st.session_state["roi_stat_results_synthesizer"]
+                            if "roi_upg_results_synthesizer" in st.session_state: del st.session_state["roi_upg_results_synthesizer"]
+                            
                             # WYSIWYG Guard: Only synthesize runs that are currently visible in the UI filter!
                             valid_runs =[r for r in visible_history if r.get("Include", False)]
                             
@@ -2874,10 +2878,6 @@ if __name__ == "__main__":
                                     
                                     st.session_state.synth_history.append(synth_entry)
                                     
-                                    # Only clear any stale ROI tables so the dashboard renders clean
-                                    if f"roi_stat_results_synthesizer" in st.session_state: del st.session_state[f"roi_stat_results_synthesizer"]
-                                    if f"roi_upg_results_synthesizer" in st.session_state: del st.session_state[f"roi_upg_results_synthesizer"]
-                                    
                                     st.session_state.scroll_to_synth = True
                                     st.rerun()
 
@@ -2969,9 +2969,10 @@ if __name__ == "__main__":
                         if "_restore_state" in run_data:
                             import copy
                             st.session_state.opt_results = copy.deepcopy(run_data["_restore_state"])
-                            # Clear Synthesis results so the Optimizer tab shows exactly this run
-                            if "synthesis_result" in st.session_state:
-                                del st.session_state["synthesis_result"]
+                            # Clear Synthesis and stale ROI results so the Optimizer tab shows exactly this run cleanly
+                            if "synthesis_result" in st.session_state: del st.session_state["synthesis_result"]
+                            if "roi_stat_results_optimizer" in st.session_state: del st.session_state["roi_stat_results_optimizer"]
+                            if "roi_upg_results_optimizer" in st.session_state: del st.session_state["roi_upg_results_optimizer"]
                             st.session_state.scroll_to_top = True
                             st.toast("✅ Dashboard restored! Click the 'Optimizer' tab to view it.", icon="🚀")
                         else:
@@ -3125,6 +3126,8 @@ if __name__ == "__main__":
                                 import copy
                                 st.session_state.synthesis_result = copy.deepcopy(restore_data["synthesis_result"])
                                 st.session_state.opt_results = copy.deepcopy(restore_data["opt_results"])
+                                if "roi_stat_results_synthesizer" in st.session_state: del st.session_state["roi_stat_results_synthesizer"]
+                                if "roi_upg_results_synthesizer" in st.session_state: del st.session_state["roi_upg_results_synthesizer"]
                                 st.session_state.scroll_to_synth = True
                             
                             has_data = "_restore_state" in synth
