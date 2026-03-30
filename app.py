@@ -1610,7 +1610,7 @@ if __name__ == "__main__":
             # Instead of a blocking spinner, we use an OS baseline that will 
             # invisibly self-correct to 100% accuracy at the end of their very first run.
             if sys.platform == "linux":
-                st.session_state.sims_per_sec = 250
+                st.session_state.sims_per_sec = 50 # Humble default for Streamlit Cloud
             elif sys.platform == "darwin":
                 st.session_state.sims_per_sec = 500
             else:
@@ -1797,6 +1797,23 @@ if __name__ == "__main__":
                     
                     import traceback
                     try:
+                        # Ensures any points stripped by the Modulo Aligner are placed back into the build
+                        def top_up_build(build):
+                            if not build: return build
+                            b = build.copy()
+                            current_sum = sum(b.get(s, 0) for s in STATS_TO_OPTIMIZE)
+                            missing = DYNAMIC_BUDGET - current_sum
+                            if missing > 0:
+                                for s in STATS_TO_OPTIMIZE:
+                                    if missing <= 0: break
+                                    if not st.session_state.get(f"lock_check_{s}", False):
+                                        room = EFFECTIVE_CAPS[s] - b.get(s, 0)
+                                        if room > 0:
+                                            add = min(room, missing)
+                                            b[s] += add
+                                            missing -= add
+                            return b
+
                         with mp.Pool(CPU_CORES) as pool:
                             # --- PHASE 1 (Coarse) ---
                             bounds_p1 = {}
@@ -1822,6 +1839,7 @@ if __name__ == "__main__":
                                 progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                 base_state_dict=base_state_dict
                             )
+                            best_p1 = top_up_build(best_p1)
                             
                             # --- PHASE 2 (Fine) ---
                             best_p2, summary_p2 = None, None
@@ -1845,6 +1863,7 @@ if __name__ == "__main__":
                                     progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                     base_state_dict=base_state_dict
                                 )
+                                best_p2 = top_up_build(best_p2)
                                 
                             if best_p2 and (time.time() - start_time) < time_limit_secs:
                                 bounds_p3 = {}
@@ -1864,6 +1883,7 @@ if __name__ == "__main__":
                                     progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                     base_state_dict=base_state_dict
                                 )
+                                best_p3 = top_up_build(best_p3)
                     except Exception as crash_err:
                         st.error(f"🚨 **CRITICAL ENGINE CRASH:** The background worker was unexpectedly killed. This is almost always caused by the Streamlit Cloud server temporarily running out of memory.")
                         st.error(f"**Technical Details:** `{type(crash_err).__name__}: {str(crash_err)}`")
