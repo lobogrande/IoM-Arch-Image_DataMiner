@@ -1500,7 +1500,7 @@ if __name__ == "__main__":
 
         # --- NEW: STAT LOCKING ---
         with st.expander("🔒 Stat Constraints / Locking (Optional)", expanded=False):
-            st.markdown("**🧠 Why lock stats?** Since the AI automatically scales to fit your requested Target Compute Time, locking stats no longer makes the engine 'finish faster'. Instead, it shrinks the multidimensional search space, allowing the AI to use that exact same time limit to scan at a much finer resolution. **Locking stats = Higher Precision!**")
+            st.markdown("**🧠 The Time vs. Precision Trade-off**\nBecause the AI auto-scales to your chosen Time Limit, locking a stat removes an entire mathematical dimension from the search space, giving you two powerful options:\n* **Higher Precision:** Keep the time slider high. The AI will use that time to scan the remaining unlocked stats at a much deeper, finer resolution.\n* **Faster Runtimes:** Lower the time slider. **Rule of Thumb:** For every stat you lock, you can safely drop the Time Limit slider by 1 or 2 levels (e.g., from 5 Minutes down to 1 Minute) and maintain the exact same mathematical accuracy!")
             
             def render_lock_stat(label, stat_key, col):
                 max_val = int(STAT_CAPS.get(stat_key, 99))
