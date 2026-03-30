@@ -2033,6 +2033,9 @@ if __name__ == "__main__":
                 st.toast("🗑️ Meta-Build permanently deleted!", icon="🧹")
 
         def render_results_dashboard(res, p_obj, dev_mode=False, context="optimizer"):
+            # --- ANCHOR FOR SCROLLING ---
+            st.markdown(f"<div id='dashboard-anchor-{context}'></div>", unsafe_allow_html=True)
+            
             best_final = res["best_final"]
             final_summary_out = res["final_summary_out"]
             elapsed = res.get("elapsed", 0)
@@ -2988,11 +2991,13 @@ if __name__ == "__main__":
                                     }}
                                 }});
                                 
-                                /* Ensure view is pinned to the top */
-                                const el = parent.getElementById("top-of-tabs");
-                                if (el) {{
-                                    el.scrollIntoView({{ behavior: "smooth", block: "start" }});
-                                }}
+                                /* Give React a tiny delay to render the tab, then scroll down to the dashboard anchor */
+                                setTimeout(() => {{
+                                    const el = parent.getElementById("dashboard-anchor-optimizer");
+                                    if (el) {{
+                                        el.scrollIntoView({{ behavior: "smooth", block: "start" }});
+                                    }}
+                                }}, 150);
                             </script>
                             ''',
                             height=0
