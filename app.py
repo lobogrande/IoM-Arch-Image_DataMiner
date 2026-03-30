@@ -436,7 +436,7 @@ if __name__ == "__main__":
 
     # Pre-define the Simulation sub-tabs so we can seamlessly route content to them later
     with tab_sims:
-        tab_sandbox, tab_optimizer, tab_synth = st.tabs(["🧪 Hit Calculator (Sandbox)", "🚀 Optimizer", "🧬 Synthesizer & History"])
+        tab_optimizer, tab_synth, tab_sandbox = st.tabs(["🚀 Optimizer", "🧬 Synthesizer & History", "🧪 Hit Calculator (Sandbox)"])
 
     # ==========================================
     # PLAYER SETUP & SIDEBAR MIGRATION
