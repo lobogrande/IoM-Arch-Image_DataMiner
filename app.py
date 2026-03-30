@@ -2288,68 +2288,14 @@ if __name__ == "__main__":
                     if not visible_history:
                         st.info("No runs match the selected filters. Run the optimizer to build history.")
                     else:
-                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button below!)*")
-                        
-                        df_history = pd.DataFrame(visible_history)
-
-                        # --- Inject Card Reality Check Columns for Farming ---
-                        is_block_farming = any("block_" in t for t in view_targets)
-                        if is_block_farming:
-                            def get_50_str(score, odds):
-                                if score <= 0: return "N/A"
-                                return f"~{(0.693 * odds) / (score / 60.0) / 1000.0:.1f}k"
-                            
-                            df_history["Base Card (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 1500) if "block_" in row.get("Target", "") else "-", axis=1)
-                            df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
-                            df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
-                        
-                        cols =[ 'Include', 'Target', 'Metric Score' ]
-                        if is_block_farming:
-                            cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
-                        cols += [ 'Avg Floor', 'Max Floor' ]
-                        
-                        # Safe fallback in case old history rows don't have Max Floor yet
-                        if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                        cols +=[ c for c in df_history.columns if c not in cols ]
-                        df_history = df_history[cols]
-                        
-                        # Create a robust, unique key to anchor the frontend state
-                        view_targets_str = "_".join(view_targets)
-                        editor_key = f"history_editor_{len(visible_history)}_{view_targets_str}"
-                        
-                        def on_history_change():
-                            """Callback to map frontend edits securely to the backend BEFORE the script reruns."""
-                            if editor_key not in st.session_state: return
-                            edits = st.session_state[editor_key].get("edited_rows", {})
-                            for row_idx_str, edit_dict in edits.items():
-                                if "Include" in edit_dict:
-                                    row_idx = int(row_idx_str)
-                                    # Use the closure's visible_history from the previous render to map the index
-                                    global_idx = visible_history[row_idx]["_global_idx"]
-                                    st.session_state.run_history[global_idx]["Include"] = edit_dict["Include"]
-
-                        edited_df = st.data_editor(
-                            df_history, 
-                            hide_index=True, 
-                            width="stretch",
-                            column_config={"Include": st.column_config.CheckboxColumn("Include")},
-                            disabled=[c for c in df_history.columns if c != "Include"],
-                            key=editor_key,
-                            on_change=on_history_change
-                        )
-                        
-                        st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
-                        st.info("""
-💡 **Strategy Tip: The "Stat Plateau" (Why do my stats change on re-runs?)**
-
-You might notice that running Synthesis multiple times gives slightly different stat numbers. Don't panic—the AI isn't guessing!
-
+                        with st.expander("💡 Strategy Tip: The Stat Plateau (Why do my stats change on re-runs?)", expanded=False):
+                            st.write("""
 * **The Math:** Enemies only take whole hits. If 50 Strength kills a boss in exactly 3 hits, having 54 Strength *also* kills it in 3 hits. This creates a "Stat Plateau" where several different builds are functionally identical and mathematically tied for 1st place.
 * **The Tie-Breaker (RNG):** To break the tie, the AI forces these top builds to race 500 times. Whichever tied build happens to get slightly luckier with Critical Hits during that specific race wins the gold medal!
 
 **The Takeaway:** If your stats bounce around slightly between runs, congratulations—you've reached the absolute peak! Send your results to the **Hit Calculator Sandbox** to prove to yourself that both builds kill your target blocks in the exact same number of hits.
-                        """)
+                            """)
                         st.write("Smooth out Monte Carlo RNG noise. This algorithm calculates the statistical center of your checked builds, generates adjacent stat combinations, and runs an exhaustive 500-iteration simulation across all of them to find the true mathematical peak.")
                         
                         # Full-width placeholder to pull the progress bar out of the squished columns!
@@ -2628,6 +2574,58 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         
                                 st.toast("🗑️ Unchecked runs permanently deleted!", icon="🧹")
                                 st.rerun()
+                                
+                        st.divider()
+                        st.markdown("#### 📋 Select Runs for Synthesis")
+                        st.write("*(Check the **Include** box to mix runs into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
+                        
+                        df_history = pd.DataFrame(visible_history)
+
+                        # --- Inject Card Reality Check Columns for Farming ---
+                        is_block_farming = any("block_" in t for t in view_targets)
+                        if is_block_farming:
+                            def get_50_str(score, odds):
+                                if score <= 0: return "N/A"
+                                return f"~{(0.693 * odds) / (score / 60.0) / 1000.0:.1f}k"
+                            
+                            df_history["Base Card (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 1500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
+                            df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
+                        
+                        cols =[ 'Include', 'Target', 'Metric Score' ]
+                        if is_block_farming:
+                            cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
+                        cols +=[ 'Avg Floor', 'Max Floor' ]
+                        
+                        # Safe fallback in case old history rows don't have Max Floor yet
+                        if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
+                        cols +=[ c for c in df_history.columns if c not in cols ]
+                        df_history = df_history[cols]
+                        
+                        # Create a robust, unique key to anchor the frontend state
+                        view_targets_str = "_".join(view_targets)
+                        editor_key = f"history_editor_{len(visible_history)}_{view_targets_str}"
+                        
+                        def on_history_change():
+                            """Callback to map frontend edits securely to the backend BEFORE the script reruns."""
+                            if editor_key not in st.session_state: return
+                            edits = st.session_state[editor_key].get("edited_rows", {})
+                            for row_idx_str, edit_dict in edits.items():
+                                if "Include" in edit_dict:
+                                    row_idx = int(row_idx_str)
+                                    # Use the closure's visible_history from the previous render to map the index
+                                    global_idx = visible_history[row_idx]["_global_idx"]
+                                    st.session_state.run_history[global_idx]["Include"] = edit_dict["Include"]
+
+                        edited_df = st.data_editor(
+                            df_history, 
+                            hide_index=True, 
+                            width="stretch",
+                            column_config={"Include": st.column_config.CheckboxColumn("Include")},
+                            disabled=[c for c in df_history.columns if c != "Include"],
+                            key=editor_key,
+                            on_change=on_history_change
+                        )
                                 
                         # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
                         if "synthesis_result" in st.session_state:
