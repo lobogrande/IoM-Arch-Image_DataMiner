@@ -2947,6 +2947,11 @@ You just used the Optimizer to find the mathematically perfect build for your *c
 * **The Micro-Test:** The AI will temporarily add **+1 Level** to every single stat or un-maxed internal upgrade and run a quick batch of simulations.
 * **The Ranking:** It then sorts the results to show you exactly which upgrade gives you the biggest immediate raw boost to your Farming Yields (EXP, Fragments, or Cards per minute).
 
+📉 **Why are my results negative?**
+If your top upgrades are negative, it means no remaining upgrades significantly help your current goal. This happens for two reasons:
+1. **The Suicide Farming Paradox:** If you are farming early-game drops (e.g. Dirt cards), buying survival upgrades (Stamina) pushes you into deeper floors. Fighting deep-floor blocks takes longer, which mathematically *lowers* your early-game kills/minute!
+2. **Statistical Noise:** If an upgrade provides 0 benefit to your goal, the natural RNG variance of a rapid 15-run micro-test will make it fluctuate slightly into the negatives.
+
 ⚠️ **Important Note on Costs:** This engine does *not* currently track the Fragment cost of upgrades. It only measures the **raw output gain**. When using this "shopping list," you must weigh the AI's top recommendations against your actual in-game fragment accumulation rates!
                 """)
                 st.write("Run isolated micro-simulations to discover exactly where your next investments should go based on your current optimal build.")
