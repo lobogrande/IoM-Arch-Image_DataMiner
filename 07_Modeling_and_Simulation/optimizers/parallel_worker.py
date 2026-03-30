@@ -345,7 +345,8 @@ def get_optimal_step_profile(stats_list, budget, bounds, sims_per_second, target
         # Weighting them artificially lowered the ETA, causing Phase 1 to over-promise.
         total_expected_sims = p1_sims + p2_sims + p3_sims
         
-        estimated_seconds = total_expected_sims / effective_sims_sec
+        # Add a flat 3.0s penalty for Multiprocessing Pool spin-up/teardown and array sorting overhead
+        estimated_seconds = (total_expected_sims / effective_sims_sec) + 3.0
         
         if estimated_seconds < 60:
             time_str = f"~{int(estimated_seconds)} seconds"
@@ -361,8 +362,10 @@ def get_optimal_step_profile(stats_list, budget, bounds, sims_per_second, target
             "time_label": time_str
         }
         
-        # If we are safely under 95% of the target time, we found our mathematically perfect step!
-        if estimated_seconds <= (target_time_seconds * 0.95):
+        # STRICT BUFFER: RNG survival variance pushes highly optimized Phase 3 builds
+        # to take slightly longer than average. We enforce a strict 20% safety margin (0.80) 
+        # to guarantee the engine completes Phase 3 cleanly without triggering timeouts.
+        if estimated_seconds <= (target_time_seconds * 0.80):
             break
             
     return best_profile
