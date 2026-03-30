@@ -1503,21 +1503,27 @@ if __name__ == "__main__":
     # --- TAB 7: RUN OPTIMIZER ---
     with tab_optimizer:
         st.header("🚀 Monte Carlo Stat Optimizer")
-        st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution. Ensure your total allocated points do not exceed your budget before running.")
+        st.write("Leverage Successive Halving to find the absolute mathematically perfect stat distribution.")
 
+        # --- WORKFLOW GUIDE (SCOUT & REFINE) ---
+        with st.container(border=True):
+            st.markdown("#### 💡 Best Practice: The 2-Step Optimization")
+            st.markdown("""
+            **1. The Scout Run:** Leave your stats unlocked. Adjust the **Time Limit** slider below until the Precision Gauge shows at least 🟡 **Moderate**. Run the Optimizer and look at the winning build. Did the AI drop any stats to `0`? Did it push any to their `Max`? \n\n
+            **2. The Refined Run:** Open the **Stat Constraints** below and lock those obvious stats to `0` or `Max`. Notice how your Precision Gauge instantly turns 🟢 **Green**! By locking just 1 or 2 stats, the AI can scan the remaining stats with better precision in a fraction of the time. Run it again to find your perfect build.
+            """)
+            
         # --- PROJECTION DISCLAIMER ---
-        with st.expander("⚠️ Important Disclaimer regarding Projections (Click to read)"):
+        with st.expander("ℹ️ How accurate are these projections?", expanded=False):
             disclaimer_text = (
-                "**⚠️ IMPORTANT DISCLAIMER REGARDING PROJECTIONS:**\n\n"
                 "**The Good News:** The environment generation in this engine is now **100% identical** to the live game's source code! "
                 "The stat distributions this tool provides are mathematically perfect for your current upgrades.\n\n"
                 "**The Reality Check #1:** While the combat math is exact, the absolute output numbers (Max Floor, Kills/hr) are built on **Statistical Averages**. "
                 "The AI runs hundreds of simulations and optimizes for *consistent, reliable farming*. Because it smooths out extreme RNG, "
-                "the engine maintains a slightly conservative slant. You may occasionally experience a 'God Run' in the actual game that pushes you "
-                "a few floors higher than the AI predicts. Treat these numbers as your highly accurate, reliable baseline!"
+                "the engine maintains a slightly conservative slant. Treat these numbers as your highly accurate, reliable baseline!\n\n"
                 "**The Reality Check #2:** The engine calculates **100% Theoretical Efficiency**. In the Python simulator, 0.000 seconds pass between killing an ore and hitting the next one. "
-                "In the actual live game, minor animation delays, frame drops, and tick-rate transitions consume fractions of a second. "
-                "Because of this 'Animation Lag', you should expect your actual real-world Yields (XP/Frags) to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
+                "In the actual live game, minor animation delays and frame drops consume fractions of a second. "
+                "Expect your actual real-world Yields to be roughly **~5% to 10% lower** than the mathematical perfection projected here."
             )
         
             # Append the specific warning if Asc2 is checked
@@ -1559,7 +1565,7 @@ if __name__ == "__main__":
 
         # --- NEW: STAT LOCKING ---
         with st.expander("🔒 Stat Constraints / Locking (Optional)", expanded=False):
-            st.markdown("**🧠 The Time vs. Precision Trade-off**\nBecause the AI auto-scales to your chosen Time Limit, locking a stat removes an entire mathematical dimension from the search space, giving you two powerful options:\n* **Higher Precision:** Keep the time slider high. The AI will use that time to scan the remaining unlocked stats at a much deeper, finer resolution.\n* **Faster Runtimes:** Lower the time slider. **Rule of Thumb:** For every stat you lock, you can safely drop the Time Limit slider by 1 or 2 levels (e.g., from 5 Minutes down to 1 Minute) and maintain the exact same mathematical accuracy!")
+            st.markdown("Locking a stat removes an entire dimension from the AI's search grid. **Rule of Thumb:** For every stat you lock, the Precision Gauge below will massively improve, allowing you to run shorter time limits with perfect accuracy!")
             
             def render_lock_stat(label, stat_key, col):
                 max_val = int(STAT_CAPS.get(stat_key, 99))
@@ -1632,58 +1638,64 @@ if __name__ == "__main__":
             else:
                 eta_bounds[s] = (0, EFFECTIVE_CAPS[s])
 
-        with st.expander("⚙️ Engine Tuning", expanded=False):
-            col_spd_1, col_spd_2 = st.columns([3, 1])
-            with col_spd_1:
-                st.write(f"⚡ **Calculated Speed:** {st.session_state.sims_per_sec:,.0f} simulations / second *(Auto-calibrates after your first run)*")
-            with col_spd_2:
-                # Allows users to flush bad legacy speeds from browser memory instantly
-                if st.button("🔄 Reset Calibration", width="stretch"):
-                    if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
-                    st.rerun()
-            
-            st.write("#### Target Compute Time (Precision Target)")
-            
-            TIME_LABELS =["10 Seconds", "30 Seconds", "1 Minute", "2 Minutes", "5 Minutes", "10 Minutes", "30 Minutes (Deep)"]
-            TIME_VALUES =[10, 30, 60, 120, 300, 600, 1800]
-            
-            selected_time_label = st.select_slider(
-                "Allocate more time to allow the AI to search with higher precision:", 
-                options=TIME_LABELS,
-                value="1 Minute",
-                help="Because this engine auto-scales to your hardware, more time directly translates to a tighter search grid and higher mathematical accuracy. A 10-second run provides a 'Coarse' estimate, while a 5-minute run provides a 'Deep' exhaustive search."
-            )
-            
-            time_limit_secs = TIME_VALUES[TIME_LABELS.index(selected_time_label)]
-            
-            prof_data = get_optimal_step_profile(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec, time_limit_secs)
-            
-            step_1 = prof_data['step_1']
-            step_2 = prof_data['step_2']
-            step_3 = prof_data['step_3']
-            
-            preview_html = f"""
-            <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
-                <b>Auto-Scaling Execution Plan:</b><br>
-                🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
-                🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
-                🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.<br><br>
-                ⏱️ <b>Estimated Time:</b> {prof_data['time_label']} <i>(~{prof_data['builds']:,.0f} unique builds tested)</i>
-            </div>
-            """
-            st.markdown(preview_html, unsafe_allow_html=True)
+        st.divider()
+        st.markdown("#### ⏱️ Target Compute Time")
+        
+        TIME_LABELS =["10 Seconds", "30 Seconds", "1 Minute", "2 Minutes", "5 Minutes", "10 Minutes", "30 Minutes (Deep)"]
+        TIME_VALUES =[10, 30, 60, 120, 300, 600, 1800]
+        
+        selected_time_label = st.select_slider(
+            "Allocate more time to allow the AI to scan with higher mathematical precision:", 
+            options=TIME_LABELS, value="1 Minute", label_visibility="collapsed"
+        )
+        time_limit_secs = TIME_VALUES[TIME_LABELS.index(selected_time_label)]
+        
+        # Calculate Engine Execution Plan
+        prof_data = get_optimal_step_profile(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec, time_limit_secs)
+        step_1 = prof_data['step_1']
+        step_2 = prof_data['step_2']
+        step_3 = prof_data['step_3']
 
-            # --- UN-INDENTED EXPLANATION TEXT ---
-            st.divider()
+        # --- DYNAMIC PRECISION GAUGE ---
+        if step_1 >= 15:
+            g_color, g_bg, g_icon = "#ff4b4b", "rgba(255, 75, 75, 0.1)", "🔴"
+            g_title = "Low Precision (Scout Only)"
+            g_desc = f"The search grid is too massive. The AI must take huge leaps of <b>{step_1} stat points</b>. This run is only useful for spotting which stats the AI completely ignores. Do not trust the final numbers! Increase time or lock stats."
+        elif step_1 >= 5:
+            g_color, g_bg, g_icon = "#ffa229", "rgba(255, 162, 41, 0.1)", "🟡"
+            g_title = "Moderate Precision"
+            g_desc = f"The AI is searching in leaps of <b>{step_1} stat points</b>. It will find a strong general build, but might miss the absolute mathematical peak. Safe to use as a Scout Run."
+        else:
+            g_color, g_bg, g_icon = "#4CAF50", "rgba(76, 175, 80, 0.1)", "🟢"
+            g_title = "High Precision (Recommended)"
+            g_desc = f"The search area is extremely tight (leaps of <b>{step_1} stat points</b>). The AI has enough time to pinpoint the mathematically perfect build. Safe to trust!"
+
+        gauge_html = f"""
+        <div style='padding: 15px; border: 1px solid {g_color}; border-left: 5px solid {g_color}; background-color: {g_bg}; border-radius: 5px; margin-bottom: 15px;'>
+            <div style='font-size: 1.1em; font-weight: bold; margin-bottom: 5px;'>{g_icon} Precision Gauge: {g_title}</div>
+            <div style='font-size: 0.9em;'>{g_desc}</div>
+        </div>
+        """
+        st.markdown(gauge_html, unsafe_allow_html=True)
+
+        with st.expander("⚙️ Advanced: Engine Tuning & Hardware Benchmark", expanded=False):
             st.markdown("""
-            **🧠 How does the AI Optimizer work?**
+            **🧠 How does the Auto-Scaler work?**
             Testing every stat combination point-by-point would take days. Instead, we "zoom in":
             * **Phase 1 (Coarse):** Casts a wide net across your stat budget in large leaps.
             * **Phase 2 (Fine):** Draws a tight box around the Phase 1 winner and tests smaller leaps.
             * **Phase 3 (Exact):** Pinpoints the mathematical peak by testing every single point in that final box.
-            
-            *(The engine also uses "Successive Halving" to quickly delete bad builds after testing them briefly, saving enormous amounts of time).*
             """)
+            st.write(f"*(**Execution Plan:** Phase 1 leapes by **{step_1}** -> Phase 2 leaps by **{step_2}** -> Phase 3 leaps by **{step_3}**)*")
+            st.divider()
+            
+            col_spd_1, col_spd_2 = st.columns([3, 1])
+            with col_spd_1:
+                st.write(f"⚡ **Hardware Speed:** {st.session_state.sims_per_sec:,.0f} sims / second *(Auto-calibrated)*")
+            with col_spd_2:
+                if st.button("🔄 Reset Calibration", width="stretch"):
+                    if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
+                    st.rerun()
 
     # --- MONTE CARLO EXECUTION LOOP ---
         st.divider()
@@ -1691,9 +1703,6 @@ if __name__ == "__main__":
         # Hidden for Production Beta. Change to True if you need to do UI testing later!
         # dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
         dev_mode = False
-        
-       # --- ACTIVE SETTINGS TRANSPARENCY ---
-        st.info(f"⚙️ **Active Settings:** Auto-Scaled Precision (Step {step_1}) | {selected_time_label} Compute Time. *(Adjust these in the Engine Tuning expander above)*")
         
         # --- PRE-FLIGHT CHECK ---
         # Calculate total locked points to prevent mathematically impossible runs
