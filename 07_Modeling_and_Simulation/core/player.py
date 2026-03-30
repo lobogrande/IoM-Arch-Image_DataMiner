@@ -204,7 +204,8 @@ class Player:
         return sum(1 for lvl in self.cards.values() if lvl == 4)
     @property
     def infernal_multiplier(self):
-        hades_bonus = (self.hades_idol_level * 0.000045) if self.asc2_unlocked else 0.0
+        # FIX: Hades Idol applies if Asc1 is unlocked, not Asc2
+        hades_bonus = (self.hades_idol_level * 0.000045) if self.asc1_unlocked else 0.0
         arch_bonus = 1.0 + (0.04 * self.arch_infernal_cards) + (0.002 * self.total_infernal_cards)
         return math.ceil((arch_bonus * (1.0 + hades_bonus) * 10000) - 1e-9) / 10000.0
 
@@ -276,7 +277,8 @@ class Player:
         upg_mult = 1.0 + (0.03 * self.stat('Int')) + self.u('F29')
         card_mult = 1.0 + self.inf('rare3')
         
-        return self._excel_round(base_ap * upg_mult * card_mult, 0)
+        # FIX: C# Integer casting truncates (floors) rather than rounding
+        return self._excel_floor(base_ap * upg_mult * card_mult, 0)
 
     @property
     def atk_spd(self): return 1.0
