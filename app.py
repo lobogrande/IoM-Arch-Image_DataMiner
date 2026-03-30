@@ -2810,10 +2810,12 @@ if __name__ == "__main__":
                     
                     col_filt1, col_filt2 = st.columns([2, 1])
                     with col_filt1:
+                        # Safely grab the last run target if it exists to set the default view
+                        last_tgt = st.session_state.get("opt_results", {}).get("run_target_metric")
                         view_targets = st.multiselect(
                             "🔍 Filter visible runs by optimization target:", 
                             options=unique_targets, 
-                            default=[t for t in unique_targets if t == run_target_metric] or unique_targets
+                            default=[t for t in unique_targets if t == last_tgt] or unique_targets
                         )
                     with col_filt2:
                         # Add a top margin to perfectly align the button with the multiselect input box
@@ -2851,9 +2853,13 @@ if __name__ == "__main__":
                                 
                                 if len(valid_runs) == 0:
                                     st.error("⚠️ You must have at least 1 visible run checked to synthesize!")
+                                elif len(set(r.get("Target") for r in valid_runs)) > 1:
+                                    st.error("⚠️ **Target Mismatch:** You cannot synthesize builds optimized for different targets! Please uncheck builds so only a single target remains.")
                                 elif len(valid_runs) > 10:
                                     st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
+                                    # Dynamically set the tournament target strictly based on the selected runs!
+                                    run_target_metric = valid_runs[0].get("Target")
                                     with st.spinner("Calculating center, generating permutations, and running deep verification..."):
                                         stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor", "_global_idx"]]
                                         
@@ -3236,10 +3242,11 @@ if __name__ == "__main__":
                     st.write("A permanent record of your optimized Meta-Builds. Expand a row to view the original builds that birthed it.")
                     
                     synth_targets = list(set(s.get("Target") for s in st.session_state.synth_history))
+                    last_tgt = st.session_state.get("opt_results", {}).get("run_target_metric")
                     synth_view_targets = st.multiselect(
                         "🔍 Filter Meta-Builds by target:", 
                         options=synth_targets, 
-                        default=[t for t in synth_targets if t == run_target_metric] or synth_targets,
+                        default=[t for t in synth_targets if t == last_tgt] or synth_targets,
                         key="synth_filter_ms"
                     )
                     
