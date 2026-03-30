@@ -2379,7 +2379,9 @@ if __name__ == "__main__":
                             default=[t for t in unique_targets if t == run_target_metric] or unique_targets
                         )
                     with col_filt2:
-                        if st.button("🔄 Toggle 'Include' for Visible", width="stretch"):
+                        # Add a top margin to perfectly align the button with the multiselect input box
+                        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                        if st.button("☑️ Check / Uncheck All Visible", width="stretch", help="Instantly toggle the 'Include' checkboxes for all runs currently shown in the table below."):
                             for r in st.session_state.run_history:
                                 if r.get("Target") in view_targets:
                                     r["Include"] = not r.get("Include", True)
