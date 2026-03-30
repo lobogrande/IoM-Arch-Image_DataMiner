@@ -2825,6 +2825,14 @@ if __name__ == "__main__":
                                         synth_entry["Arch Secs Cost"] = arch_secs_cost
                                         
                                     synth_entry.update(final_meta_dist)
+                                    
+                                    # Save a deep copy of the entire dashboard payload so it can be restored later!
+                                    import copy
+                                    synth_entry["_restore_state"] = {
+                                        "synthesis_result": copy.deepcopy(st.session_state.synthesis_result),
+                                        "opt_results": copy.deepcopy(st.session_state.opt_results)
+                                    }
+                                    
                                     st.session_state.synth_history.append(synth_entry)
                                     
                                     # Only clear any stale ROI tables so the dashboard renders clean
@@ -3042,7 +3050,7 @@ if __name__ == "__main__":
                                     source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
                                     
                                     # Reorder to put the new score column at the front
-                                    s_cols =[score_col] +[c for c in source_df.columns if c != score_col]
+                                    s_cols = [score_col] +[c for c in source_df.columns if c != score_col]
                                     source_df = source_df[s_cols]
                                     
                                     st.dataframe(source_df, hide_index=True, width="stretch")
@@ -3050,11 +3058,20 @@ if __name__ == "__main__":
                                     st.write(synth.get("Sources", "*(No source data saved)*"))
                             
                             # --- Always-Visible Buttons ---
-                            col_h1, col_h2, col_h3 = st.columns(3)
+                            col_h0, col_h1, col_h2, col_h3 = st.columns(4)
                             
-                            col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("global", stats_only, "✅ Meta-Build stats applied globally!", "🧬"))
+                            def cb_load_dash(restore_data):
+                                import copy
+                                st.session_state.synthesis_result = copy.deepcopy(restore_data["synthesis_result"])
+                                st.session_state.opt_results = copy.deepcopy(restore_data["opt_results"])
+                                st.session_state.scroll_to_synth = True
+                            
+                            has_data = "_restore_state" in synth
+                            col_h0.button("📊 View Dashboard", key=f"view_hist_{idx}", width="stretch", disabled=not has_data, type="primary", on_click=cb_load_dash, args=(synth.get("_restore_state"),))
+                            
+                            col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("global", stats_only, "✅ Meta-Build stats applied globally!", "🧬", "synthesizer"))
                                 
-                            col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("sandbox", stats_only, "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
+                            col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("sandbox", stats_only, "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪", "synthesizer"))
                                 
                             col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch", on_click=cb_delete_hist, args=(idx,))
 
