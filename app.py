@@ -2703,20 +2703,22 @@ if __name__ == "__main__":
                                         st.session_state.sims_per_sec = max(1, int(total_sims / synth_elapsed))
                                         
                                     for args, r in zip(r2_args, res2):
-                                        b_id = args['_b_id']
-                                        t_val = float(r.get(run_target_metric, 0.0))
-                                        f_val = r.get("highest_floor", 0)
-                                        
-                                        build_res[b_id]['sum_t'] += t_val
-                                        build_res[b_id]['sum_f'] += f_val
-                                        build_res[b_id]['floors'].append(f_val)
-                                        
-                                        if 'sum_metrics' not in build_res[b_id]: build_res[b_id]['sum_metrics'] = {}
-                                        for mk, mv in r.get("avg_metrics", {}).items():
-                                            build_res[b_id]['sum_metrics'][mk] = build_res[b_id]['sum_metrics'].get(mk, 0) + mv
+                                            b_id = args['_b_id']
+                                            t_val = float(r.get(run_target_metric, 0.0))
+                                            f_val = r.get("highest_floor", 0)
                                             
-                                        if 'stamina_trace' not in build_res[b_id] and 'stamina_trace' in r:
-                                            build_res[b_id]['stamina_trace'] = r['stamina_trace']
+                                            build_res[b_id]['sum_t'] += t_val
+                                            build_res[b_id]['sum_f'] += f_val
+                                            build_res[b_id]['floors'].append(f_val)
+                                            
+                                            if 'sum_metrics' not in build_res[b_id]: build_res[b_id]['sum_metrics'] = {}
+                                            # worker_simulate returns raw telemetry at the root level
+                                            for mk, mv in r.items():
+                                                if mk.endswith("_per_min"):
+                                                    build_res[b_id]['sum_metrics'][mk] = build_res[b_id]['sum_metrics'].get(mk, 0) + mv
+                                                
+                                            if 'stamina_trace' not in build_res[b_id] and 'stamina_trace' in r:
+                                                build_res[b_id]['stamina_trace'] = r['stamina_trace']
                                         
                                     # SORTING LOGIC FOR ROUND 2
                                     if run_target_metric == "highest_floor":
