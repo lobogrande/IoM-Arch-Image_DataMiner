@@ -2823,6 +2823,7 @@ if __name__ == "__main__":
                                     if f"roi_stat_results_synthesizer" in st.session_state: del st.session_state[f"roi_stat_results_synthesizer"]
                                     if f"roi_upg_results_synthesizer" in st.session_state: del st.session_state[f"roi_upg_results_synthesizer"]
                                     
+                                    st.session_state.scroll_to_synth = True
                                     st.rerun()
 
                     with col_synth2:
@@ -2844,36 +2845,6 @@ if __name__ == "__main__":
                             st.toast("🗑️ Unchecked runs permanently deleted!", icon="🧹")
                             st.rerun()
                             
-                    # --- NEW: SYNTHESIS RESULTS HIERARCHY ---
-                    if "synthesis_result" in st.session_state:
-                        sr = st.session_state.synthesis_result
-                        
-                        if "history_scores" not in sr:
-                            del st.session_state["synthesis_result"]
-                            st.rerun()
-                            
-                        st.markdown("#### 📊 Synthesis Performance Proof")
-                        st.write("How the optimized Meta-Build compares to the individual historical runs you selected.")
-                        st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
-                        
-                        chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
-                        is_floor_target = (sr.get("metric_name", "highest_floor") == "highest_floor")
-                        def scale_sr(v): return v if is_floor_target else (v / 60.0) * 1000.0
-                        
-                        chart_scores =[scale_sr(s) for s in sr["history_scores"]] +[scale_sr(sr["meta_score"])]
-                        chart_colors =["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
-                        df_comp = pd.DataFrame({"Build": chart_labels, "Score": chart_scores, "Type": chart_colors})
-                        min_score = min(chart_scores) * 0.98 if chart_scores else 0
-                        fig_comp = px.bar(df_comp, x="Build", y="Score", color="Type", text_auto='.3s', color_discrete_map={"Historical Runs": "#6495ED", "Meta-Build": "#4CAF50"})
-                        fig_comp.update_layout(showlegend=False, margin=dict(t=10, b=20), height=300)
-                        fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
-                        st.plotly_chart(fig_comp, width="stretch")
-                        
-                        st.divider()
-                        
-                        # Render the unified dashboard!
-                        render_results_dashboard(st.session_state.opt_results, p, dev_mode=False, context="synthesizer")
-                        
                     st.divider()
                     st.markdown("#### 📋 Run History Table")
                     st.write("*(Check the **Include** box for your top runs (recommend 2 to 5, max 10) to mix them into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
@@ -2935,6 +2906,54 @@ if __name__ == "__main__":
                         key=editor_key,
                         on_change=on_history_change
                     )
+
+                    # --- ANCHOR FOR SCROLLING ---
+                    st.markdown("<div id='synth-results-anchor'></div>", unsafe_allow_html=True)
+                    if st.session_state.get("scroll_to_synth", False):
+                        import streamlit.components.v1 as components
+                        components.html(
+                            '''
+                            <script>
+                                const parent = window.parent.document;
+                                const el = parent.getElementById("synth-results-anchor");
+                                if (el) {
+                                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }
+                            </script>
+                            ''',
+                            height=0
+                        )
+                        st.session_state.scroll_to_synth = False
+
+                    # --- NEW: SYNTHESIS RESULTS HIERARCHY ---
+                    if "synthesis_result" in st.session_state:
+                        sr = st.session_state.synthesis_result
+                        
+                        if "history_scores" not in sr:
+                            del st.session_state["synthesis_result"]
+                            st.rerun()
+                            
+                        st.markdown("#### 📊 Synthesis Performance Proof")
+                        st.write("How the optimized Meta-Build compares to the individual historical runs you selected.")
+                        st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
+                        
+                        chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
+                        is_floor_target = (sr.get("metric_name", "highest_floor") == "highest_floor")
+                        def scale_sr(v): return v if is_floor_target else (v / 60.0) * 1000.0
+                        
+                        chart_scores =[scale_sr(s) for s in sr["history_scores"]] +[scale_sr(sr["meta_score"])]
+                        chart_colors =["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
+                        df_comp = pd.DataFrame({"Build": chart_labels, "Score": chart_scores, "Type": chart_colors})
+                        min_score = min(chart_scores) * 0.98 if chart_scores else 0
+                        fig_comp = px.bar(df_comp, x="Build", y="Score", color="Type", text_auto='.3s', color_discrete_map={"Historical Runs": "#6495ED", "Meta-Build": "#4CAF50"})
+                        fig_comp.update_layout(showlegend=False, margin=dict(t=10, b=20), height=300)
+                        fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
+                        st.plotly_chart(fig_comp, width="stretch")
+                        
+                        st.divider()
+                        
+                        # Render the unified dashboard!
+                        render_results_dashboard(st.session_state.opt_results, p, dev_mode=False, context="synthesizer")
 
             # ==========================================
             # META-BUILD HISTORY TABLE (NESTED EXPANDERS)
