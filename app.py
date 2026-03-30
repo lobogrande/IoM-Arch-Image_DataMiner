@@ -2952,22 +2952,18 @@ if __name__ == "__main__":
                 if run_target_metric == "highest_floor":
                     st.warning("⚠️ **ROI Analyzer is Disabled for Max Floor Push:**\nBecause floor progression relies on large, discrete math 'Breakpoints' (e.g., shaving a 3-hit kill down to a 2-hit kill), adding a single +1 to a stat rarely shows an immediate gain. Additionally, the ROI engine compares a 15-run average to your absolute Peak God Run, which mathematically causes false negatives.\n\nTo calculate exactly what stats you need to beat your current wall, send your build to **Tab 6 (Hit Calculator Sandbox)** and manually inspect the HP and Armor Breakpoints!")
                 else:
-                    st.info("""
-💡 **Strategy Tip: Finding your next best upgrade (ROI)**
-
-You just used the Optimizer to find the mathematically perfect build for your *current* stats. But what should you level up *next*?
-
-* **The Micro-Test:** The AI will temporarily add **+1 Level** to every single stat or un-maxed internal upgrade and run a quick batch of simulations.
-* **The Ranking:** It then sorts the results to show you exactly which upgrade gives you the biggest immediate raw boost to your Farming Yields (EXP, Fragments, or Cards per minute).
-
-📉 **Why are my results negative?**
-If your top upgrades are negative, it means no remaining upgrades significantly help your current goal. This happens for two reasons:
-1. **The Suicide Farming Paradox:** If you are farming early-game drops (e.g. Dirt cards), buying survival upgrades (Stamina) pushes you into deeper floors. Fighting deep-floor blocks takes longer, which mathematically *lowers* your early-game kills/minute!
-2. **Statistical Noise:** If an upgrade provides 0 benefit to your goal, the natural RNG variance of a rapid 15-run micro-test will make it fluctuate slightly into the negatives.
-
-⚠️ **Important Note on Costs:** This engine does *not* currently track the Fragment cost of upgrades. It only measures the **raw output gain**. When using this "shopping list," you must weigh the AI's top recommendations against your actual in-game fragment accumulation rates!
-                    """)
-                    st.write("Run isolated micro-simulations to discover exactly where your next investments should go based on your current optimal build.")
+                    st.markdown("Wondering what to buy next? The ROI Analyzer runs isolated micro-simulations, adding **+1 Level** to every stat and un-maxed upgrade, then ranks them by their immediate raw boost to your yields.")
+                    
+                    st.warning("⚠️ **Note:** This engine ranks **raw output gain**, not cost efficiency. You must weigh the AI's top recommendations against your actual in-game fragment costs!")
+                    
+                    with st.expander("🤓 Deep Dive: Why are some of my results negative?"):
+                        st.markdown("""
+                        If your top upgrades are negative, it means no remaining upgrades significantly help your current goal. This happens for two reasons:
+                        1. **The Suicide Farming Paradox:** If you are farming early-game drops (e.g. Dirt cards), buying survival upgrades (Stamina) pushes you into deeper floors where blocks have exponentially more HP. Fighting deep-floor blocks takes longer, which mathematically *lowers* your early-game kills/minute!
+                        2. **Statistical Noise:** If an upgrade provides absolutely 0 benefit to your goal, the natural RNG variance of a rapid 15-run micro-test will cause it to fluctuate slightly into the negatives.
+                        """)
+                    
+                    st.divider()
                     
                     col_roi_1, col_roi_2 = st.columns(2)
                     
