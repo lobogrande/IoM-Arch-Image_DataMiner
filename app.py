@@ -852,8 +852,11 @@ if __name__ == "__main__":
                                 
                                 inf_key = f"ext_inf_{group['id']}"
                                 if inf_key not in st.session_state:
-                                    # Convert decimal to percentage for UI (e.g. -0.125 -> -12.5)
-                                    st.session_state[inf_key] = float(p.arch_ability_infernal_bonus * 100.0)
+                                    # Convert decimal to percentage for UI and explicitly store as String for text_input!
+                                    st.session_state[inf_key] = str(round(p.arch_ability_infernal_bonus * 100.0, 2))
+                                elif not isinstance(st.session_state[inf_key], str):
+                                    # Failsafe: coerce any legacy floats stuck in memory into strings
+                                    st.session_state[inf_key] = str(st.session_state[inf_key])
                                     
                                 def update_inf(k=inf_key):
                                     try:
@@ -865,8 +868,8 @@ if __name__ == "__main__":
                                     p.set_external_level(20, 4) # Trigger W20 math refresh!
                                     
                                 st.text_input(
-                                    "Inf Bonus", value=str(st.session_state[inf_key]),
-                                    key=inf_key, on_change=update_inf, label_visibility="collapsed"
+                                    "Inf Bonus", key=inf_key, 
+                                    on_change=update_inf, label_visibility="collapsed"
                                 )
 
     # --- TAB 3: BLOCK CARDS ---
