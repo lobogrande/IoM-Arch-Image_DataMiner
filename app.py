@@ -2313,7 +2313,7 @@ if __name__ == "__main__":
                                     st.error("⚠️ **Safety Limit Reached:** Synthesizing creates dozens of mathematical permutations for every input build. Please select 10 or fewer builds to prevent server memory overloads!")
                                 else:
                                     with st.spinner("Calculating center, generating permutations, and running deep verification..."):
-                                        stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor"]]
+                                        stat_keys =[k for k in valid_runs[0].keys() if k not in["Include", "Target", "Metric Score", "Avg Floor", "Max Floor", "_global_idx"]]
                                         
                                         synth_state_dict = {
                                             'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
@@ -2599,7 +2599,7 @@ if __name__ == "__main__":
                         
                         # Safe fallback in case old history rows don't have Max Floor yet
                         if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                        cols +=[ c for c in df_history.columns if c not in cols ]
+                        cols +=[ c for c in df_history.columns if c not in cols and c != "_global_idx" ]
                         df_history = df_history[cols]
                         
                         # Create a robust, unique key to anchor the frontend state
