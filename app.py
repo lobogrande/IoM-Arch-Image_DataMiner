@@ -1954,20 +1954,7 @@ if __name__ == "__main__":
             # SAVE TO SESSION STATE FOR PERSISTENCE
             # ==========================================
             if best_final and final_summary_out:
-                # --- NEW: APPEND TO RUN HISTORY ---
-                if "run_history" not in st.session_state:
-                    st.session_state.run_history = list()
-                
-                history_entry = {
-                    "Include": True,
-                    "Target": target_metric,
-                    "Metric Score": round(final_summary_out.get(target_metric, 0), 2),
-                    "Avg Floor": round(final_summary_out.get("avg_floor", 0), 2),
-                    "Max Floor": int(final_summary_out.get("abs_max_floor", 0))
-                }
-                history_entry.update(best_final) # Add the stats to the dictionary
-                st.session_state.run_history.append(history_entry)
-
+                # FIRST: Construct the exact Dashboard Payload
                 st.session_state.opt_results = {
                     "best_final": best_final,
                     "final_summary_out": final_summary_out,
@@ -1984,6 +1971,24 @@ if __name__ == "__main__":
                     "show_loot": (target_metric != "highest_floor" or dev_mode),
                     "show_wall": (target_metric == "highest_floor" or dev_mode)
                 }
+
+                # SECOND: Append to Run History with a stashed deep copy
+                if "run_history" not in st.session_state:
+                    st.session_state.run_history = list()
+                
+                history_entry = {
+                    "Include": True,
+                    "Target": target_metric,
+                    "Metric Score": round(final_summary_out.get(target_metric, 0), 2),
+                    "Avg Floor": round(final_summary_out.get("avg_floor", 0), 2),
+                    "Max Floor": int(final_summary_out.get("abs_max_floor", 0))
+                }
+                history_entry.update(best_final) # Add the stats to the dictionary
+                
+                import copy
+                history_entry["_restore_state"] = copy.deepcopy(st.session_state.opt_results)
+                
+                st.session_state.run_history.append(history_entry)
             else:
                 st.error("Optimization failed or aborted before a single build could be tested.")
 
@@ -2922,6 +2927,27 @@ if __name__ == "__main__":
                         key=editor_key,
                         on_change=on_history_change
                     )
+                    
+                    # --- NEW: VIEW SINGLE RUN DASHBOARD ---
+                    checked_runs =[r for r in visible_history if r.get("Include", False)]
+                    
+                    def cb_restore_single(run_data):
+                        if "_restore_state" in run_data:
+                            import copy
+                            st.session_state.opt_results = copy.deepcopy(run_data["_restore_state"])
+                            # Clear Synthesis results so the Optimizer tab shows exactly this run
+                            if "synthesis_result" in st.session_state:
+                                del st.session_state["synthesis_result"]
+                            st.toast("✅ Dashboard restored! Click the 'Optimizer' tab to view it.", icon="🚀")
+                        else:
+                            st.toast("No telemetry saved for this legacy run.", icon="⚠️")
+                            
+                    col_sr1, col_sr2 = st.columns([1, 1])
+                    with col_sr1:
+                        if len(checked_runs) == 1:
+                            st.button("📊 View Dashboard for Checked Run", width="stretch", type="primary", on_click=cb_restore_single, args=(checked_runs[0],), help="Restores the charts and analytics for this specific run. (You will need to click the Optimizer tab to view it)")
+                        else:
+                            st.button("📊 View Dashboard for Checked Run", width="stretch", disabled=True, help="You must check exactly ONE run in the table above to view its dashboard.")
 
                     # --- ANCHOR FOR SCROLLING ---
                     st.markdown("<div id='synth-results-anchor'></div>", unsafe_allow_html=True)
@@ -3006,7 +3032,7 @@ if __name__ == "__main__":
                                 title += f" | Peak: `{synth['God-Run Peak']}`"
                             st.markdown(title)
                             
-                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "Theoretical Peak", "Peak Probability", "God-Run Peak", "God-Run Chance", "Arch Secs Cost", "Sources Data", "Sources", "Keep"]}
+                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "Theoretical Peak", "Peak Probability", "God-Run Peak", "God-Run Chance", "Arch Secs Cost", "Sources Data", "Sources", "Keep", "_restore_state", "_global_idx", "Include"]}
                             stat_string = " &nbsp;&nbsp;|&nbsp;&nbsp; ".join([f"**{k}:** {v}" for k, v in stats_only.items()])
                             st.info(stat_string)
                             
