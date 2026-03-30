@@ -2279,6 +2279,10 @@ if __name__ == "__main__":
                                     del st.session_state[k]
                             st.rerun()
 
+                    # Inject global index to securely map frontend edits back to the session state array
+                    for i, r in enumerate(st.session_state.run_history):
+                        r["_global_idx"] = i
+
                     visible_history =[r for r in st.session_state.run_history if r.get("Target") in view_targets]
                     
                     if not visible_history:
@@ -2309,22 +2313,30 @@ if __name__ == "__main__":
                         cols +=[ c for c in df_history.columns if c not in cols ]
                         df_history = df_history[cols]
                         
-                        # Create a robust, unique key to prevent Streamlit from losing checkbox states during rapid clicks
+                        # Create a robust, unique key to anchor the frontend state
                         view_targets_str = "_".join(view_targets)
                         editor_key = f"history_editor_{len(visible_history)}_{view_targets_str}"
                         
+                        def on_history_change():
+                            """Callback to map frontend edits securely to the backend BEFORE the script reruns."""
+                            if editor_key not in st.session_state: return
+                            edits = st.session_state[editor_key].get("edited_rows", {})
+                            for row_idx_str, edit_dict in edits.items():
+                                if "Include" in edit_dict:
+                                    row_idx = int(row_idx_str)
+                                    # Use the closure's visible_history from the previous render to map the index
+                                    global_idx = visible_history[row_idx]["_global_idx"]
+                                    st.session_state.run_history[global_idx]["Include"] = edit_dict["Include"]
+
                         edited_df = st.data_editor(
                             df_history, 
                             hide_index=True, 
                             width="stretch",
                             column_config={"Include": st.column_config.CheckboxColumn("Include")},
                             disabled=[c for c in df_history.columns if c != "Include"],
-                            key=editor_key
+                            key=editor_key,
+                            on_change=on_history_change
                         )
-                        
-                        # Sync live UI checkboxes directly back to the backend dictionaries
-                        for i, row in edited_df.iterrows():
-                            visible_history[i]["Include"] = bool(row["Include"])
                         
                         st.divider()
                         st.markdown("#### 🧬 Synthesize Meta-Build (Pass 2)")
@@ -2604,10 +2616,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                 hidden_runs =[r for r in st.session_state.run_history if r.get("Target") not in view_targets]
                                 
                                 # 2. Preserve only the visible runs that the user left CHECKED
-                                kept_visible_runs =[]
-                                for i, row in edited_df.iterrows():
-                                    if row["Include"]:
-                                        kept_visible_runs.append(visible_history[i])
+                                kept_visible_runs =[r for r in visible_history if r.get("Include", False)]
                                         
                                 # 3. Overwrite history (Unchecked runs are dropped into the void)
                                 st.session_state.run_history = hidden_runs + kept_visible_runs
