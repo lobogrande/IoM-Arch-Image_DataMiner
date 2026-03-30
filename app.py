@@ -2445,7 +2445,7 @@ if __name__ == "__main__":
                                         
                             if f"roi_stat_results_{context}" in st.session_state:
                                 sorted_stats = sorted(st.session_state[f"roi_stat_results_{context}"].items(), key=lambda x: x[1], reverse=True)
-                                df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain (1k Arch Secs)"])
+                                df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain (per 1k Arch Secs)"])
                                 st.dataframe(df_stat_roi, hide_index=True, width="stretch")
         
                         with col_roi_2:
@@ -2505,7 +2505,7 @@ if __name__ == "__main__":
                                         
                             if f"roi_upg_results_{context}" in st.session_state:
                                 sorted_upgs = sorted(st.session_state[f"roi_upg_results_{context}"].items(), key=lambda x: x[1], reverse=True)
-                                df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain (1k Arch Secs)"])
+                                df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain (per 1k Arch Secs)"])
                                 st.dataframe(df_upg_roi, hide_index=True, width="stretch")
 
                     render_roi_tools()
@@ -2934,7 +2934,7 @@ if __name__ == "__main__":
                     
                     # Safe fallback in case old history rows don't have Max Floor yet
                     if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                    cols +=[ c for c in df_history.columns if c not in cols and c != "_global_idx" and c != "Metric Score" ]
+                    cols +=[ c for c in df_history.columns if c not in cols and c not in ["_global_idx", "Metric Score", "_restore_state"] ]
                     df_history = df_history[cols]
                     
                     # Create a robust, unique key to anchor the frontend state
