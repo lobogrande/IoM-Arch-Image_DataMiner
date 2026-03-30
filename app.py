@@ -2679,6 +2679,119 @@ if __name__ == "__main__":
                                 st.toast("🗑️ Unchecked runs permanently deleted!", icon="🧹")
                                 st.rerun()
                                 
+                        # --- NEW: SYNTHESIS RESULTS HIERARCHY ---
+                        if "synthesis_result" in st.session_state:
+                            sr = st.session_state.synthesis_result
+                            
+                            # State migration failsafe
+                            if "history_scores" not in sr:
+                                del st.session_state["synthesis_result"]
+                                st.rerun()
+                                
+                            st.success("✅ Tie-Breaker Tournament Complete! The Advanced Analytics charts on the **Optimizer** tab have also been updated.")
+                            
+                            tab_meta_build, tab_meta_data = st.tabs(["🏆 The Meta-Build", "📊 Tournament Data"])
+                            
+                            with tab_meta_build:
+                                st.markdown("### 🏆 Ultimate Meta-Build")
+                                st.info("🔥 **Tournament Complete!** The AI mathematically merged your top runs and proved this exact stat distribution yields the absolute highest performance.")
+                                st.write("<small>*(Green/Red numbers show changes from your current UI allocation)*</small>", unsafe_allow_html=True)
+                                
+                                synth_stat_cols = st.columns(len(sr["stats"]))
+                                for idx_s, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
+                                    with synth_stat_cols[idx_s]:
+                                        with st.container(border=True):
+                                            img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
+                                            if os.path.exists(img_path):
+                                                render_centered_image(img_path, 250) 
+                                            else:
+                                                st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
+                                            
+                                            current_val = int(st.session_state.get(f"stat_{stat_name}", p.base_stats.get(stat_name, 0)))
+                                            delta = int(allocated_pts) - current_val
+                                            st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
+                                
+                                col_ma1, col_ma2 = st.columns(2)
+                                with col_ma1:
+                                    st.button("✨ Apply Meta-Build Globally", width="stretch", key="apply_meta_build_btn", on_click=cb_apply_stats, args=("global", sr["stats"], "✅ Meta-Build stats applied globally!", "🧬"))
+                                with col_ma2:
+                                    st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn", on_click=cb_apply_stats, args=("sandbox", sr["stats"], "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
+
+                            with tab_meta_data:
+                                st.markdown("#### 📊 Synthesis Performance Proof")
+                                st.write("How the optimized Meta-Build compares to the individual historical runs you selected.")
+                                st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
+                                
+                                chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
+                                
+                                is_floor_target = (sr.get("metric_name", "highest_floor") == "highest_floor")
+                                def scale_sr(v): return v if is_floor_target else (v / 60.0) * 1000.0
+                                
+                                chart_scores =[scale_sr(s) for s in sr["history_scores"]] +[scale_sr(sr["meta_score"])]
+                                chart_colors =["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
+                                
+                                df_comp = pd.DataFrame({"Build": chart_labels, "Score": chart_scores, "Type": chart_colors})
+                                
+                                # Dynamically zoom the Y-axis so fractional improvements on plateaus are highly visible
+                                min_score = min(chart_scores) * 0.98 if chart_scores else 0
+                                
+                                fig_comp = px.bar(df_comp, x="Build", y="Score", color="Type", text_auto='.3s',
+                                                  color_discrete_map={"Historical Runs": "#6495ED", "Meta-Build": "#4CAF50"})
+                                fig_comp.update_layout(showlegend=False, margin=dict(t=10, b=20), height=300)
+                                fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
+                                st.plotly_chart(fig_comp, width="stretch")
+                                
+                                st.divider()
+                                m_name = sr.get("metric_name", "highest_floor")
+                                m_score = sr.get("meta_score", 0)
+                                
+                                if m_name == "highest_floor":
+                                    c_m1, c_m2 = st.columns(2)
+                                    c_m1.metric("🏔️ Top 5 Peak Average (Ceiling)", f"Floor {m_score:,.1f}")
+                                    c_m2.metric("🏆 Theoretical Peak (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
+                                    
+                                    chance = sr.get('abs_max_chance', 0)
+                                    if chance > 0:
+                                        runs_needed = math.ceil(1.0 / chance)
+                                        arch_secs = sr.get('arch_secs_cost', runs_needed * p.max_sta)
+                                        st.info(f"🎲 **Peak Reality Check:** The AI hit Floor {sr.get('abs_max')} in **{chance*100:.1f}%** of its simulations. Mathematically, you must execute an average of **{runs_needed} full runs** to see this happen once. At your current Max Stamina, expect to burn roughly **~{arch_secs/1000.0:.1f}k Arch Seconds** before you break through!")
+                                else:
+                                    m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
+                                    r_1k = (m_score / 60.0) * 1000.0
+                                    
+                                    c_m1, c_m2 = st.columns(2)
+                                    c_m1.metric(f"💰 {m_str} per 1k Arch Secs", f"{r_1k:,.1f}")
+                                    c_m2.metric(f"⏱️ {m_str} per minute", f"{m_score:,.2f}")
+                                    
+                                    if m_name == "xp_per_min":
+                                        st.markdown("##### 🆙 Level Up Calculator")
+                                        col_sx_c, col_sx_t = st.columns(2)
+                                        with col_sx_c:
+                                            s_cur_xp = st.number_input("Current EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_cur_xp")
+                                        with col_sx_t:
+                                            s_tar_xp = st.number_input("Target EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_tar_xp")
+                                            
+                                        if s_cur_xp > 0 or s_tar_xp > 0:
+                                            if s_tar_xp > s_cur_xp and m_score > 0:
+                                                s_mins = (s_tar_xp - s_cur_xp) / m_score
+                                                st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Arch Seconds ({s_mins:,.1f} mins real-time)")
+                                            else:
+                                                st.warning("Target EXP must be greater than Current EXP.")
+                                    elif "block_" in m_name and m_score > 0:
+                                        st.markdown("##### 🎴 Card Drop Reality Check (Arch Secs)")
+                                        b_name = m_name.replace("block_", "").replace("_per_min", "").capitalize()
+                                        
+                                        def calc_c_main(odds):
+                                            k50 = (0.693 * odds) / (m_score / 60.0) / 1000.0
+                                            k90 = (2.302 * odds) / (m_score / 60.0) / 1000.0
+                                            k99 = (4.605 * odds) / (m_score / 60.0) / 1000.0
+                                            return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
+                                            
+                                        st.info(f"**{b_name} Card Projections[50% Average / 90% Safe / 99% Guaranteed]**\n\n"
+                                                f"**Base Card:** {calc_c_main(1500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                                                f"**Poly Frag:** {calc_c_main(7500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                                                f"**Infernal Frag:** {calc_c_main(200000)}")
+                                                
                         st.divider()
                         st.markdown("#### 📋 Run History Table")
                         st.write("*(Check the **Include** box for your top runs (recommend 2 to 5, max 10) to mix them into your Meta-Build. You can permanently **delete** unchecked runs using the trash can button above!)*")
@@ -2740,121 +2853,8 @@ if __name__ == "__main__":
                             key=editor_key,
                             on_change=on_history_change
                         )
-                                
-                        # --- RENDER SYNTHESIS RESULT DIRECTLY IN TAB ---
-                        if "synthesis_result" in st.session_state:
-                            sr = st.session_state.synthesis_result
-                            
-                            # State migration failsafe: clear old format if it persists in RAM
-                            if "history_scores" not in sr:
-                                del st.session_state["synthesis_result"]
-                                st.rerun()
-                                
-                            st.success("✅ Synthesis Complete! The main Advanced Analytics charts on the **Optimizer** tab have been updated to reflect this new Meta-Build.")
-                            
-                            # --- 📊 PERFORMANCE PROOF CHART ---
-                            st.markdown("#### 📊 Synthesis Performance Proof")
-                            st.write("How the optimized Meta-Build compares to the individual historical runs you selected.")
-                            st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
-                            
-                            chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
-                            
-                            is_floor_target = (sr.get("metric_name", "highest_floor") == "highest_floor")
-                            def scale_sr(v): return v if is_floor_target else (v / 60.0) * 1000.0
-                            
-                            chart_scores = [scale_sr(s) for s in sr["history_scores"]] +[scale_sr(sr["meta_score"])]
-                            chart_colors = ["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
-                            
-                            df_comp = pd.DataFrame({"Build": chart_labels, "Score": chart_scores, "Type": chart_colors})
-                            
-                            # Dynamically zoom the Y-axis so fractional improvements on plateaus are highly visible
-                            min_score = min(chart_scores) * 0.98 if chart_scores else 0
-                            
-                            fig_comp = px.bar(df_comp, x="Build", y="Score", color="Type", text_auto='.3s',
-                                              color_discrete_map={"Historical Runs": "#6495ED", "Meta-Build": "#4CAF50"})
-                            fig_comp.update_layout(showlegend=False, margin=dict(t=10, b=20), height=300)
-                            fig_comp.update_yaxes(range=[min_score, max(chart_scores) * 1.02])
-                            st.plotly_chart(fig_comp, width="stretch")
-                            
-                            # --- 🏆 META-BUILD YIELDS & CALCULATOR ---
-                            st.divider()
-                            m_name = sr.get("metric_name", "highest_floor")
-                            m_score = sr.get("meta_score", 0)
-                            
-                            if m_name == "highest_floor":
-                                c_m1, c_m2 = st.columns(2)
-                                c_m1.metric("🏔️ Top 5 Peak Average (Ceiling)", f"Floor {m_score:,.1f}")
-                                c_m2.metric("🏆 Theoretical Peak (1-in-500)", f"Floor {sr.get('abs_max', m_score):,.0f}")
-                                
-                                # --- 🎲 PEAK REALITY CHECK ---
-                                chance = sr.get('abs_max_chance', 0)
-                                if chance > 0:
-                                    runs_needed = math.ceil(1.0 / chance)
-                                    arch_secs = sr.get('arch_secs_cost', runs_needed * p.max_sta)
-                                    st.info(f"🎲 **Peak Reality Check:** The AI hit Floor {sr.get('abs_max')} in **{chance*100:.1f}%** of its simulations. Mathematically, you must execute an average of **{runs_needed} full runs** to see this happen once. At your current Max Stamina, expect to burn roughly **~{arch_secs/1000.0:.1f}k Arch Seconds** before you break through! *(If you spent less than this and didn't hit it, you just haven't banked enough arch seconds yet!)*")
-                            else:
-                                m_str = "Fragments" if "frag" in m_name else "Kills" if "block" in m_name else "EXP"
-                                r_1k = (m_score / 60.0) * 1000.0
-                                
-                                c_m1, c_m2 = st.columns(2)
-                                c_m1.metric(f"💰 {m_str} per 1k Arch Secs", f"{r_1k:,.1f}")
-                                c_m2.metric(f"⏱️ {m_str} per minute", f"{m_score:,.2f}")
-                                
-                                if m_name == "xp_per_min":
-                                    st.markdown("##### ⬆️ Level Up Calculator")
-                                    col_sx_c, col_sx_t = st.columns(2)
-                                    with col_sx_c:
-                                        s_cur_xp = st.number_input("Current EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_cur_xp")
-                                    with col_sx_t:
-                                        s_tar_xp = st.number_input("Target EXP", min_value=0.0, step=1000.0, format="%.0f", key="synth_tar_xp")
-                                        
-                                    if s_cur_xp > 0 or s_tar_xp > 0:
-                                        if s_tar_xp > s_cur_xp and m_score > 0:
-                                            s_mins = (s_tar_xp - s_cur_xp) / m_score
-                                            st.info(f"**Required:** ~{(s_mins * 60.0) / 1000.0:,.1f}k Arch Seconds ({s_mins:,.1f} mins real-time)")
-                                        else:
-                                            st.warning("Target EXP must be greater than Current EXP.")
-                                elif "block_" in m_name and m_score > 0:
-                                    st.markdown("##### 🎴 Card Drop Reality Check (Arch Secs)")
-                                    b_name = m_name.replace("block_", "").replace("_per_min", "").capitalize()
-                                    
-                                    def calc_c_main(odds):
-                                        k50 = (0.693 * odds) / (m_score / 60.0) / 1000.0
-                                        k90 = (2.302 * odds) / (m_score / 60.0) / 1000.0
-                                        k99 = (4.605 * odds) / (m_score / 60.0) / 1000.0
-                                        return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
-                                        
-                                    st.info(f"**{b_name} Card Projections[50% Average / 90% Safe / 99% Guaranteed]**\n\n"
-                                            f"**Base Card:** {calc_c_main(1500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
-                                            f"**Poly Frag:** {calc_c_main(7500)} &nbsp;&nbsp;|&nbsp;&nbsp; "
-                                            f"**Infernal Frag:** {calc_c_main(200000)}")
-                                            
-                            st.divider()
-                            
-                            # --- 🧬 STAT OUTPUT ---
-                            st.markdown("#### 🧬 Synthesized Stat Allocation")
-                            
-                            synth_stat_cols = st.columns(len(sr["stats"]))
-                            for idx_s, (stat_name, allocated_pts) in enumerate(sr["stats"].items()):
-                                with synth_stat_cols[idx_s]:
-                                    with st.container(border=True):
-                                        img_path = os.path.join(ROOT_DIR, "assets", "stats", f"{stat_name.lower()}.png")
-                                        if os.path.exists(img_path):
-                                            render_centered_image(img_path, 250) 
-                                        else:
-                                            st.markdown(f"<div style='text-align:center;'><b>{stat_name}</b></div>", unsafe_allow_html=True)
-                                        
-                                        current_val = int(st.session_state.get(f"stat_{stat_name}", p.base_stats.get(stat_name, 0)))
-                                        delta = int(allocated_pts) - current_val
-                                        st.metric(label=stat_name, value=int(allocated_pts), delta=delta, label_visibility="collapsed")
-                            
-                            col_ma1, col_ma2 = st.columns(2)
-                            with col_ma1:
-                                st.button("✨ Apply Meta-Build Globally", width="stretch", key="apply_meta_build_btn", on_click=cb_apply_stats, args=("global", sr["stats"], "✅ Meta-Build stats applied globally!", "🧬"))
-                            with col_ma2:
-                                st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn", on_click=cb_apply_stats, args=("sandbox", sr["stats"], "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
 
-            # ==========================================
+                # ==========================================
                 # META-BUILD HISTORY TABLE (NESTED EXPANDERS)
                 # ==========================================
                 if "synth_history" in st.session_state and st.session_state.synth_history:
