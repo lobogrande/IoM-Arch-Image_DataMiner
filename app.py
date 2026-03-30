@@ -2796,8 +2796,23 @@ if __name__ == "__main__":
                             with st.expander("🔍 View Source Runs (The original builds used to generate this Meta-Build)"):
                                 if "Sources Data" in synth:
                                     source_df = pd.DataFrame(synth['Sources Data'])
-                                    cols_to_drop = ['Include', 'Target'] 
+                                    
+                                    # Apply the same dynamic formatting as the main history table
+                                    is_synth_floor = (synth.get('Target') == "highest_floor")
+                                    score_col = "Score (Floor)" if is_synth_floor else "Yield (1k Arch Secs)"
+                                    
+                                    source_df[score_col] = source_df.apply(
+                                        lambda row: row.get("Metric Score") if is_synth_floor else round((row.get("Metric Score", 0) / 60.0) * 1000.0, 1), 
+                                        axis=1
+                                    )
+                                    
+                                    cols_to_drop = ['Include', 'Target', 'Metric Score', '_global_idx'] 
                                     source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
+                                    
+                                    # Reorder to put the new score column at the front
+                                    s_cols = [score_col] +[c for c in source_df.columns if c != score_col]
+                                    source_df = source_df[s_cols]
+                                    
                                     st.dataframe(source_df, hide_index=True, width="stretch")
                                 else:
                                     st.write(synth.get("Sources", "*(No source data saved)*"))
