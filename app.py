@@ -417,137 +417,7 @@ if __name__ == "__main__":
         st.stop()
 
     # ==========================================
-    # SIDEBAR
-    # ==========================================
-    with st.sidebar:
-        
-        # --- 1. GLOBAL SETTINGS ---
-        with st.expander("⚙️ Global Settings", expanded=True):
-            # Initialize session state for global settings so they don't throw warnings
-            if "set_asc1" not in st.session_state: st.session_state["set_asc1"] = p.asc1_unlocked
-            if "set_asc2" not in st.session_state: st.session_state["set_asc2"] = p.asc2_unlocked
-            if "set_arch" not in st.session_state: st.session_state["set_arch"] = int(p.arch_level)
-            if "set_floor" not in st.session_state: st.session_state["set_floor"] = int(p.current_max_floor)
-            if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
-            
-            # Render widgets with explicit keys
-            p.asc1_unlocked = st.checkbox("Ascension 1 Unlocked", key="set_asc1")
-            
-            # Force Asc2 to uncheck if Asc1 is disabled
-            if not p.asc1_unlocked:
-                st.session_state["set_asc2"] = False
-                p.asc2_unlocked = False
-                
-            p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2", disabled=not p.asc1_unlocked)
-            p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
-            p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
-            
-            # Hades Idol is a late-Asc1 unlock
-            if p.asc1_unlocked:
-                p.hades_idol_level = st.number_input("Hades Idol Level", min_value=0, step=1, key="set_hades")
-            else:
-                p.hades_idol_level = 0
-
-            # --- OVER-BUDGET AUTO-FIX ---
-            current_allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
-            current_allocated = sum(int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0))) for s in p.base_stats.keys())
-            if current_allocated > current_allowed:
-                st.error(f"⚠️ **Over Budget!**\nYou have allocated {current_allocated} / {current_allowed} points.")
-                def trim_stats():
-                    excess = current_allocated - current_allowed
-                    # Trim stats in reverse priority order to preserve survival/damage
-                    trim_order =['Corr', 'Div', 'Luck', 'Int', 'Per', 'Agi', 'Str']
-                    for s in trim_order:
-                        if excess <= 0: break
-                        val = int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)))
-                        if val > 0:
-                            deduct = min(val, excess)
-                            st.session_state[f"stat_{s}"] = val - deduct
-                            p.base_stats[s] = val - deduct
-                            excess -= deduct
-                    st.toast("✅ Stats trimmed to fit new budget!", icon="✂️")
-                st.button("✂️ Auto-Trim Stats", width="stretch", on_click=trim_stats, type="primary")
-
-        # --- 2. IMPORT DATA ---
-        with st.expander("📂 Import Data", expanded=False):
-            uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
-            
-            if uploaded_file is not None:
-                # Prevent infinite reloading: Only process if it is a NEW file upload!
-                if 'last_uploaded_file' not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.file_id:
-                    st.session_state.last_uploaded_file = uploaded_file.file_id
-                    
-                    import uuid
-                    temp_path = os.path.join(ROOT_DIR, f"temp_upload_{uuid.uuid4().hex}.json")
-                    with open(temp_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    load_state_from_json(p, temp_path)
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                    
-                    # Flush ALL widget keys so they resync to the new JSON file!
-                    for k in list(st.session_state.keys()):
-                        if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
-                            del st.session_state[k]
-                            
-                    # Force a clean restart from Line 1 to sync the reordered sidebar
-                    st.rerun()
-            
-        # --- 3. EXPORT DATA ---
-        with st.expander("💾 Export Data", expanded=False):
-            st.write("Download your current UI configuration.")
-            
-            # --- SYNC STATE BEFORE EXPORT ---
-            for k, v in st.session_state.items():
-                if k.startswith("stat_") and "sandbox" not in k:
-                    stat_name = k.split("_")[1]
-                    if stat_name in p.base_stats:
-                        p.base_stats[stat_name] = int(v)
-                elif k.startswith("upg_"):
-                    try:
-                        upg_id = int(k.split("_")[1])
-                        p.set_upgrade_level(upg_id, int(v))
-                    except ValueError:
-                        pass
-
-            import uuid
-            temp_export = os.path.join(ROOT_DIR, f"temp_export_{uuid.uuid4().hex}.json")
-            save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
-            
-            # --- INTERCEPT AND ENFORCE STRICT CARD JSON ORDERING ---
-            with open(temp_export, "r") as f:
-                export_data = json.load(f)
-                
-            # Strip hardcoded constants to prevent user confusion and math tampering
-            if "settings" in export_data and "base_damage_const" in export_data["settings"]:
-                del export_data["settings"]["base_damage_const"]
-                
-            if "cards" in export_data:
-                ordered_cards = {}
-                for ot in['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']:
-                    for tier in range(1, 5):
-                        cid = f"{ot}{tier}"
-                        if cid in export_data["cards"]:
-                            ordered_cards[cid] = export_data["cards"][cid]
-                export_data["cards"] = ordered_cards
-                
-            # json.dumps without sort_keys preserves our forced insertion order
-            export_json_str = json.dumps(export_data, indent=4)
-            
-            if os.path.exists(temp_export):
-                os.remove(temp_export)
-                
-            st.download_button(
-                label="📥 Download JSON",
-                data=export_json_str,
-                file_name="player_state.json",
-                mime="application/json",
-                width="stretch"
-            )
-
-
-    # ==========================================
-    # MAIN WINDOW: Tabs
+    # MAIN WINDOW: Tabs & Navigation
     # ==========================================
     st.markdown('<div id="top-of-tabs"></div>', unsafe_allow_html=True)
     st.title("⛏️ AI Arch Mining Optimizer")
@@ -560,57 +430,190 @@ if __name__ == "__main__":
         'Div': 10 + cap_inc, 'Corr': 10 + cap_inc
     }
 
-    tab_stats, tab_upgrades, tab_cards, tab_calc_stats, tab_block_stats, tab_sandbox, tab_optimizer = st.tabs([
-        "📊 Base Stats", "⬆️ Upgrades", "🎴 Block Cards", "📋 Calculated Player Stats", "🪨 Block Stats", "🧪 Block Hit Sandbox", "🚀 Run Optimizer"
+    tab_welcome, tab_setup, tab_calc_stats, tab_block_stats, tab_sims = st.tabs([
+        "🏠 Welcome", "⚙️ Player Setup", "📋 Calculated Stats", "🪨 Block Compendium", "🧪 Simulations"
     ])
+
+    # Pre-define the Simulation sub-tabs so we can seamlessly route content to them later
+    with tab_sims:
+        tab_sandbox, tab_optimizer, tab_synth = st.tabs(["🧪 Hit Calculator (Sandbox)", "🚀 Optimizer", "🧬 Synthesizer & History"])
+
+    # ==========================================
+    # PLAYER SETUP & SIDEBAR MIGRATION
+    # ==========================================
+    with tab_setup:
+        col_setup_menu, col_setup_content = st.columns([1, 3])
+        
+        with col_setup_content:
+            tab_stats, tab_upgrades, tab_cards, tab_idols = st.tabs(["📊 Base Stats", "⬆️ Upgrades", "🎴 Block Cards", "🗿 Arch Idols"])
+
+        with col_setup_menu:
+        
+            # --- 1. GLOBAL SETTINGS ---
+            with st.expander("⚙️ Global Settings", expanded=True):
+                # Initialize session state for global settings so they don't throw warnings
+                if "set_asc1" not in st.session_state: st.session_state["set_asc1"] = p.asc1_unlocked
+                if "set_asc2" not in st.session_state: st.session_state["set_asc2"] = p.asc2_unlocked
+                if "set_arch" not in st.session_state: st.session_state["set_arch"] = int(p.arch_level)
+                if "set_floor" not in st.session_state: st.session_state["set_floor"] = int(p.current_max_floor)
+                if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
+                
+                # Render widgets with explicit keys
+                p.asc1_unlocked = st.checkbox("Ascension 1 Unlocked", key="set_asc1")
+                
+                # Force Asc2 to uncheck if Asc1 is disabled
+                if not p.asc1_unlocked:
+                    st.session_state["set_asc2"] = False
+                    p.asc2_unlocked = False
+                    
+                p.asc2_unlocked = st.checkbox("Ascension 2 Unlocked", key="set_asc2", disabled=not p.asc1_unlocked)
+                p.arch_level = st.number_input("Arch Level", min_value=1, step=1, key="set_arch")
+                p.current_max_floor = st.number_input("Max Floor Reached", min_value=1, step=1, key="set_floor")
+
+                # --- OVER-BUDGET AUTO-FIX ---
+                current_allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
+                current_allocated = sum(int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0))) for s in p.base_stats.keys())
+                if current_allocated > current_allowed:
+                    st.error(f"⚠️ **Over Budget!**\nYou have allocated {current_allocated} / {current_allowed} points.")
+                    def trim_stats():
+                        excess = current_allocated - current_allowed
+                        # Trim stats in reverse priority order to preserve survival/damage
+                        trim_order =['Corr', 'Div', 'Luck', 'Int', 'Per', 'Agi', 'Str']
+                        for s in trim_order:
+                            if excess <= 0: break
+                            val = int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0)))
+                            if val > 0:
+                                deduct = min(val, excess)
+                                st.session_state[f"stat_{s}"] = val - deduct
+                                p.base_stats[s] = val - deduct
+                                excess -= deduct
+                        st.toast("✅ Stats trimmed to fit new budget!", icon="✂️")
+                    st.button("✂️ Auto-Trim Stats", width="stretch", on_click=trim_stats, type="primary")
+
+            # --- 2. IMPORT DATA ---
+            with st.expander("📂 Import Data", expanded=False):
+                uploaded_file = st.file_uploader("Upload player_state.json", type=["json"])
+                
+                if uploaded_file is not None:
+                    # Prevent infinite reloading: Only process if it is a NEW file upload!
+                    if 'last_uploaded_file' not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.file_id:
+                        st.session_state.last_uploaded_file = uploaded_file.file_id
+                        
+                        import uuid
+                        temp_path = os.path.join(ROOT_DIR, f"temp_upload_{uuid.uuid4().hex}.json")
+                        with open(temp_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                        load_state_from_json(p, temp_path)
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                        
+                        # Flush ALL widget keys so they resync to the new JSON file!
+                        for k in list(st.session_state.keys()):
+                            if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
+                                del st.session_state[k]
+                                
+                        # Force a clean restart from Line 1 to sync the reordered sidebar
+                        st.rerun()
+                
+            # --- 3. EXPORT DATA ---
+            with st.expander("💾 Export Data", expanded=False):
+                st.write("Download your current UI configuration.")
+                
+                # --- SYNC STATE BEFORE EXPORT ---
+                for k, v in st.session_state.items():
+                    if k.startswith("stat_") and "sandbox" not in k:
+                        stat_name = k.split("_")[1]
+                        if stat_name in p.base_stats:
+                            p.base_stats[stat_name] = int(v)
+                    elif k.startswith("upg_"):
+                        try:
+                            upg_id = int(k.split("_")[1])
+                            p.set_upgrade_level(upg_id, int(v))
+                        except ValueError:
+                            pass
+
+                import uuid
+                temp_export = os.path.join(ROOT_DIR, f"temp_export_{uuid.uuid4().hex}.json")
+                save_state_to_json(p, temp_export, readable_keys=True, hide_locked=True)
+                
+                # --- INTERCEPT AND ENFORCE STRICT CARD JSON ORDERING ---
+                with open(temp_export, "r") as f:
+                    export_data = json.load(f)
+                    
+                # Strip hardcoded constants to prevent user confusion and math tampering
+                if "settings" in export_data and "base_damage_const" in export_data["settings"]:
+                    del export_data["settings"]["base_damage_const"]
+                    
+                if "cards" in export_data:
+                    ordered_cards = {}
+                    for ot in['dirt', 'com', 'rare', 'epic', 'leg', 'myth', 'div']:
+                        for tier in range(1, 5):
+                            cid = f"{ot}{tier}"
+                            if cid in export_data["cards"]:
+                                ordered_cards[cid] = export_data["cards"][cid]
+                    export_data["cards"] = ordered_cards
+                    
+                # json.dumps without sort_keys preserves our forced insertion order
+                export_json_str = json.dumps(export_data, indent=4)
+                
+                if os.path.exists(temp_export):
+                    os.remove(temp_export)
+                    
+                st.download_button(
+                        label="📥 Download JSON",
+                        data=export_json_str,
+                        file_name="player_state.json",
+                        mime="application/json",
+                        width="stretch"
+                    )
+
+    # --- TAB 0: WELCOME ---
+    with tab_welcome:
+        with st.container(border=True):
+            st.markdown("### 👋 Welcome to the Optimizer!")
+            st.write("If you are new here, follow these 3 steps to get started:")
+            st.markdown("1. **Input your Stats & Upgrades:** Go to the **Player Setup** tab to manually enter your player info or **Import** your own json player data, or click a **Preset Build** below to auto-fill realistic data.\n2. **Select your Goal:** Go to the **Simulations -> Optimizer** tab and choose your target.\n3. **Run the Engine:** Let the Monte Carlo simulations find your perfect mathematical build.")
+            
+            st.divider()
+            st.markdown("#### 🚀 Quick Start: Load a Preset Build")
+            
+            col_p1, col_p2, col_p3 = st.columns(3)
+            
+            def apply_preset(preset_dict=None, reset=False):
+                if reset:
+                    st.session_state.player = Player()
+                else:
+                    import uuid
+                    temp_path = os.path.join(ROOT_DIR, f"temp_preset_{uuid.uuid4().hex}.json")
+                    with open(temp_path, "w") as f:
+                        json.dump(preset_dict, f)
+                    load_state_from_json(st.session_state.player, temp_path)
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                
+                # Flush all UI widget keys to force sync with the new player state
+                for k in list(st.session_state.keys()):
+                    if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
+                        del st.session_state[k]
+                st.rerun()
+
+            with col_p1:
+                if st.button("🌱 Load Early-Game Build\n(Asc 1, Floor 40)", width="stretch"):
+                    early_game = {"settings": {"asc2_unlocked": False, "arch_level": 45, "current_max_floor": 40, "base_damage_const": 10, "total_infernal_cards": 0}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 0, "Luck": 20, "Div": 10}, "internal_upgrades": {"3 - Gem Stamina": 25, "4 - Gem Exp": 12, "5 - Gem Loot": 12, "9 - Flat Damage": 15, "10 - Armor Pen.": 15, "11 - Exp. Gain": 15, "12 - Stat Points": 3, "13 - Crit Chance/Damage": 12, "14 - Max Sta/Sta Mod Chance": 12, "15 - Flat Damage": 8, "16 - Loot Mod Gain": 6, "17 - Unlock Fairy/Armor Pen": 6, "18 - Enrage&Crit Dmg/Enrage Cooldown": 5, "20 - Flat Dmg/Super Crit Chance": 5, "21 - Exp Gain/Fragment Gain": 4, "22 - Flurry Sta Gain/Flurr Cooldown": 4, "23 - Max Sta/Sta Mod Gain": 4, "24 - All Mod Chances": 3, "25 - Flat Dmg/Damage Up": 0, "26 - Max Sta/Mod Chance": 0, "28 - Exp Gain/Max Sta": 3, "29 - Armor Pen/Ability Cooldowns": 3, "30 - Crit Dmg/Super Crit Dmg": 3, "31 - Quake Atks/Cooldown": 3, "32 - Flat Dmg/Enrage Cooldown": 0, "33 - Mod Chance/Armor Pen": 0, "35 - Exp Gain/Mod Ch.": 0, "36 - Damage Up/Armor Pen": 0, "37 - Super Crit/Ultra Crit Chance": 0, "38 - Exp Mod Gain/Chance": 0, "39 - Ability Insta Chance/Max Sta": 0, "40 - Ultra Crit Dmg/Sta Mod Chance": 0, "41 - Poly Card Bonus": 0, "42 - Frag Gain Mult": 0, "43 - Sta Mod Gain": 0, "44 - All Mod Chances": 0, "45 - Exp Gain/All Stat Cap Inc.": 0, "47 - Damage Up/Crit Dmg Up": 0, "48 - Gold Crosshair Chance/Auto-Tap Chance": 0, "49 - Flat Dmg/Ultra Crit Chance": 0, "50 - Ability Insta Chance/Sta Mod Chance": 0, "51 - Dmg Up/Exp Gain": 0, "53 - Super Crit Dmg/Exp Mod Gain": 0, "54 - Max Sta/Crosshair Auto-Tap Chance": 0}, "external_upgrades": {"Hestia Idol": 0, "Axolotl Skin": 9, "Dino Skin": 9, "Geoduck Tribute": 750, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 0, "Ascension Bundle": 0, "Arch Ability Card": 3, "Arch Ability Infernal Bonus": 0.0}, "cards": {"dirt1": 3, "dirt2": 2, "dirt3": 2, "com1": 3, "com2": 2, "com3": 2, "rare1": 3, "rare2": 2, "rare3": 2, "epic1": 2, "epic2": 2, "epic3": 2, "leg1": 2, "leg2": 2, "leg3": 2, "myth1": 2, "myth2": 2, "myth3": 2, "div1": 2, "div2": 0, "div3": 0}}
+                    apply_preset(early_game)
+                    
+            with col_p2:
+                if st.button("🌌 Load Late-Game Build\n(Asc 2, Floor 158)", width="stretch"):
+                    late_game = {"settings": {"asc2_unlocked": True, "arch_level": 99, "current_max_floor": 158, "base_damage_const": 10, "hades_idol_level": 129, "total_infernal_cards": 303}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 29, "Luck": 30, "Div": 15, "Corr": 15}, "internal_upgrades": {"3 - Gem Stamina": 50, "4 - Gem Exp": 25, "5 - Gem Loot": 25, "9 - Flat Damage": 25, "10 - Armor Pen.": 25, "11 - Exp. Gain": 25, "12 - Stat Points": 5, "13 - Crit Chance/Damage": 25, "14 - Max Sta/Sta Mod Chance": 20, "15 - Flat Damage": 20, "16 - Loot Mod Gain": 10, "17 - Unlock Fairy/Armor Pen": 15, "18 - Enrage&Crit Dmg/Enrage Cooldown": 15, "19 - Gleaming Floor Chance": 30, "20 - Flat Dmg/Super Crit Chance": 25, "21 - Exp Gain/Fragment Gain": 20, "22 - Flurry Sta Gain/Flurr Cooldown": 10, "23 - Max Sta/Sta Mod Gain": 5, "24 - All Mod Chances": 30, "25 - Flat Dmg/Damage Up": 5, "26 - Max Sta/Mod Chance": 5, "27 - Unlock Ability Fairy/Loot Mod Gain": 20, "28 - Exp Gain/Max Sta": 15, "29 - Armor Pen/Ability Cooldowns": 10, "30 - Crit Dmg/Super Crit Dmg": 20, "31 - Quake Atks/Cooldown": 10, "32 - Flat Dmg/Enrage Cooldown": 5, "33 - Mod Chance/Armor Pen": 5, "34 - Buff Divinity[Div Stats Up]": 5, "35 - Exp Gain/Mod Ch.": 5, "36 - Damage Up/Armor Pen": 20, "37 - Super Crit/Ultra Crit Chance": 20, "38 - Exp Mod Gain/Chance": 20, "39 - Ability Insta Chance/Max Sta": 20, "40 - Ultra Crit Dmg/Sta Mod Chance": 20, "41 - Poly Card Bonus": 1, "42 - Frag Gain Mult": 1, "43 - Sta Mod Gain": 1, "44 - All Mod Chances": 1, "45 - Exp Gain/All Stat Cap Inc.": 1, "46 - Gleaming Floor Multi": 24, "47 - Damage Up/Crit Dmg Up": 1, "48 - Gold Crosshair Chance/Auto-Tap Chance": 5, "49 - Flat Dmg/Ultra Crit Chance": 5, "50 - Ability Insta Chance/Sta Mod Chance": 25, "51 - Dmg Up/Exp Gain": 5, "52 - [Corruption Buff] Dmg Up / Mod Multi Up": 10, "53 - Super Crit Dmg/Exp Mod Gain": 30, "54 - Max Sta/Crosshair Auto-Tap Chance": 28, "55 - All Mod Multipliers": 10}, "external_upgrades": {"Hestia Idol": 1929, "Axolotl Skin": 11, "Dino Skin": 11, "Geoduck Tribute": 1047, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 1, "Ascension Bundle": 1, "Arch Ability Card": 4, "Arch Ability Infernal Bonus": -0.1509}, "cards": {"dirt1": 4, "dirt2": 4, "dirt3": 4, "dirt4": 3, "com1": 3, "com2": 3, "com3": 4, "com4": 2, "rare1": 3, "rare2": 3, "rare3": 3, "rare4": 2, "epic1": 3, "epic2": 3, "epic3": 4, "epic4": 2, "leg1": 3, "leg2": 3, "leg3": 4, "leg4": 2, "myth1": 3, "myth2": 3, "myth3": 3, "myth4": 2, "div1": 3, "div2": 3, "div3": 3, "div4": 0}}
+                    apply_preset(late_game)
+                        
+            with col_p3:
+                if st.button("🗑️ Factory Reset\n(Wipe All Data)", width="stretch", type="secondary"):
+                    apply_preset(reset=True)
 
     # --- TAB 1: BASE STATS ---
     with tab_stats:
         
-        # --- ACTIONABLE EMPTY STATE & PRESETS ---
-        if "opt_results" not in st.session_state:
-            with st.container(border=True):
-                st.markdown("### 👋 Welcome to the Optimizer!")
-                st.write("If you are new here, follow these 3 steps to get started:")
-                st.markdown("1. **Input your Stats & Upgrades:** Use the first 3 tabs above, import your own json player data, or click a **Preset Build** to auto-fill realistic data.\n2. **Select your Goal:** Go to the **Run Optimizer** tab and choose your target.\n3. **Run the Engine:** Let the Monte Carlo simulations find your perfect mathematical build.")
-                
-                st.divider()
-                st.markdown("#### 🚀 Quick Start: Load a Preset Build")
-                
-                col_p1, col_p2, col_p3 = st.columns(3)
-                
-                def apply_preset(preset_dict=None, reset=False):
-                    if reset:
-                        st.session_state.player = Player()
-                    else:
-                        import uuid
-                        temp_path = os.path.join(ROOT_DIR, f"temp_preset_{uuid.uuid4().hex}.json")
-                        with open(temp_path, "w") as f:
-                            json.dump(preset_dict, f)
-                        load_state_from_json(st.session_state.player, temp_path)
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
-                    
-                    # Flush all UI widget keys to force sync with the new player state
-                    for k in list(st.session_state.keys()):
-                        if k.startswith(("upg_", "stat_", "ext_", "card_", "set_", "sandbox_")):
-                            del st.session_state[k]
-                    st.rerun()
-
-                with col_p1:
-                    if st.button("🌱 Load Early-Game Build\n(Asc 1, Floor 40)", width="stretch"):
-                        early_game = {"settings": {"asc2_unlocked": False, "arch_level": 45, "current_max_floor": 40, "base_damage_const": 10, "total_infernal_cards": 0, "arch_ability_infernal_bonus": 0.0}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 0, "Luck": 20, "Div": 10}, "internal_upgrades": {"3 - Gem Stamina": 25, "4 - Gem Exp": 12, "5 - Gem Loot": 12, "9 - Flat Damage": 15, "10 - Armor Pen.": 15, "11 - Exp. Gain": 15, "12 - Stat Points": 3, "13 - Crit Chance/Damage": 12, "14 - Max Sta/Sta Mod Chance": 12, "15 - Flat Damage": 8, "16 - Loot Mod Gain": 6, "17 - Unlock Fairy/Armor Pen": 6, "18 - Enrage&Crit Dmg/Enrage Cooldown": 5, "20 - Flat Dmg/Super Crit Chance": 5, "21 - Exp Gain/Fragment Gain": 4, "22 - Flurry Sta Gain/Flurr Cooldown": 4, "23 - Max Sta/Sta Mod Gain": 4, "24 - All Mod Chances": 3, "25 - Flat Dmg/Damage Up": 0, "26 - Max Sta/Mod Chance": 0, "28 - Exp Gain/Max Sta": 3, "29 - Armor Pen/Ability Cooldowns": 3, "30 - Crit Dmg/Super Crit Dmg": 3, "31 - Quake Atks/Cooldown": 3, "32 - Flat Dmg/Enrage Cooldown": 0, "33 - Mod Chance/Armor Pen": 0, "35 - Exp Gain/Mod Ch.": 0, "36 - Damage Up/Armor Pen": 0, "37 - Super Crit/Ultra Crit Chance": 0, "38 - Exp Mod Gain/Chance": 0, "39 - Ability Insta Chance/Max Sta": 0, "40 - Ultra Crit Dmg/Sta Mod Chance": 0, "41 - Poly Card Bonus": 0, "42 - Frag Gain Mult": 0, "43 - Sta Mod Gain": 0, "44 - All Mod Chances": 0, "45 - Exp Gain/All Stat Cap Inc.": 0, "47 - Damage Up/Crit Dmg Up": 0, "48 - Gold Crosshair Chance/Auto-Tap Chance": 0, "49 - Flat Dmg/Ultra Crit Chance": 0, "50 - Ability Insta Chance/Sta Mod Chance": 0, "51 - Dmg Up/Exp Gain": 0, "53 - Super Crit Dmg/Exp Mod Gain": 0, "54 - Max Sta/Crosshair Auto-Tap Chance": 0}, "external_upgrades": {"Hestia Idol": 0, "Axolotl Skin": 9, "Dino Skin": 9, "Geoduck Tribute": 750, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 0, "Ascension Bundle": 0, "Arch Ability Card": 3}, "cards": {"dirt1": 3, "dirt2": 2, "dirt3": 2, "com1": 3, "com2": 2, "com3": 2, "rare1": 3, "rare2": 2, "rare3": 2, "epic1": 2, "epic2": 2, "epic3": 2, "leg1": 2, "leg2": 2, "leg3": 2, "myth1": 2, "myth2": 2, "myth3": 2, "div1": 2, "div2": 0, "div3": 0}}
-                        apply_preset(early_game)
-                        
-                with col_p2:
-                    if st.button("🌌 Load Late-Game Build\n(Asc 2, Floor 158)", width="stretch"):
-                        late_game = {"settings": {"asc2_unlocked": True, "arch_level": 99, "current_max_floor": 158, "base_damage_const": 10, "hades_idol_level": 129, "total_infernal_cards": 303, "arch_ability_infernal_bonus": -0.1509}, "base_stats": {"Str": 15, "Agi": 0, "Per": 0, "Int": 29, "Luck": 30, "Div": 15, "Corr": 15}, "internal_upgrades": {"3 - Gem Stamina": 50, "4 - Gem Exp": 25, "5 - Gem Loot": 25, "9 - Flat Damage": 25, "10 - Armor Pen.": 25, "11 - Exp. Gain": 25, "12 - Stat Points": 5, "13 - Crit Chance/Damage": 25, "14 - Max Sta/Sta Mod Chance": 20, "15 - Flat Damage": 20, "16 - Loot Mod Gain": 10, "17 - Unlock Fairy/Armor Pen": 15, "18 - Enrage&Crit Dmg/Enrage Cooldown": 15, "19 - Gleaming Floor Chance": 30, "20 - Flat Dmg/Super Crit Chance": 25, "21 - Exp Gain/Fragment Gain": 20, "22 - Flurry Sta Gain/Flurr Cooldown": 10, "23 - Max Sta/Sta Mod Gain": 5, "24 - All Mod Chances": 30, "25 - Flat Dmg/Damage Up": 5, "26 - Max Sta/Mod Chance": 5, "27 - Unlock Ability Fairy/Loot Mod Gain": 20, "28 - Exp Gain/Max Sta": 15, "29 - Armor Pen/Ability Cooldowns": 10, "30 - Crit Dmg/Super Crit Dmg": 20, "31 - Quake Atks/Cooldown": 10, "32 - Flat Dmg/Enrage Cooldown": 5, "33 - Mod Chance/Armor Pen": 5, "34 - Buff Divinity[Div Stats Up]": 5, "35 - Exp Gain/Mod Ch.": 5, "36 - Damage Up/Armor Pen": 20, "37 - Super Crit/Ultra Crit Chance": 20, "38 - Exp Mod Gain/Chance": 20, "39 - Ability Insta Chance/Max Sta": 20, "40 - Ultra Crit Dmg/Sta Mod Chance": 20, "41 - Poly Card Bonus": 1, "42 - Frag Gain Mult": 1, "43 - Sta Mod Gain": 1, "44 - All Mod Chances": 1, "45 - Exp Gain/All Stat Cap Inc.": 1, "46 - Gleaming Floor Multi": 24, "47 - Damage Up/Crit Dmg Up": 1, "48 - Gold Crosshair Chance/Auto-Tap Chance": 5, "49 - Flat Dmg/Ultra Crit Chance": 5, "50 - Ability Insta Chance/Sta Mod Chance": 25, "51 - Dmg Up/Exp Gain": 5, "52 - [Corruption Buff] Dmg Up / Mod Multi Up": 10, "53 - Super Crit Dmg/Exp Mod Gain": 30, "54 - Max Sta/Crosshair Auto-Tap Chance": 28, "55 - All Mod Multipliers": 10}, "external_upgrades": {"Hestia Idol": 1929, "Axolotl Skin": 11, "Dino Skin": 11, "Geoduck Tribute": 1047, "Avada Keda- Skill": 1, "Block Bonker Skill": 1, "Archaeology Bundle": 1, "Ascension Bundle": 1, "Arch Ability Card": 4}, "cards": {"dirt1": 4, "dirt2": 4, "dirt3": 4, "dirt4": 3, "com1": 3, "com2": 3, "com3": 4, "com4": 2, "rare1": 3, "rare2": 3, "rare3": 3, "rare4": 2, "epic1": 3, "epic2": 3, "epic3": 4, "epic4": 2, "leg1": 3, "leg2": 3, "leg3": 4, "leg4": 2, "myth1": 3, "myth2": 3, "myth3": 3, "myth4": 2, "div1": 3, "div2": 3, "div3": 3, "div4": 0}}
-                        apply_preset(late_game)
-                        
-                with col_p3:
-                    if st.button("🗑️ Factory Reset\n(Wipe All Data)", width="stretch", type="secondary"):
-                        apply_preset(reset=True)
-                        
         # --- GLOBAL STAT BUDGET TRACKER ---
         total_allowed = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
         current_allocated = sum(int(st.session_state.get(f"stat_{s}", p.base_stats.get(s, 0))) for s in p.base_stats.keys())
@@ -751,19 +754,6 @@ if __name__ == "__main__":
                         p.set_upgrade_level(upg_id, st.session_state[widget_key])
 
         with sub_external:
-            # --- TOTAL INFERNAL CARDS INPUT ---
-            col_inf_tog, _ = st.columns([1, 2])
-            with col_inf_tog:
-                if "set_total_inf" not in st.session_state:
-                    st.session_state["set_total_inf"] = int(p.total_infernal_cards)
-                    
-                p.total_infernal_cards = st.number_input(
-                    "Total Infernal Cards (Global)", 
-                    min_value=0, step=1, key="set_total_inf",
-                    help="Sum of all Infernal cards you own across all categories (Archaeology, Fishing, etc). Used for the Infernal Multiplier."
-                )
-            st.divider()
-
             # UI TWEAK: Create the full array of columns
             cols_all = st.columns(UI_EXT_COL_RATIO)
             
@@ -776,8 +766,8 @@ if __name__ == "__main__":
                 ui_type = group['ui_type']
                 rows = group['rows']
                 
-                # Hide Hestia Idol if pre-Asc1
-                if not p.asc1_unlocked and 4 in rows: continue
+                # Hide Hestia Idol from this tab completely (Moved to Arch Idols Tab)
+                if group['id'] == 'hestia': continue
 
                 current_val = int(p.external_levels.get(rows[0], 0))
                 if widget_key not in st.session_state:
@@ -866,16 +856,38 @@ if __name__ == "__main__":
                                     st.session_state[inf_key] = float(p.arch_ability_infernal_bonus * 100.0)
                                     
                                 def update_inf(k=inf_key):
-                                    p.arch_ability_infernal_bonus = st.session_state[k] / 100.0
+                                    try:
+                                        # Safely parse text to float to avoid +/- confusion
+                                        val = float(st.session_state[k])
+                                    except ValueError:
+                                        val = 0.0
+                                    p.arch_ability_infernal_bonus = val / 100.0
                                     p.set_external_level(20, 4) # Trigger W20 math refresh!
                                     
-                                st.number_input(
-                                    "Inf Bonus", max_value=0.0, step=0.1, format="%.2f",
+                                st.text_input(
+                                    "Inf Bonus", value=str(st.session_state[inf_key]),
                                     key=inf_key, on_change=update_inf, label_visibility="collapsed"
                                 )
 
     # --- TAB 3: BLOCK CARDS ---
     with tab_cards:
+        # --- INFERNAL CARD MULTIPLIER UI ---
+        with st.container(border=True):
+            col_inf_input, col_inf_metric = st.columns(2)
+            with col_inf_input:
+                if "set_total_inf" not in st.session_state:
+                    st.session_state["set_total_inf"] = int(p.total_infernal_cards)
+                    
+                p.total_infernal_cards = st.number_input(
+                    "Total Infernal Cards (Global)", 
+                    min_value=0, step=1, key="set_total_inf",
+                    help="Sum of all Infernal cards you own across all categories (Archaeology, Fishing, etc). Used for the Infernal Multiplier."
+                )
+            with col_inf_metric:
+                st.metric("🔥 Infernal Arch Card Bonus", f"{p.infernal_multiplier:,.4f}x", help="Mathematically calculated multiplier based on Arch Infernal Cards, Global Infernal Cards, and Hades Idol.")
+        
+        st.divider()
+
         # --- CUSTOM DIV1 HEADER ICON ---
         bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", "1.png")
         cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", "div1.png")
@@ -963,6 +975,44 @@ if __name__ == "__main__":
                                 label_visibility="collapsed",
                                 disabled=is_locked
                             )
+
+    # --- SUB-TAB: ARCH IDOLS ---
+    with tab_idols:
+        st.markdown("<div style='text-align: center; margin-bottom: 20px;'><h3>🗿 Arch Idols</h3><p>Manage your Late-Game Asc1 / Asc2 Idols here.</p></div>", unsafe_allow_html=True)
+        
+        if not p.asc1_unlocked:
+            st.warning("🔒 Arch Idols are locked until Ascension 1.")
+        else:
+            col_hestia, col_hades, _ = st.columns([1, 1, 2])
+            
+            with col_hestia:
+                with st.container(border=True):
+                    st.markdown("<div style='text-align: center; margin-bottom: 5px;'><b>Hestia Idol</b></div>", unsafe_allow_html=True)
+                    img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", "4_hestia.png")
+                    if os.path.exists(img_path): render_centered_image(img_path, UI_EXT_IMG_STD)
+                    st.divider()
+                    
+                    if "ext_hestia" not in st.session_state: st.session_state["ext_hestia"] = int(p.external_levels.get(4, 0))
+                    st.number_input(
+                        "Hestia Level", min_value=0, step=1, key="ext_hestia", 
+                        on_change=update_external_group, args=("ext_hestia", [4]), label_visibility="collapsed"
+                    )
+
+            with col_hades:
+                with st.container(border=True):
+                    st.markdown("<div style='text-align: center; margin-bottom: 5px;'><b>Hades Idol</b></div>", unsafe_allow_html=True)
+                    # Use a fallback placeholder until the new asset is extracted
+                    img_path = os.path.join(ROOT_DIR, "assets", "upgrades", "external", "hades_idol.png")
+                    if os.path.exists(img_path): render_centered_image(img_path, UI_EXT_IMG_STD)
+                    else: st.markdown("<div style='text-align: center; color: gray; height: 120px; display: flex; align-items: center; justify-content: center;'>(Missing Asset)</div>", unsafe_allow_html=True)
+                    st.divider()
+                    
+                    if "set_hades" not in st.session_state: st.session_state["set_hades"] = int(p.hades_idol_level)
+                    def update_hades(): p.hades_idol_level = st.session_state["set_hades"]
+                    st.number_input(
+                        "Hades Level", min_value=0, step=1, key="set_hades", 
+                        on_change=update_hades, label_visibility="collapsed"
+                    )
 
     # --- TAB 4: CALCULATED STATS ---
     with tab_calc_stats:
@@ -1915,6 +1965,11 @@ if __name__ == "__main__":
                 st.session_state.synth_history.pop(index)
                 st.toast("🗑️ Meta-Build permanently deleted!", icon="🧹")
 
+        # Provide a fallback message if they navigate to Synth before running the optimizer
+        with tab_synth:
+            if "run_history" not in st.session_state or len(st.session_state.run_history) == 0:
+                st.info("No simulation history available. Head over to the Optimizer tab and run a Monte Carlo simulation first!")
+
         if "opt_results" in st.session_state:
             res = st.session_state.opt_results
             
@@ -2235,10 +2290,9 @@ if __name__ == "__main__":
                         st.plotly_chart(fig_stam, width="stretch")
 
             # ==========================================
-            # RUN HISTORY & SYNTHESIS (OUTSIDE TABS)
+            # RUN HISTORY & SYNTHESIS (TAB ROUTING)
             # ==========================================
-            st.divider()
-            with st.container():
+            with tab_synth:
                 st.markdown("### 📚 Run History & Hybrid Synthesis")
                 st.write("Because the combat math is highly balanced, optimizations often land on a 'Plateau' where wildly different builds perform identically. Track your runs here to spot these patterns.")
                 
@@ -2834,10 +2888,11 @@ if __name__ == "__main__":
                             col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch", on_click=cb_delete_hist, args=(idx,))
 
             # ==========================================
-            # NEXT STEPS: ROI ANALYZER (OUTSIDE TABS)
+            # NEXT STEPS: ROI ANALYZER (TAB ROUTING)
             # ==========================================
-            st.divider()
-            st.markdown("### 🔮 Next Steps: Marginal Value & ROI Analyzer")
+            with tab_optimizer:
+                st.divider()
+                st.markdown("### 🔮 Next Steps: Marginal Value & ROI Analyzer")
             
             if run_target_metric == "highest_floor":
                 st.warning("⚠️ **ROI Analyzer is Disabled for Max Floor Push:**\nBecause floor progression relies on large, discrete math 'Breakpoints' (e.g., shaving a 3-hit kill down to a 2-hit kill), adding a single +1 to a stat rarely shows an immediate gain. Additionally, the ROI engine compares a 15-run average to your absolute Peak God Run, which mathematically causes false negatives.\n\nTo calculate exactly what stats you need to beat your current wall, send your build to **Tab 6 (Hit Calculator Sandbox)** and manually inspect the HP and Armor Breakpoints!")
