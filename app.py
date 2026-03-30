@@ -242,7 +242,9 @@ def get_scaled_image_uri(filepath, target_width):
 if __name__ == "__main__":
 
     # --- SESSION STATE INITIALIZATION ---
-    if 'player' not in st.session_state:
+    # Failsafe: If a user has a stale Streamlit session from an older version of the app, 
+    # their cached Player object will lack new attributes and crash the UI.
+    if 'player' not in st.session_state or not hasattr(st.session_state.player, 'asc1_unlocked'):
         st.session_state.player = Player()
 
     p = st.session_state.player
