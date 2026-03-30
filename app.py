@@ -1616,14 +1616,14 @@ if __name__ == "__main__":
             # Instead of a blocking spinner, we use an OS baseline that will 
             # invisibly self-correct to 100% accuracy at the end of their very first run.
             if sys.platform == "linux":
-                # Humble default for Streamlit Community Cloud. 
-                # Free Linux containers only provide 1 vCPU and ~1GB RAM. 
-                # Starting at 50 prevents the Auto-Scaler from over-promising on the first run.
+                # Linux uses 'fork' (extremely fast memory sharing) but cloud CPUs are weak.
                 st.session_state.sims_per_sec = 50 
             elif sys.platform == "darwin":
-                st.session_state.sims_per_sec = 500
+                # macOS uses 'spawn' (massive IPC overhead for dict transfers)
+                st.session_state.sims_per_sec = 150
             else:
-                st.session_state.sims_per_sec = 800
+                # Windows uses 'spawn' 
+                st.session_state.sims_per_sec = 200
 
         # --- LIVE ETA RECALCULATION ---
         DYNAMIC_BUDGET = int(p.arch_level) + int(p.upgrade_levels.get(12, 0))
