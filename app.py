@@ -1610,7 +1610,10 @@ if __name__ == "__main__":
             # Instead of a blocking spinner, we use an OS baseline that will 
             # invisibly self-correct to 100% accuracy at the end of their very first run.
             if sys.platform == "linux":
-                st.session_state.sims_per_sec = 250
+                # Humble default for Streamlit Community Cloud. 
+                # Free Linux containers only provide 1 vCPU and ~1GB RAM. 
+                # Starting at 50 prevents the Auto-Scaler from over-promising on the first run.
+                st.session_state.sims_per_sec = 50 
             elif sys.platform == "darwin":
                 st.session_state.sims_per_sec = 500
             else:
@@ -1797,6 +1800,29 @@ if __name__ == "__main__":
                     
                     import traceback
                     try:
+                        # Ensures any points stripped by the Modulo Aligner are placed back into the build
+                        def top_up_build(build):
+                            if not build: return build
+                            b = build.copy()
+                            current_sum = sum(b.get(s, 0) for s in STATS_TO_OPTIMIZE)
+                            missing = DYNAMIC_BUDGET - current_sum
+                            
+                            if missing > 0:
+                                # SMART TOP-UP: Sort unlocked stats by their current allocation (descending).
+                                # By dumping remainder points into the stat the AI already deemed "most valuable", 
+                                # we mathematically honor the optimization curve instead of guessing randomly.
+                                unlocked_stats =[s for s in STATS_TO_OPTIMIZE if not st.session_state.get(f"lock_check_{s}", False)]
+                                unlocked_stats.sort(key=lambda s: b.get(s, 0), reverse=True)
+                                
+                                for s in unlocked_stats:
+                                    if missing <= 0: break
+                                    room = EFFECTIVE_CAPS[s] - b.get(s, 0)
+                                    if room > 0:
+                                        add = min(room, missing)
+                                        b[s] += add
+                                        missing -= add
+                            return b
+
                         with mp.Pool(CPU_CORES) as pool:
                             # --- PHASE 1 (Coarse) ---
                             bounds_p1 = {}
@@ -1822,6 +1848,7 @@ if __name__ == "__main__":
                                 progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                 base_state_dict=base_state_dict
                             )
+                            best_p1 = top_up_build(best_p1)
                             
                             # --- PHASE 2 (Fine) ---
                             best_p2, summary_p2 = None, None
@@ -1845,6 +1872,7 @@ if __name__ == "__main__":
                                     progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                     base_state_dict=base_state_dict
                                 )
+                                best_p2 = top_up_build(best_p2)
                                 
                             if best_p2 and (time.time() - start_time) < time_limit_secs:
                                 bounds_p3 = {}
@@ -1864,6 +1892,7 @@ if __name__ == "__main__":
                                     progress_callback=st_progress_callback, global_start_time=start_time, time_limit_seconds=time_limit_secs,
                                     base_state_dict=base_state_dict
                                 )
+                                best_p3 = top_up_build(best_p3)
                     except Exception as crash_err:
                         st.error(f"🚨 **CRITICAL ENGINE CRASH:** The background worker was unexpectedly killed. This is almost always caused by the Streamlit Cloud server temporarily running out of memory.")
                         st.error(f"**Technical Details:** `{type(crash_err).__name__}: {str(crash_err)}`")
@@ -2150,79 +2179,87 @@ if __name__ == "__main__":
             if run_target_metric != "highest_floor" or dev_mode:
                 with ui_tabs[tab_idx]:
                     tab_idx += 1
-                    st.markdown("#### 🎴 Block Card Drop Estimates")
                     
-                    # Extract the exact average kill rates for EVERY block from the telemetry
-                    avg_metrics = final_summary_out.get("avg_metrics", {})
-                    available_blocks =[k.replace("block_", "").replace("_per_min", "") for k in avg_metrics.keys() if k.startswith("block_")]
-                    
-                    if not available_blocks:
-                        st.info("No block kill data available for this run.")
-                    else:
-                        # Sort blocks alphabetically
-                        available_blocks.sort()
+                    @st.fragment
+                    def render_card_drops():
+                        st.markdown("#### 🎴 Block Card Drop Estimates")
                         
-                        # Default to the target block if it was a Card Farming run
-                        is_block_run = "block_" in run_target_metric
-                        target_block_id = run_target_metric.replace("block_", "").replace("_per_min", "") if is_block_run else None
-                        default_idx = available_blocks.index(target_block_id) if target_block_id in available_blocks else 0
+                        # Extract the exact average kill rates for EVERY block from the telemetry
+                        avg_metrics = final_summary_out.get("avg_metrics", {})
+                        available_blocks =[k.replace("block_", "").replace("_per_min", "") for k in avg_metrics.keys() if k.startswith("block_")]
                         
-                        col_c1, col_c2 = st.columns([1, 2])
-                        with col_c1:
-                            # Let the user pick exactly which block they want to inspect
-                            selected_block = st.selectbox(
-                                "Select Block to view Drop Projections:", 
-                                options=available_blocks, 
-                                index=default_idx, 
-                                format_func=lambda x: x.capitalize()
-                            )
-                        
-                        # Fetch the true kill rate for this specific block
-                        val = avg_metrics.get(f"block_{selected_block}_per_min", 0)
-                        
-                        st.markdown(f"<span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} <b>{selected_block.capitalize()}</b> kills/min</span>", unsafe_allow_html=True)
-                        st.divider()
-                        
-                        odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
-                        cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{selected_block}.png")
-                        bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
-                        
-                        cols_cards = st.columns(3)
-                        for idx, (drop_name, base_odds) in enumerate(odds.items()):
-                            with cols_cards[idx]:
-                                with st.container(border=True):
-                                    # --- RENDER DYNAMIC CARD ---
-                                    bg_tier = bg_mapping.get(drop_name, "1")
-                                    bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
-                                    
-                                    comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
-                                    if comp_img:
-                                        render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
-                                    else:
-                                        st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
-                                    
-                                    st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
-                                    st.divider()
-                                    
-                                    # --- MATH & YIELDS ---
-                                    if val > 0:
-                                        kills_50 = 0.693 * base_odds
-                                        kills_90 = 2.302 * base_odds
+                        if not available_blocks:
+                            st.info("No block kill data available for this run.")
+                        else:
+                            # Sort blocks alphabetically
+                            available_blocks.sort()
+                            
+                            # Default to the target block if it was a Card Farming run
+                            is_block_run = "block_" in run_target_metric
+                            target_block_id = run_target_metric.replace("block_", "").replace("_per_min", "") if is_block_run else None
+                            default_idx = available_blocks.index(target_block_id) if target_block_id in available_blocks else 0
+                            
+                            col_c1, col_c2 = st.columns([1, 2])
+                            with col_c1:
+                                # Let the user pick exactly which block they want to inspect
+                                selected_block = st.selectbox(
+                                    "Select Block to view Drop Projections:", 
+                                    options=available_blocks, 
+                                    index=default_idx, 
+                                    format_func=lambda x: x.capitalize()
+                                )
+                            
+                            # Fetch the true kill rate for this specific block
+                            val = avg_metrics.get(f"block_{selected_block}_per_min", 0)
+                            
+                            st.markdown(f"<span style='font-size: 0.9em; color: gray;'>Based on {val:,.2f} <b>{selected_block.capitalize()}</b> kills/min</span>", unsafe_allow_html=True)
+                            st.divider()
+                            
+                            odds = {"Base Card": 1500, "Poly Fragments": 7500, "Infernal Fragments": 200000}
+                            cblock_path = os.path.join(ROOT_DIR, "assets", "cards", "cores", f"{selected_block}.png")
+                            bg_mapping = {"Base Card": "1", "Poly Fragments": "2", "Infernal Fragments": "4"}
+                            
+                            cols_cards = st.columns(3)
+                            for idx, (drop_name, base_odds) in enumerate(odds.items()):
+                                with cols_cards[idx]:
+                                    with st.container(border=True):
+                                        # --- RENDER DYNAMIC CARD ---
+                                        bg_tier = bg_mapping.get(drop_name, "1")
+                                        bg_path = os.path.join(ROOT_DIR, "assets", "cards", "backgrounds", f"{bg_tier}.png")
                                         
-                                        def format_time(req_kills):
-                                            rt_mins = req_kills / val
-                                            rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
-                                            arch_secs = req_kills / (val / 60.0)
-                                            arch_1k = arch_secs / 1000.0
-                                            return rt_str, arch_1k
+                                        comp_img = composite_card(bg_path, cblock_path, UI_BLOCK_CARD_X_OFFSET, UI_BLOCK_CARD_Y_OFFSET)
+                                        if comp_img:
+                                            render_centered_image(comp_img, UI_BLOCK_CARD_WIDTH)
+                                        else:
+                                            st.markdown("<div style='text-align: center; color: gray;'><small>(Assets Missing)</small></div>", unsafe_allow_html=True)
+                                        
+                                        st.markdown(f"<div style='text-align: center; margin-top: -10px;'><b>{drop_name}</b><br><span style='font-size: 0.8em; color: gray;'>(1 in {base_odds:,})</span></div>", unsafe_allow_html=True)
+                                        st.divider()
+                                        
+                                        # --- MATH & YIELDS ---
+                                        if val > 0:
+                                            kills_50 = 0.693 * base_odds
+                                            kills_90 = 2.302 * base_odds
+                                            kills_99 = 4.605 * base_odds
+                                            
+                                            def format_time(req_kills):
+                                                rt_mins = req_kills / val
+                                                rt_str = f"{rt_mins:.1f}m" if rt_mins < 60 else f"{rt_mins/60.0:.1f}h"
+                                                arch_secs = req_kills / (val / 60.0)
+                                                arch_1k = arch_secs / 1000.0
+                                                return rt_str, arch_1k
+    
+                                            rt_50, bk_50 = format_time(kills_50)
+                                            rt_90, bk_90 = format_time(kills_90)
+                                            rt_99, bk_99 = format_time(kills_99)
+                                            
+                                            st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
+                                            st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
+                                            st.markdown(f"<small><b>99% Chance (Guaranteed):</b><br>~{rt_99} | ~{bk_99:.1f}k Banked</small>", unsafe_allow_html=True)
+                                        else:
+                                            st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
 
-                                        rt_50, bk_50 = format_time(kills_50)
-                                        rt_90, bk_90 = format_time(kills_90)
-                                        
-                                        st.markdown(f"<small><b>50% Chance (Lucky):</b><br>~{rt_50} | ~{bk_50:.1f}k Banked</small>", unsafe_allow_html=True)
-                                        st.markdown(f"<small><b>90% Chance (Safe):</b><br>~{rt_90} | ~{bk_90:.1f}k Banked</small>", unsafe_allow_html=True)
-                                    else:
-                                        st.markdown("<div style='text-align: center; color: gray;'><small>N/A (0 kills)</small></div>", unsafe_allow_html=True)
+                    render_card_drops()
 
             # --- TAB 2: COLLATERAL LOOT (BAR CHART) ---
             if show_loot:
@@ -2433,8 +2470,7 @@ if __name__ == "__main__":
                                                 /* Fade out the stale legacy UI below the buttons to prevent duplicate confusion */
                                                 div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesis Performance Proof")),
                                                 div[data-testid="stVerticalBlock"] > div:has(h4:contains("Synthesized Stat Allocation")),
-                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Meta-Build History Log")),
-                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Next Steps: Marginal Value")) {
+                                                div[data-testid="stVerticalBlock"] > div:has(h3:contains("Meta-Build History Log")) {
                                                     opacity: 0.1 !important;
                                                     pointer-events: none !important;
                                                 }
@@ -2694,7 +2730,7 @@ if __name__ == "__main__":
                                 del st.session_state["synthesis_result"]
                                 st.rerun()
                                 
-                            st.success("✅ Synthesis Complete! The main charts above have been updated to reflect this build.")
+                            st.success("✅ Synthesis Complete! The main Advanced Analytics charts on the **Optimizer** tab have been updated to reflect this new Meta-Build.")
                             
                             # --- 📊 PERFORMANCE PROOF CHART ---
                             st.markdown("#### 📊 Synthesis Performance Proof")
@@ -2909,6 +2945,11 @@ You just used the Optimizer to find the mathematically perfect build for your *c
 
 * **The Micro-Test:** The AI will temporarily add **+1 Level** to every single stat or un-maxed internal upgrade and run a quick batch of simulations.
 * **The Ranking:** It then sorts the results to show you exactly which upgrade gives you the biggest immediate raw boost to your Farming Yields (EXP, Fragments, or Cards per minute).
+
+📉 **Why are my results negative?**
+If your top upgrades are negative, it means no remaining upgrades significantly help your current goal. This happens for two reasons:
+1. **The Suicide Farming Paradox:** If you are farming early-game drops (e.g. Dirt cards), buying survival upgrades (Stamina) pushes you into deeper floors. Fighting deep-floor blocks takes longer, which mathematically *lowers* your early-game kills/minute!
+2. **Statistical Noise:** If an upgrade provides 0 benefit to your goal, the natural RNG variance of a rapid 15-run micro-test will make it fluctuate slightly into the negatives.
 
 ⚠️ **Important Note on Costs:** This engine does *not* currently track the Fragment cost of upgrades. It only measures the **raw output gain**. When using this "shopping list," you must weigh the AI's top recommendations against your actual in-game fragment accumulation rates!
                 """)
