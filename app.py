@@ -256,7 +256,7 @@ if __name__ == "__main__":
 
     # Change "expanded" to "collapsed" if you want the sidebar to be completely hidden by default!
     st.set_page_config(
-        page_title="AI Arch Optimizer", 
+        page_title="IoM Arch Optimizer", 
         layout="wide", 
         page_icon="⛏️", 
         initial_sidebar_state="expanded" 
