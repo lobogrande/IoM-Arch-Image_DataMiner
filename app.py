@@ -572,7 +572,7 @@ if __name__ == "__main__":
     with tab_welcome:
         
         # --- PERSONAL NOTE ---
-        st.info("### 📝 A note from the developer...\nWelcome! I built this Monte Carlo simulator because Idle Obelisk Miner's mechanics (like strict truncation and multiplicative scaling) make it incredibly difficult to 'guess' the perfect stat distribution. \n\nMy goal is to give you a tool that completely eliminates the guesswork. Whether you want to push for a new Max Floor or farm Block Cards with maximum efficiency, this AI engine will simulate hundreds of thousands of hits to find the exact mathematical peak for your specific character. I hope it helps you crush those progression walls!")
+        st.info("### 📝 A note from the developer...\nWelcome! I built this Monte Carlo simulator because Idle Obelisk Miner's mechanics and the sheer variety of combinations a user can have for upgrades and play styles make it incredibly difficult to 'guess' the perfect stat distribution. \n\nMy goal is to give you a tool that completely eliminates the guesswork. Whether you want to push for a new Max Floor or farm Block Cards with maximum efficiency, this AI engine will simulate hundreds of thousands of hits to find the exact mathematical peak for your specific character. I hope it helps you crush those progression walls!")
         
         col_w_guide, col_w_tips = st.columns([1.5, 1])
         with col_w_guide:
@@ -582,7 +582,7 @@ if __name__ == "__main__":
                 st.markdown("1. **Input your Stats:** Go to the **Player Setup** tab to manually enter your info, **Import** your json data, or click a **Preset Build** below.\n2. **Select your Goal:** Go to the **Simulations -> Optimizer** tab and choose your target.\n3. **Run the Engine:** Let the AI find your perfect mathematical build.")
         
         with col_w_tips:
-            with st.expander("💡 Quick Tips & Tricks", expanded=True):
+            with st.expander("💡 Quick Tips & Tricks", expanded=False):
                 st.markdown("""
                 * **The "Suicide Farming" Paradox:** Buying survival stats (Agility/Stamina) when farming early-game blocks pushes you to deeper floors where blocks have exponentially more HP, mathematically lowering your kills/min!
                 * **Stat Plateaus:** Because blocks only take whole hits, 50 Strength and 54 Strength might both result in a '3-hit kill'. Use the **Sandbox Tab** to find these exact breakpoints.
