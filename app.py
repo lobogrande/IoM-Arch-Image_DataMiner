@@ -83,7 +83,7 @@ from core.player import Player
 from core.block import Block
 from tools.verify_player import load_state_from_json, save_state_to_json
 import project_config as cfg
-from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_eta_profiles, worker_simulate
+from optimizers.parallel_worker import run_optimization_phase, benchmark_hardware, get_optimal_step_profile, worker_simulate
 
 # --- AUTO-CLAMPING CALLBACKS ---
 def enforce_caps(key, min_val, max_val, item_name):
@@ -1493,14 +1493,14 @@ if __name__ == "__main__":
 
         # --- DYNAMIC TUTORIAL TIPS ---
         if opt_goal == "Max Floor Push":
-            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To make the AI run much faster, try opening the **Stat Constraints** below and locking **Intelligence** to `0` and **Luck** to your max stat cap!")
+            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To force the AI to scan at an extreme precision, try opening the **Stat Constraints** below and locking **Intelligence** to `0` and **Luck** to your max stat cap!")
         elif opt_goal in["Fragment Farming", "Block Card Farming", "Max EXP Yield"]:
-            st.info("💡 **Strategy Tip:** If your target spawns on early floors (e.g., Dirt), you don't need Max Stamina or Armor Pen to reach it! Lock **Agility** and **Perception** to `0` to speed up the AI.\n\n⚠️ **Wait, what if my target is late-game?** If you are farming Tier 4 blocks (which spawn on Floor 81+), you STILL have to survive the gauntlet of tough ores to get there. Do not lock your survival stats to 0, or the AI will die before reaching your target!")
+            st.info("💡 **Strategy Tip:** If your target spawns on early floors (e.g., Dirt), you don't need Max Stamina or Armor Pen to reach it! Lock **Agility** and **Perception** to `0` to massively increase the precision of the AI's search.\n\n⚠️ **Wait, what if my target is late-game?** If you are farming Tier 4 blocks (which spawn on Floor 81+), you STILL have to survive the gauntlet of tough ores to get there. Do not lock your survival stats to `0`, or the AI will die before reaching your target!")
         st.divider()
 
         # --- NEW: STAT LOCKING ---
         with st.expander("🔒 Stat Constraints / Locking (Optional)", expanded=False):
-            st.write("Locking a stat to a specific value drastically reduces the multidimensional search space, resulting in much faster simulations. Points used here share your global budget.")
+            st.markdown("**🧠 The Time vs. Precision Trade-off**\nBecause the AI auto-scales to your chosen Time Limit, locking a stat removes an entire mathematical dimension from the search space, giving you two powerful options:\n* **Higher Precision:** Keep the time slider high. The AI will use that time to scan the remaining unlocked stats at a much deeper, finer resolution.\n* **Faster Runtimes:** Lower the time slider. **Rule of Thumb:** For every stat you lock, you can safely drop the Time Limit slider by 1 or 2 levels (e.g., from 5 Minutes down to 1 Minute) and maintain the exact same mathematical accuracy!")
             
             def render_lock_stat(label, stat_key, col):
                 max_val = int(STAT_CAPS.get(stat_key, 99))
@@ -1569,8 +1569,6 @@ if __name__ == "__main__":
                 eta_bounds[s] = (val, val)
             else:
                 eta_bounds[s] = (0, EFFECTIVE_CAPS[s])
-                
-        live_eta_profiles = get_eta_profiles(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec)
 
         with st.expander("⚙️ Engine Tuning", expanded=False):
             col_spd_1, col_spd_2 = st.columns([3, 1])
@@ -1582,44 +1580,29 @@ if __name__ == "__main__":
                     if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
                     st.rerun()
             
-            col_prof_1, col_prof_2 = st.columns(2)
+            st.write("#### Target Compute Time (Precision Target)")
             
-            with col_prof_1:
-                st.write("#### 1. Search Depth (Initial Step Size)")
-                
-                depth_labels = {
-                    "Fast": "Fast (Step 15) - Best for quick checks",
-                    "Standard": "Standard (Step 10) - Recommended balance",
-                    "Deep": "Deep (Step 5) - Exhaustive, takes much longer"
-                }
-                
-                depth_choice = st.radio(
-                    "Select Search Depth", 
-                    options=list(depth_labels.keys()), 
-                    index=1,
-                    format_func=lambda x: depth_labels[x],
-                    horizontal=False, 
-                    label_visibility="collapsed"
-                )
-
-            with col_prof_2:
-                st.write("#### 2. Execution Time Limit")
-                time_limit_mins = st.slider(
-                    "Safely abort and return best build if time exceeds:", 
-                    min_value=1, max_value=30, value=5, step=1, format="%d mins",
-                    help="This is a 'Graceful Timeout'. To prevent data corruption, the engine will finish its currently active batch of math before stopping. Expect the final timer to overshoot your limit slightly!"
-                )
-                
-            step_1 = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
-            step_2 = max(2, step_1 // 3)
-            step_3 = 1
+            TIME_LABELS =["10 Seconds", "30 Seconds", "1 Minute", "2 Minutes", "5 Minutes", "10 Minutes", "30 Minutes (Deep)"]
+            TIME_VALUES =[10, 30, 60, 120, 300, 600, 1800]
             
-            prof_key = next(k for k in live_eta_profiles.keys() if k.startswith(depth_choice))
-            prof_data = live_eta_profiles[prof_key]
+            selected_time_label = st.select_slider(
+                "Allocate more time to allow the AI to search with higher precision:", 
+                options=TIME_LABELS,
+                value="1 Minute",
+                help="Because this engine auto-scales to your hardware, more time directly translates to a tighter search grid and higher mathematical accuracy. A 10-second run provides a 'Coarse' estimate, while a 5-minute run provides a 'Deep' exhaustive search."
+            )
+            
+            time_limit_secs = TIME_VALUES[TIME_LABELS.index(selected_time_label)]
+            
+            prof_data = get_optimal_step_profile(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec, time_limit_secs)
+            
+            step_1 = prof_data['step_1']
+            step_2 = prof_data['step_2']
+            step_3 = prof_data['step_3']
             
             preview_html = f"""
             <div style='font-size: 0.9em; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-top: 10px;'>
-                <b>Engine Execution Plan:</b><br>
+                <b>Auto-Scaling Execution Plan:</b><br>
                 🔍 <b>Phase 1:</b> Scanning grid in leaps of <b>{step_1}</b>...<br>
                 🔎 <b>Phase 2:</b> Zooming in with leaps of <b>{step_2}</b>...<br>
                 🎯 <b>Phase 3:</b> Pinpointing exact peak with leaps of <b>{step_3}</b>.<br><br>
@@ -1647,8 +1630,8 @@ if __name__ == "__main__":
         # dev_mode = st.toggle("🛠️ UI Dev Mode (Instantly mock results to design UI without running engine)")
         dev_mode = False
         
-        # --- ACTIVE SETTINGS TRANSPARENCY ---
-        st.info(f"⚙️ **Active Settings:** {depth_choice} Search Depth | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
+       # --- ACTIVE SETTINGS TRANSPARENCY ---
+        st.info(f"⚙️ **Active Settings:** Auto-Scaled Precision (Step {step_1}) | {selected_time_label} Compute Time. *(Adjust these in the Engine Tuning expander above)*")
         
         # --- PRE-FLIGHT CHECK ---
         # Calculate total locked points to prevent mathematically impossible runs
@@ -1720,16 +1703,10 @@ if __name__ == "__main__":
                     'total_infernal_cards': p.total_infernal_cards
                 }
 
-                prof_key = next((k for k in live_eta_profiles.keys() if k.startswith(depth_choice)), None)
-                if prof_key:
-                    prof_data = live_eta_profiles[prof_key]
-                    step_size = prof_data['step']
-                    st.info(f"⏱️ **Running {depth_choice} Search:** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
-                else:
-                    step_size = {"Fast": 15, "Standard": 10, "Deep": 5}[depth_choice]
-                    st.info(f"⏱️ **Running {depth_choice} Search:** Building optimization grid...")
+                step_size = step_1
+                st.info(f"⏱️ **3-Phase Search Initialized:** Stat Point Leaps (Coarse: **{step_1}**, Fine: **{step_2}**, Exact: **{step_3}**) | Estimated Wall-Clock Time: **{prof_data['time_label']}** (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
 
-                with st.spinner(f"Engine Running..."):
+                with st.spinner("Engine Running..."):
                     start_time = time.time()
                     STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
                     if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
@@ -1755,9 +1732,9 @@ if __name__ == "__main__":
                         sims_tracker[tracker_key] = max(sims_tracker.get(tracker_key, 0), task_idx)
                         pct = min(100, max(0, int((task_idx / task_total) * 100)))
                         elapsed_now = time.time() - start_time
-                        ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims) | ⏱️ Elapsed: {elapsed_now:.1f}s / {time_limit_mins}m limit")
+                        ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims) | ⏱️ Elapsed: {elapsed_now:.1f}s / {time_limit_secs}s limit")
                     
-                    time_limit_secs = time_limit_mins * 60
+                    # time_limit_secs is globally defined by the select_slider above
                     
                     import traceback
                     try:
@@ -2026,14 +2003,13 @@ if __name__ == "__main__":
                         rate_1k = (val / 60.0) * 1000.0
                         metric_str = "Fragments" if "frag" in run_target_metric else "Kills" if "block" in run_target_metric else "EXP"
                         
-                        # Clean, consolidated Banked Time readout
-                        st.markdown(f"#### 💰 Projected Yield<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per 1k Arch Seconds</span>", unsafe_allow_html=True)
+                        # Elevate the prominence of the Arch Seconds metric
+                        st.markdown(f"#### 💰 Banked Yields<br><span style='font-size: 0.9em; color: gray;'>Target {metric_str} per <b>1k Arch Seconds</b></span>", unsafe_allow_html=True)
                         st.metric("Yield", f"{rate_1k:,.1f}", label_visibility="collapsed")
                         
                         st.divider()
                         
-                        # Clean, consolidated Real-Time readout
-                        # Clean, consolidated Real-Time readout
+                        # Demote real-time yield
                         st.markdown(f"#### ⏱️ Real-Time Yield<br><span style='font-size: 0.9em; color: gray;'>{metric_str} / minute</span>", unsafe_allow_html=True)
                         st.metric("Real-Time", f"{val:,.2f}", label_visibility="collapsed")
                         
@@ -2062,16 +2038,22 @@ if __name__ == "__main__":
                         st.metric("Avg Floor", f"Floor {avg_flr:,.1f}", label_visibility="collapsed")
 
                 with perf_col2:
+                    # UI Transformation: Scale values to 1k Arch Secs for relevant targets
+                    is_floor_target = (run_target_metric == "highest_floor")
+                    def scale_score(v): return v if is_floor_target else (v / 60.0) * 1000.0
+                    
+                    unit_label = "Floor Reached" if is_floor_target else "Yield per 1k Arch Secs"
+
                     # Streamlit Markdown header completely fixes the Plotly overlap bug
                     st.markdown(
-                        "#### AI Convergence (Hill Climb) "
+                        f"#### AI Convergence (Hill Climb)<br><span style='font-size: 0.8em; color: gray;'>Y-Axis: {unit_label}</span> "
                         "<span title='This chart shows how the AI narrowed down the best build across the 3 optimization phases. "
                         "An upward curve means the engine successfully found significantly better builds as it zoomed in. "
                         "A flat line means Phase 1 already hit the near-perfect build.' "
                         "style='cursor: help; font-size: 0.8em;'>ℹ️</span>", 
                         unsafe_allow_html=True
                     )
-                    df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score": chart_hill_scores})
+                    df_hill = pd.DataFrame({"Phase": chart_hill_labels, "Score":[scale_score(s) for s in chart_hill_scores]})
                     fig_hill = px.line(df_hill, x="Phase", y="Score", markers=True)
                     fig_hill.update_traces(line_color='#4CAF50', marker=dict(size=10))
                     fig_hill.update_layout(margin=dict(l=10, r=20, t=10, b=20), height=200)
@@ -2079,7 +2061,7 @@ if __name__ == "__main__":
                     
                     # Streamlit Markdown header
                     st.markdown(
-                        "#### Engine Confidence Analysis "
+                        f"#### Engine Confidence Analysis<br><span style='font-size: 0.8em; color: gray;'>X-Axis: {unit_label}</span> "
                         "<span title='Compares the Optimal build against the Worst, Average, and Runner-Up builds tested. "
                         "A large gap between Optimal and Average proves your stats highly impact this target. A small gap between Runner-Up and Optimal "
                         "shows the AI fine-tuned the absolute perfect micro-adjustments.' "
@@ -2088,7 +2070,7 @@ if __name__ == "__main__":
                     )
                     df_conf = pd.DataFrame({
                         "Build Category":["Worst Tested", "Average", "Runner-Up", "🏆 Optimal"],
-                        "Performance":[worst_val, avg_val, runner_up_val, final_summary_out[run_target_metric]]
+                        "Performance":[scale_score(worst_val), scale_score(avg_val), scale_score(runner_up_val), scale_score(final_summary_out[run_target_metric])]
                     })
                     fig_conf = px.bar(
                         df_conf, x="Performance", y="Build Category", orientation='h', text_auto='.3s', color="Build Category",
@@ -2592,14 +2574,24 @@ if __name__ == "__main__":
                             df_history["Poly (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 7500) if "block_" in row.get("Target", "") else "-", axis=1)
                             df_history["Infernal (50%)"] = df_history.apply(lambda row: get_50_str(row["Metric Score"], 200000) if "block_" in row.get("Target", "") else "-", axis=1)
                         
-                        cols =[ 'Include', 'Target', 'Metric Score' ]
+                        # Dynamically name the score column based on what the user is viewing
+                        is_only_floor = all(t == "highest_floor" for t in view_targets)
+                        score_col = "Score (Floor)" if is_only_floor else "Yield (1k Arch Secs)"
+
+                        # Transform the display column for non-floor targets securely without breaking the backend
+                        df_history[score_col] = df_history.apply(
+                            lambda row: row["Metric Score"] if row.get("Target") == "highest_floor" else round((row["Metric Score"] / 60.0) * 1000.0, 1), 
+                            axis=1
+                        )
+                        
+                        cols =[ 'Include', 'Target', score_col ]
                         if is_block_farming:
                             cols +=[ "Base Card (50%)", "Poly (50%)", "Infernal (50%)" ]
                         cols +=[ 'Avg Floor', 'Max Floor' ]
                         
                         # Safe fallback in case old history rows don't have Max Floor yet
                         if 'Max Floor' not in df_history.columns: df_history['Max Floor'] = 0 
-                        cols +=[ c for c in df_history.columns if c not in cols and c != "_global_idx" ]
+                        cols +=[ c for c in df_history.columns if c not in cols and c != "_global_idx" and c != "Metric Score" ]
                         df_history = df_history[cols]
                         
                         # Create a robust, unique key to anchor the frontend state
@@ -2644,7 +2636,11 @@ if __name__ == "__main__":
                             st.caption("*(Note: To ensure a mathematically fair comparison, your historical runs were re-evaluated alongside the new combinations using the same 500-simulation baseline to remove RNG variance).*")
                             
                             chart_labels =[f"Run {i+1}" for i in range(len(sr["history_scores"]))] +["🧬 Meta-Build"]
-                            chart_scores = sr["history_scores"] + [sr["meta_score"]]
+                            
+                            is_floor_target = (sr.get("metric_name", "highest_floor") == "highest_floor")
+                            def scale_sr(v): return v if is_floor_target else (v / 60.0) * 1000.0
+                            
+                            chart_scores = [scale_sr(s) for s in sr["history_scores"]] +[scale_sr(sr["meta_score"])]
                             chart_colors = ["Historical Runs"] * len(sr["history_scores"]) + ["Meta-Build"]
                             
                             df_comp = pd.DataFrame({"Build": chart_labels, "Score": chart_scores, "Type": chart_colors})
@@ -2758,7 +2754,12 @@ if __name__ == "__main__":
                         
                         with st.container(border=True):
                             # --- Header & Visible Stats ---
-                            title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{synth['Ceiling Score']}`"
+                            is_floor_target = (synth.get('Target', 'highest_floor') == 'highest_floor')
+                            disp_score = synth['Ceiling Score'] if is_floor_target else round((synth['Ceiling Score'] / 60.0) * 1000.0, 1)
+                            
+                            title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{disp_score}`"
+                            if not is_floor_target: title += " *(per 1k Arch Secs)*"
+                            
                             if "Theoretical Peak" in synth: 
                                 title += f" | Peak: `{synth['Theoretical Peak']}`"
                             elif "God-Run Peak" in synth: # Legacy state fallback
@@ -2795,8 +2796,23 @@ if __name__ == "__main__":
                             with st.expander("🔍 View Source Runs (The original builds used to generate this Meta-Build)"):
                                 if "Sources Data" in synth:
                                     source_df = pd.DataFrame(synth['Sources Data'])
-                                    cols_to_drop = ['Include', 'Target'] 
+                                    
+                                    # Apply the same dynamic formatting as the main history table
+                                    is_synth_floor = (synth.get('Target') == "highest_floor")
+                                    score_col = "Score (Floor)" if is_synth_floor else "Yield (1k Arch Secs)"
+                                    
+                                    source_df[score_col] = source_df.apply(
+                                        lambda row: row.get("Metric Score") if is_synth_floor else round((row.get("Metric Score", 0) / 60.0) * 1000.0, 1), 
+                                        axis=1
+                                    )
+                                    
+                                    cols_to_drop = ['Include', 'Target', 'Metric Score', '_global_idx'] 
                                     source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
+                                    
+                                    # Reorder to put the new score column at the front
+                                    s_cols = [score_col] +[c for c in source_df.columns if c != score_col]
+                                    source_df = source_df[s_cols]
+                                    
                                     st.dataframe(source_df, hide_index=True, width="stretch")
                                 else:
                                     st.write(synth.get("Sources", "*(No source data saved)*"))
@@ -2877,8 +2893,9 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                         stat_results[t_s]['sum'] += val
                                         stat_results[t_s]['count'] += 1
                                         
+                                base_val = final_summary_out.get(run_target_metric, 0)
                                 st.session_state.roi_stat_results = {
-                                    k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
+                                    k: (((v['sum']/v['count']) - base_val) / 60.0) * 1000.0 
                                     for k, v in stat_results.items()
                                 }
                                 st.rerun() 
@@ -2887,7 +2904,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                 
                     if "roi_stat_results" in st.session_state:
                         sorted_stats = sorted(st.session_state.roi_stat_results.items(), key=lambda x: x[1], reverse=True)
-                        df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain"])
+                        df_stat_roi = pd.DataFrame(sorted_stats, columns=["Stat (+1)", "Marginal Gain (1k Arch Secs)"])
                         st.dataframe(df_stat_roi, hide_index=True, width="stretch")
 
                 with col_roi_2:
@@ -2936,8 +2953,9 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                         upg_results[t_u]['sum'] += val
                                         upg_results[t_u]['count'] += 1
                                         
+                                base_val = final_summary_out.get(run_target_metric, 0)
                                 st.session_state.roi_upg_results = {
-                                    k: (v['sum']/v['count']) - final_summary_out.get(run_target_metric, 0) 
+                                    k: (((v['sum']/v['count']) - base_val) / 60.0) * 1000.0 
                                     for k, v in upg_results.items()
                                 }
                                 st.rerun() 
@@ -2946,7 +2964,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                 
                     if "roi_upg_results" in st.session_state:
                         sorted_upgs = sorted(st.session_state.roi_upg_results.items(), key=lambda x: x[1], reverse=True)
-                        df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain"])
+                        df_upg_roi = pd.DataFrame(sorted_upgs[:10], columns=["Upgrade (+1 Lvl)", "Marginal Gain (1k Arch Secs)"])
                         st.dataframe(df_upg_roi, hide_index=True, width="stretch")
 
     # --- GLOBAL FLOATING NAVIGATION ---

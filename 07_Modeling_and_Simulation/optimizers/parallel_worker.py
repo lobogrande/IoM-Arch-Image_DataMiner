@@ -300,20 +300,16 @@ def get_expected_runs(builds, max_iter):
     runs += b3 * r3
     return runs
 
-def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, iter_p2=50, iter_p3=100):
-    """Calculates ETAs dynamically based on exact Halving runs and Positive-Shifted coordinates."""
-    profiles = {
-        "Fast (Step: 15)": {"step": 15},
-        "Standard (Step: 10)": {"step": 10},
-        "Deep (Step: 5)": {"step": 5}
-    }
-    
-    # Identify mathematically "free" stats (unlocked)
-    free_stats =[s for s in stats_list if bounds[s][0] != bounds[s][1]]
+def get_optimal_step_profile(stats_list, budget, bounds, sims_per_second, target_time_seconds, iter_p1=25, iter_p2=50, iter_p3=100):
+    """Dynamically finds the tightest Step Size that completes within the Target Time limit."""
+    free_stats = [ s for s in stats_list if bounds[s][0] != bounds[s][1] ]
     num_free = len(free_stats)
     
-    for name, data in profiles.items():
-        step_1 = data["step"]
+    effective_sims_sec = max(1.0, float(sims_per_second))
+    best_profile = None
+    
+    # Start from the finest possible step and get coarser until it safely fits the time budget
+    for step_1 in range(3, 31):
         step_2 = max(2, step_1 // 3)
         p3_radius = min(2, step_2)
         
@@ -324,11 +320,11 @@ def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, it
         # Real builds hug the 0 and Max Cap walls, cutting the theoretical hypercube search space
         # down by roughly 75%. We generate the full shape, then apply the clipping factor.
         if num_free > 0:
-            p2_mock_bounds = {s: (0, 2 * step_1) for s in free_stats}
+            p2_mock_bounds = { s: (0, 2 * step_1) for s in free_stats }
             p2_budget = ((num_free * step_1) // step_2) * step_2
             raw_p2_builds = len(generate_distributions(free_stats, p2_budget, step_2, p2_mock_bounds))
             
-            p3_mock_bounds = {s: (0, 2 * p3_radius) for s in free_stats}
+            p3_mock_bounds = { s: (0, 2 * p3_radius) for s in free_stats }
             p3_budget = ((num_free * p3_radius) // 1) * 1
             raw_p3_builds = len(generate_distributions(free_stats, p3_budget, 1, p3_mock_bounds))
             
@@ -343,24 +339,33 @@ def get_eta_profiles(stats_list, budget, bounds, sims_per_second, iter_p1=25, it
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
         
-        # --- SURVIVAL WEIGHTING ---
-        weighted_p1 = p1_sims * 0.25 # P1 garbage builds die fast, but still incur parallel overhead
-        weighted_p2 = p2_sims * 0.75 # P2 zoomed builds survive much longer
-        weighted_p3 = p3_sims * 1.00 # P3 optimized builds take the full benchmark time
+        # --- REMOVED SURVIVAL WEIGHTING ---
+        # The sims_per_sec telemetry is derived from full runs, meaning it already
+        # naturally averages the speed of fast deaths and slow deaths. 
+        # Weighting them artificially lowered the ETA, causing Phase 1 to over-promise.
+        total_expected_sims = p1_sims + p2_sims + p3_sims
         
-        total_weighted_sims = weighted_p1 + weighted_p2 + weighted_p3
-        
-        effective_sims_sec = max(1.0, float(sims_per_second))
-        
-        estimated_seconds = total_weighted_sims / effective_sims_sec
+        # Add a flat 3.0s penalty for Multiprocessing Pool spin-up/teardown and array sorting overhead
+        estimated_seconds = (total_expected_sims / effective_sims_sec) + 3.0
         
         if estimated_seconds < 60:
             time_str = f"~{int(estimated_seconds)} seconds"
         else:
             time_str = f"~{estimated_seconds/60:.1f} minutes"
             
-        data["builds"] = total_estimated_builds
-        data["eta_seconds"] = estimated_seconds
-        data["time_label"] = time_str
+        best_profile = {
+            "step_1": step_1,
+            "step_2": step_2,
+            "step_3": 1,
+            "builds": total_estimated_builds,
+            "eta_seconds": estimated_seconds,
+            "time_label": time_str
+        }
         
-    return profiles
+        # STRICT BUFFER: RNG survival variance pushes highly optimized Phase 3 builds
+        # to take slightly longer than average. We enforce a strict 20% safety margin (0.80) 
+        # to guarantee the engine completes Phase 3 cleanly without triggering timeouts.
+        if estimated_seconds <= (target_time_seconds * 0.80):
+            break
+            
+    return best_profile
