@@ -1704,9 +1704,9 @@ if __name__ == "__main__":
                 }
 
                 step_size = step_1
-                st.info(f"⏱️ **Running Auto-Scaled Search (Step {step_size}):** Estimated to take {prof_data['time_label']} (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
+                st.info(f"⏱️ **3-Phase Search Initialized:** Stat Point Leaps (Coarse: **{step_1}**, Fine: **{step_2}**, Exact: **{step_3}**) | Estimated Wall-Clock Time: **{prof_data['time_label']}** (~{prof_data['builds']:,.0f} builds at {st.session_state.sims_per_sec:,.0f} sims/sec)")
 
-                with st.spinner(f"Engine Running..."):
+                with st.spinner("Engine Running..."):
                     start_time = time.time()
                     STATS_TO_OPTIMIZE =['Str', 'Agi', 'Per', 'Int', 'Luck']
                     if p.asc1_unlocked: STATS_TO_OPTIMIZE.append('Div')
