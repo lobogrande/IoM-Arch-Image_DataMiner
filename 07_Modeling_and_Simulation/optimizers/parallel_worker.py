@@ -1,5 +1,5 @@
 # ==============================================================================
-# Script: tools/parallel_worker.py
+# Script: optimizers/parallel_worker.py
 # Layer 4: Multiprocessing Utility & Engine (Successive Halving + Live Progress)
 # Description: Houses the worker functions, grid search algorithm, Successive 
 #              Halving (Early Stopping) logic, and ETA hardware benchmarking.
