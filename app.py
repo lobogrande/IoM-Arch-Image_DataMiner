@@ -424,13 +424,14 @@ if __name__ == "__main__":
     if st.session_state.get("scroll_to_top", False):
         import streamlit.components.v1 as components
         components.html(
-            '''
+            f'''
             <script>
+                /* Force iframe reload: {time.time()} */
                 const parent = window.parent.document;
                 const el = parent.getElementById("top-of-tabs");
-                if (el) {
-                    el.scrollIntoView({ behavior: "smooth", block: "start" });
-                }
+                if (el) {{
+                    el.scrollIntoView({{ behavior: "smooth", block: "start" }});
+                }}
             </script>
             ''',
             height=0
@@ -2990,13 +2991,14 @@ if __name__ == "__main__":
                     if st.session_state.get("scroll_to_synth", False):
                         import streamlit.components.v1 as components
                         components.html(
-                            '''
+                            f'''
                             <script>
+                                /* Force iframe reload: {time.time()} */
                                 const parent = window.parent.document;
                                 const el = parent.getElementById("synth-results-anchor");
-                                if (el) {
-                                    el.scrollIntoView({ behavior: "smooth", block: "start" });
-                                }
+                                if (el) {{
+                                    el.scrollIntoView({{ behavior: "smooth", block: "start" }});
+                                }}
                             </script>
                             ''',
                             height=0
