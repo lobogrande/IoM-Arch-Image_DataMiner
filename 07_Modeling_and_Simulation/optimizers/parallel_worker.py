@@ -339,13 +339,13 @@ def get_optimal_step_profile(stats_list, budget, bounds, sims_per_second, target
         
         total_estimated_builds = p1_builds + p2_builds + p3_builds
         
-        # --- SURVIVAL WEIGHTING ---
-        weighted_p1 = p1_sims * 0.25 # P1 garbage builds die fast, but still incur parallel overhead
-        weighted_p2 = p2_sims * 0.75 # P2 zoomed builds survive much longer
-        weighted_p3 = p3_sims * 1.00 # P3 optimized builds take the full benchmark time
+        # --- REMOVED SURVIVAL WEIGHTING ---
+        # The sims_per_sec telemetry is derived from full runs, meaning it already
+        # naturally averages the speed of fast deaths and slow deaths. 
+        # Weighting them artificially lowered the ETA, causing Phase 1 to over-promise.
+        total_expected_sims = p1_sims + p2_sims + p3_sims
         
-        total_weighted_sims = weighted_p1 + weighted_p2 + weighted_p3
-        estimated_seconds = total_weighted_sims / effective_sims_sec
+        estimated_seconds = total_expected_sims / effective_sims_sec
         
         if estimated_seconds < 60:
             time_str = f"~{int(estimated_seconds)} seconds"
