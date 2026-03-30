@@ -420,6 +420,23 @@ if __name__ == "__main__":
     # MAIN WINDOW: Tabs & Navigation
     # ==========================================
     st.markdown('<div id="top-of-tabs"></div>', unsafe_allow_html=True)
+    
+    if st.session_state.get("scroll_to_top", False):
+        import streamlit.components.v1 as components
+        components.html(
+            '''
+            <script>
+                const parent = window.parent.document;
+                const el = parent.getElementById("top-of-tabs");
+                if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+            </script>
+            ''',
+            height=0
+        )
+        st.session_state.scroll_to_top = False
+        
     st.title("⛏️ AI Arch Mining Optimizer")
 
     # Calculate dynamic Base Stat caps (Base + Upgrade #45)
@@ -2938,6 +2955,7 @@ if __name__ == "__main__":
                             # Clear Synthesis results so the Optimizer tab shows exactly this run
                             if "synthesis_result" in st.session_state:
                                 del st.session_state["synthesis_result"]
+                            st.session_state.scroll_to_top = True
                             st.toast("✅ Dashboard restored! Click the 'Optimizer' tab to view it.", icon="🚀")
                         else:
                             st.toast("No telemetry saved for this legacy run.", icon="⚠️")
