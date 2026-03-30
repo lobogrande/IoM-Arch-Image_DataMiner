@@ -1493,14 +1493,14 @@ if __name__ == "__main__":
 
         # --- DYNAMIC TUTORIAL TIPS ---
         if opt_goal == "Max Floor Push":
-            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To make the AI run much faster, try opening the **Stat Constraints** below and locking **Intelligence** to `0` and **Luck** to your max stat cap!")
+            st.info("💡 **Strategy Tip:** Pushing deep floors requires balancing Damage, Armor Pen, Max Stamina and Crits. To force the AI to scan at an extreme precision, try opening the **Stat Constraints** below and locking **Intelligence** to `0` and **Luck** to your max stat cap!")
         elif opt_goal in["Fragment Farming", "Block Card Farming", "Max EXP Yield"]:
-            st.info("💡 **Strategy Tip:** If your target spawns on early floors (e.g., Dirt), you don't need Max Stamina or Armor Pen to reach it! Lock **Agility** and **Perception** to `0` to speed up the AI.\n\n⚠️ **Wait, what if my target is late-game?** If you are farming Tier 4 blocks (which spawn on Floor 81+), you STILL have to survive the gauntlet of tough ores to get there. Do not lock your survival stats to 0, or the AI will die before reaching your target!")
+            st.info("💡 **Strategy Tip:** If your target spawns on early floors (e.g., Dirt), you don't need Max Stamina or Armor Pen to reach it! Lock **Agility** and **Perception** to `0` to massively increase the precision of the AI's search.\n\n⚠️ **Wait, what if my target is late-game?** If you are farming Tier 4 blocks (which spawn on Floor 81+), you STILL have to survive the gauntlet of tough ores to get there. Do not lock your survival stats to `0`, or the AI will die before reaching your target!")
         st.divider()
 
         # --- NEW: STAT LOCKING ---
         with st.expander("🔒 Stat Constraints / Locking (Optional)", expanded=False):
-            st.write("Locking a stat to a specific value drastically reduces the multidimensional search space, resulting in much faster simulations. Points used here share your global budget.")
+            st.markdown("**🧠 Why lock stats?** Since the AI automatically scales to fit your requested Target Compute Time, locking stats no longer makes the engine 'finish faster'. Instead, it shrinks the multidimensional search space, allowing the AI to use that exact same time limit to scan at a much finer resolution. **Locking stats = Higher Precision!**")
             
             def render_lock_stat(label, stat_key, col):
                 max_val = int(STAT_CAPS.get(stat_key, 99))
@@ -1580,14 +1580,19 @@ if __name__ == "__main__":
                     if "sims_per_sec" in st.session_state: del st.session_state["sims_per_sec"]
                     st.rerun()
             
-            st.write("#### Hardware-Aware Execution Limit")
-            time_limit_mins = st.slider(
-                "Safely scale the math to finish within:", 
-                min_value=1, max_value=30, value=5, step=1, format="%d mins",
-                help="The engine will automatically tighten or loosen the Phase 1 search grid to ensure it generates the mathematically safest number of combinations that your hardware can process in this timeframe."
+            st.write("#### Target Compute Time (Precision Target)")
+            
+            TIME_LABELS =["10 Seconds", "30 Seconds", "1 Minute", "2 Minutes", "5 Minutes", "10 Minutes", "30 Minutes (Deep)"]
+            TIME_VALUES =[10, 30, 60, 120, 300, 600, 1800]
+            
+            selected_time_label = st.select_slider(
+                "Allocate more time to allow the AI to search with higher precision:", 
+                options=TIME_LABELS,
+                value="1 Minute",
+                help="Because this engine auto-scales to your hardware, more time directly translates to a tighter search grid and higher mathematical accuracy. A 10-second run provides a 'Coarse' estimate, while a 5-minute run provides a 'Deep' exhaustive search."
             )
             
-            time_limit_secs = time_limit_mins * 60
+            time_limit_secs = TIME_VALUES[TIME_LABELS.index(selected_time_label)]
             
             prof_data = get_optimal_step_profile(STATS_TO_OPTIMIZE, DYNAMIC_BUDGET, eta_bounds, st.session_state.sims_per_sec, time_limit_secs)
             
@@ -1626,7 +1631,7 @@ if __name__ == "__main__":
         dev_mode = False
         
        # --- ACTIVE SETTINGS TRANSPARENCY ---
-        st.info(f"⚙️ **Active Settings:** Auto-Scaled Step {step_1} | {time_limit_mins} Min Timeout. *(Adjust these in the Engine Tuning expander above)*")
+        st.info(f"⚙️ **Active Settings:** Auto-Scaled Precision (Step {step_1}) | {selected_time_label} Compute Time. *(Adjust these in the Engine Tuning expander above)*")
         
         # --- PRE-FLIGHT CHECK ---
         # Calculate total locked points to prevent mathematically impossible runs
@@ -1727,9 +1732,9 @@ if __name__ == "__main__":
                         sims_tracker[tracker_key] = max(sims_tracker.get(tracker_key, 0), task_idx)
                         pct = min(100, max(0, int((task_idx / task_total) * 100)))
                         elapsed_now = time.time() - start_time
-                        ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims) | ⏱️ Elapsed: {elapsed_now:.1f}s / {time_limit_mins}m limit")
+                        ui_prog_bar.progress(pct, text=f"⚙️ {phase_name} | Round {r_idx}/{r_total} | {pct}% ({task_idx}/{task_total} sims) | ⏱️ Elapsed: {elapsed_now:.1f}s / {time_limit_secs}s limit")
                     
-                    time_limit_secs = time_limit_mins * 60
+                    # time_limit_secs is globally defined by the select_slider above
                     
                     import traceback
                     try:
