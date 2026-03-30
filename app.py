@@ -2847,98 +2847,98 @@ if __name__ == "__main__":
                                 st.button("🧪 Send Meta-Build to Sandbox", width="stretch", key="sandbox_meta_build_btn", on_click=cb_apply_stats, args=("sandbox", sr["stats"], "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
 
             # ==========================================
-            # META-BUILD HISTORY TABLE (NESTED EXPANDERS)
-            # ==========================================
-            if "synth_history" in st.session_state and st.session_state.synth_history:
-                st.divider()
-                st.markdown("### 📚 Meta-Build History Log")
-                st.write("A permanent record of your optimized Meta-Builds. Expand a row to view the original builds that birthed it.")
-                
-                synth_targets = list(set(s.get("Target") for s in st.session_state.synth_history))
-                synth_view_targets = st.multiselect(
-                    "🔍 Filter Meta-Builds by target:", 
-                    options=synth_targets, 
-                    default=[t for t in synth_targets if t == run_target_metric] or synth_targets,
-                    key="synth_filter_ms"
-                )
-                
-                # Iterate backwards so the newest Meta-Builds are always at the top!
-                for idx, synth in reversed(list(enumerate(st.session_state.synth_history))):
-                    if synth.get("Target") in synth_view_targets:
-                        
-                        with st.container(border=True):
-                            # --- Header & Visible Stats ---
-                            is_floor_target = (synth.get('Target', 'highest_floor') == 'highest_floor')
-                            disp_score = synth['Ceiling Score'] if is_floor_target else round((synth['Ceiling Score'] / 60.0) * 1000.0, 1)
+                # META-BUILD HISTORY TABLE (NESTED EXPANDERS)
+                # ==========================================
+                if "synth_history" in st.session_state and st.session_state.synth_history:
+                    st.divider()
+                    st.markdown("### 📚 Meta-Build History Log")
+                    st.write("A permanent record of your optimized Meta-Builds. Expand a row to view the original builds that birthed it.")
+                    
+                    synth_targets = list(set(s.get("Target") for s in st.session_state.synth_history))
+                    synth_view_targets = st.multiselect(
+                        "🔍 Filter Meta-Builds by target:", 
+                        options=synth_targets, 
+                        default=[t for t in synth_targets if t == run_target_metric] or synth_targets,
+                        key="synth_filter_ms"
+                    )
+                    
+                    # Iterate backwards so the newest Meta-Builds are always at the top!
+                    for idx, synth in reversed(list(enumerate(st.session_state.synth_history))):
+                        if synth.get("Target") in synth_view_targets:
                             
-                            title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{disp_score}`"
-                            if not is_floor_target: title += " *(per 1k Arch Secs)*"
-                            
-                            if "Theoretical Peak" in synth: 
-                                title += f" | Peak: `{synth['Theoretical Peak']}`"
-                            elif "God-Run Peak" in synth: # Legacy state fallback
-                                title += f" | Peak: `{synth['God-Run Peak']}`"
-                            st.markdown(title)
-                            
-                            stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "Theoretical Peak", "Peak Probability", "God-Run Peak", "God-Run Chance", "Arch Secs Cost", "Sources Data", "Sources", "Keep"]}
-                            stat_string = " &nbsp;&nbsp;|&nbsp;&nbsp; ".join([f"**{k}:** {v}" for k, v in stats_only.items()])
-                            st.info(stat_string)
-                            
-                            chance = synth.get("Peak Probability", synth.get("God-Run Chance", 0))
-                            if chance > 0:
-                                runs_needed = math.ceil(1.0 / chance)
-                                arch_secs = synth.get("Arch Secs Cost", 0)
-                                peak_val = synth.get('Theoretical Peak', synth.get('God-Run Peak'))
-                                st.caption(f"🎲 **Reality Check:** Floor {peak_val} hit in **{chance*100:.1f}%** of sims. Requires avg **{runs_needed} runs** (~**{arch_secs/1000.0:.1f}k Arch Secs**) to replicate.")
+                            with st.container(border=True):
+                                # --- Header & Visible Stats ---
+                                is_floor_target = (synth.get('Target', 'highest_floor') == 'highest_floor')
+                                disp_score = synth['Ceiling Score'] if is_floor_target else round((synth['Ceiling Score'] / 60.0) * 1000.0, 1)
                                 
-                            if "block_" in synth['Target'] and synth['Ceiling Score'] > 0:
-                                val = synth['Ceiling Score']
-                                b_name = synth['Target'].replace("block_", "").replace("_per_min", "").capitalize()
+                                title = f"#### 🧬 Meta-Build | Target: `{synth['Target']}` | Ceiling: `{disp_score}`"
+                                if not is_floor_target: title += " *(per 1k Arch Secs)*"
                                 
-                                def calc_c(odds):
-                                    k50 = (0.693 * odds) / (val / 60.0) / 1000.0
-                                    k90 = (2.302 * odds) / (val / 60.0) / 1000.0
-                                    k99 = (4.605 * odds) / (val / 60.0) / 1000.0
-                                    return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
-                                    
-                                st.caption(f"🎴 **Card Reality Check ({b_name})**[50% Avg / 90% Safe / 99% Guaranteed] ➔ "
-                                           f"**Base:** {calc_c(1500)} &nbsp;|&nbsp; "
-                                           f"**Poly:** {calc_c(7500)} &nbsp;|&nbsp; "
-                                           f"**Infernal:** {calc_c(200000)}", unsafe_allow_html=True)
-                            
-                            # --- Hidden Source Runs ---
-                            with st.expander("🔍 View Source Runs (The original builds used to generate this Meta-Build)"):
-                                if "Sources Data" in synth:
-                                    source_df = pd.DataFrame(synth['Sources Data'])
-                                    
-                                    # Apply the same dynamic formatting as the main history table
-                                    is_synth_floor = (synth.get('Target') == "highest_floor")
-                                    score_col = "Score (Floor)" if is_synth_floor else "Yield (1k Arch Secs)"
-                                    
-                                    source_df[score_col] = source_df.apply(
-                                        lambda row: row.get("Metric Score") if is_synth_floor else round((row.get("Metric Score", 0) / 60.0) * 1000.0, 1), 
-                                        axis=1
-                                    )
-                                    
-                                    cols_to_drop = ['Include', 'Target', 'Metric Score', '_global_idx'] 
-                                    source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
-                                    
-                                    # Reorder to put the new score column at the front
-                                    s_cols = [score_col] +[c for c in source_df.columns if c != score_col]
-                                    source_df = source_df[s_cols]
-                                    
-                                    st.dataframe(source_df, hide_index=True, width="stretch")
-                                else:
-                                    st.write(synth.get("Sources", "*(No source data saved)*"))
-                            
-                            # --- Always-Visible Buttons ---
-                            col_h1, col_h2, col_h3 = st.columns(3)
-                            
-                            col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("global", stats_only, "✅ Meta-Build stats applied globally!", "🧬"))
+                                if "Theoretical Peak" in synth: 
+                                    title += f" | Peak: `{synth['Theoretical Peak']}`"
+                                elif "God-Run Peak" in synth: # Legacy state fallback
+                                    title += f" | Peak: `{synth['God-Run Peak']}`"
+                                st.markdown(title)
                                 
-                            col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("sandbox", stats_only, "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
+                                stats_only = {k: v for k, v in synth.items() if k not in["Target", "Ceiling Score", "Theoretical Peak", "Peak Probability", "God-Run Peak", "God-Run Chance", "Arch Secs Cost", "Sources Data", "Sources", "Keep"]}
+                                stat_string = " &nbsp;&nbsp;|&nbsp;&nbsp; ".join([f"**{k}:** {v}" for k, v in stats_only.items()])
+                                st.info(stat_string)
                                 
-                            col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch", on_click=cb_delete_hist, args=(idx,))
+                                chance = synth.get("Peak Probability", synth.get("God-Run Chance", 0))
+                                if chance > 0:
+                                    runs_needed = math.ceil(1.0 / chance)
+                                    arch_secs = synth.get("Arch Secs Cost", 0)
+                                    peak_val = synth.get('Theoretical Peak', synth.get('God-Run Peak'))
+                                    st.caption(f"🎲 **Reality Check:** Floor {peak_val} hit in **{chance*100:.1f}%** of sims. Requires avg **{runs_needed} runs** (~**{arch_secs/1000.0:.1f}k Arch Secs**) to replicate.")
+                                    
+                                if "block_" in synth['Target'] and synth['Ceiling Score'] > 0:
+                                    val = synth['Ceiling Score']
+                                    b_name = synth['Target'].replace("block_", "").replace("_per_min", "").capitalize()
+                                    
+                                    def calc_c(odds):
+                                        k50 = (0.693 * odds) / (val / 60.0) / 1000.0
+                                        k90 = (2.302 * odds) / (val / 60.0) / 1000.0
+                                        k99 = (4.605 * odds) / (val / 60.0) / 1000.0
+                                        return f"~{k50:.1f}k / ~{k90:.1f}k / ~{k99:.1f}k"
+                                        
+                                    st.caption(f"🎴 **Card Reality Check ({b_name})**[50% Avg / 90% Safe / 99% Guaranteed] ➔ "
+                                               f"**Base:** {calc_c(1500)} &nbsp;|&nbsp; "
+                                               f"**Poly:** {calc_c(7500)} &nbsp;|&nbsp; "
+                                               f"**Infernal:** {calc_c(200000)}", unsafe_allow_html=True)
+                                
+                                # --- Hidden Source Runs ---
+                                with st.expander("🔍 View Source Runs (The original builds used to generate this Meta-Build)"):
+                                    if "Sources Data" in synth:
+                                        source_df = pd.DataFrame(synth['Sources Data'])
+                                        
+                                        # Apply the same dynamic formatting as the main history table
+                                        is_synth_floor = (synth.get('Target') == "highest_floor")
+                                        score_col = "Score (Floor)" if is_synth_floor else "Yield (1k Arch Secs)"
+                                        
+                                        source_df[score_col] = source_df.apply(
+                                            lambda row: row.get("Metric Score") if is_synth_floor else round((row.get("Metric Score", 0) / 60.0) * 1000.0, 1), 
+                                            axis=1
+                                        )
+                                        
+                                        cols_to_drop =['Include', 'Target', 'Metric Score', '_global_idx'] 
+                                        source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
+                                        
+                                        # Reorder to put the new score column at the front
+                                        s_cols = [score_col] +[c for c in source_df.columns if c != score_col]
+                                        source_df = source_df[s_cols]
+                                        
+                                        st.dataframe(source_df, hide_index=True, width="stretch")
+                                    else:
+                                        st.write(synth.get("Sources", "*(No source data saved)*"))
+                                
+                                # --- Always-Visible Buttons ---
+                                col_h1, col_h2, col_h3 = st.columns(3)
+                                
+                                col_h1.button("✨ Apply Globally", key=f"app_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("global", stats_only, "✅ Meta-Build stats applied globally!", "🧬"))
+                                    
+                                col_h2.button("🧪 Send to Sandbox", key=f"snd_hist_{idx}", width="stretch", on_click=cb_apply_stats, args=("sandbox", stats_only, "✅ Meta-Build piped to Tab 6 (Hit Calculator)!", "🧪"))
+                                    
+                                col_h3.button("🗑️ Delete Meta-Build", key=f"del_hist_{idx}", width="stretch", on_click=cb_delete_hist, args=(idx,))
 
             # ==========================================
             # NEXT STEPS: ROI ANALYZER (TAB ROUTING)
