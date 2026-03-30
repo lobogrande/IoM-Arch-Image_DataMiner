@@ -49,7 +49,10 @@ def load_state_from_json(player: Player, filepath: str):
         player.base_damage_const = s.get('base_damage_const', 10)
         player.hades_idol_level = s.get('hades_idol_level', 0)
         player.total_infernal_cards = s.get('total_infernal_cards', 0)
-        player.arch_ability_infernal_bonus = s.get('arch_ability_infernal_bonus', 0.0)
+        
+        # Legacy migration fallback for older beta saves and UI presets
+        if 'arch_ability_infernal_bonus' in s:
+            player.arch_ability_infernal_bonus = float(s['arch_ability_infernal_bonus'])
 
     # 2. Load Base Stats
     if 'base_stats' in data:
@@ -75,6 +78,10 @@ def load_state_from_json(player: Player, filepath: str):
         reverse_external = {val[1]: key for key, val in player.EXTERNAL_DEF.items()}
         
         for k, v in data['external_upgrades'].items():
+            if k == "Arch Ability Infernal Bonus":
+                player.arch_ability_infernal_bonus = float(v)
+                continue
+
             matched_group = next((g for g in cfg.EXTERNAL_UI_GROUPS if g["name"] == k), None)
             if matched_group:
                 for r in matched_group["rows"]:
@@ -109,8 +116,7 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
         "current_max_floor": player.current_max_floor,
         "base_damage_const": player.base_damage_const,
         "hades_idol_level": player.hades_idol_level,
-        "total_infernal_cards": player.total_infernal_cards,
-        "arch_ability_infernal_bonus": player.arch_ability_infernal_bonus
+        "total_infernal_cards": player.total_infernal_cards
     }
     if hide_locked and not player.asc1_unlocked:
         if 'hades_idol_level' in settings_out:
@@ -164,6 +170,10 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
     for group in cfg.EXTERNAL_UI_GROUPS:
         representative_val = player.external_levels.get(group["rows"][0], 0)
         data["external_upgrades"][group["name"]] = representative_val
+        
+        # Inject the Infernal Bonus directly under the Arch Ability Card
+        if 20 in group["rows"]:
+            data["external_upgrades"]["Arch Ability Infernal Bonus"] = player.arch_ability_infernal_bonus
 
     # Ensure directory exists
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
