@@ -981,7 +981,7 @@ if __name__ == "__main__":
 
     # --- SUB-TAB: ARCH IDOLS ---
     with tab_idols:
-        st.markdown("<div style='text-align: center; margin-bottom: 20px;'><h3>🗿 Arch Idols</h3><p>Manage your Late-Game Asc1 / Asc2 Idols here.</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; margin-bottom: 20px;'><h3>🗿 Arch Idols</h3><p>Manage your Early/Late-Game Asc1 Idols here.</p></div>", unsafe_allow_html=True)
         
         if not p.asc1_unlocked:
             st.warning("🔒 Arch Idols are locked until Ascension 1.")
