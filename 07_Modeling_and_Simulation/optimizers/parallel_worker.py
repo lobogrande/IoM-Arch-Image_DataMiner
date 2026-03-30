@@ -30,6 +30,7 @@ def worker_simulate(payload):
     state = payload.get('state_dict', {})
     if state:
         p.base_stats = state.get('base_stats', {}).copy()
+        p.asc1_unlocked = state.get('asc1_unlocked', False)
         p.asc2_unlocked = state.get('asc2_unlocked', False)
         p.arch_level = state.get('arch_level', 1)
         p.current_max_floor = state.get('current_max_floor', 1)
@@ -223,6 +224,7 @@ def run_optimization_phase(phase_name, target_metric, stats_list, budget, step, 
     p_profile = Player()
     if base_state_dict:
         p_profile.base_stats = base_state_dict.get('base_stats', {}).copy()
+        p_profile.asc1_unlocked = base_state_dict.get('asc1_unlocked', False)
         p_profile.asc2_unlocked = base_state_dict.get('asc2_unlocked', False)
         p_profile.arch_level = base_state_dict.get('arch_level', 1)
         p_profile.current_max_floor = base_state_dict.get('current_max_floor', 1)

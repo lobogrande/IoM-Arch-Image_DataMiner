@@ -1689,7 +1689,8 @@ if __name__ == "__main__":
                 base_state_dict = {
                     'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                     'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                    'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                    'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 
+                    'arch_level': p.arch_level,
                     'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                     'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                     'total_infernal_cards': p.total_infernal_cards
@@ -2332,7 +2333,7 @@ You might notice that running Synthesis multiple times gives slightly different 
                                         synth_state_dict = {
                                             'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                                             'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                            'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                            'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                             'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                                             'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                                             'total_infernal_cards': p.total_infernal_cards
@@ -2793,7 +2794,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                             roi_state_dict = {
                                 'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                                 'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                 'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                                 'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                                 'total_infernal_cards': p.total_infernal_cards
@@ -2859,7 +2860,7 @@ You just used the Optimizer to find the mathematically perfect build for your *c
                                     roi_state_dict = {
                                         'base_stats': p.base_stats.copy(), 'upgrade_levels': p.upgrade_levels.copy(),
                                         'external_levels': p.external_levels.copy(), 'cards': p.cards.copy(),
-                                        'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
+                                        'asc1_unlocked': p.asc1_unlocked, 'asc2_unlocked': p.asc2_unlocked, 'arch_level': p.arch_level,
                                         'current_max_floor': p.current_max_floor, 'hades_idol_level': p.hades_idol_level,
                                         'arch_ability_infernal_bonus': p.arch_ability_infernal_bonus,
                                         'total_infernal_cards': p.total_infernal_cards
