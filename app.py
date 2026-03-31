@@ -1048,13 +1048,13 @@ if __name__ == "__main__":
             if troubleshoot_stat != "(Select a Stat...)":
                 # Hardcoded Dependency Maps based on Player.py formulas
                 TROUBLESHOOT_MAP = {
-                    "Max Stamina": {"settings":["current_max_floor"], "stats": ["Agi", "Corr"], "upgs":[3, 14, 23, 26, 28, 39, 54], "exts": ["Block Bonker Skill"], "infs":["epic3"]},
-                    "Damage": {"settings": [], "stats":["Str", "Corr", "Div"], "upgs":[9, 15, 20, 25, 32, 34, 36, 47, 49, 51, 52], "exts":["Dino Skin", "Hestia Idol"], "infs":["rare2", "div1"]},
-                    "Armor Pen": {"settings": [], "stats": ["Per", "Int"], "upgs":[10, 17, 29, 33, 36], "exts": [], "infs":["leg3", "rare3"]},
-                    "Crit Chances & Multipliers": {"settings": [], "stats":["Luck", "Div"], "upgs":[13, 18, 20, 30, 37, 40, 47, 49, 53], "exts":[], "infs":["com1", "com2", "com3", "epic2"]},
-                    "EXP & Fragment Gain": {"settings":[], "stats": ["Int", "Per", "Div"], "upgs":[4, 11, 21, 28, 35, 42, 45, 51], "exts": ["Axolotl Skin", "Geoduck Tribute"], "infs":["dirt2", "dirt3", "leg1"]},
-                    "Mod Chances & Multipliers": {"settings": [], "stats":["Luck", "Div", "Corr"], "upgs":[5, 14, 16, 23, 24, 26, 33, 35, 38, 40, 43, 44, 48, 50, 52, 53, 54, 55], "exts": ["Archaeology Bundle"], "infs":["dirt1", "rare1", "epic1", "leg2", "myth2", "myth3", "div3"]},
-                    "Abilities (Instacharge / Cooldowns)": {"settings": [], "stats": ["Int", "Div"], "upgs":[18, 22, 29, 31, 32, 39, 50], "exts":["Arch Ability Card", "Avada Keda- Skill", "Block Bonker Skill"], "infs":[]}
+                    "Max Stamina": {"settings":["current_max_floor"], "stats": ["Agi", "Corr"], "upgs":[3, 14, 23, 26, 28, 39, 54], "exts": ["Block Bonker Skill"], "infs": ["epic3"]},
+                    "Damage": {"settings": ["current_max_floor"], "stats": ["Str", "Corr", "Div"], "upgs":[9, 15, 20, 25, 32, 34, 36, 47, 49, 51, 52], "exts": ["Block Bonker Skill"], "infs":["rare2", "div1"]},
+                    "Armor Pen": {"settings": [ ], "stats":["Per", "Int"], "upgs":[10, 17, 29, 33, 36], "exts": [ ], "infs": ["leg3", "rare3"]},
+                    "Crit Chances & Multipliers": {"settings": [ ], "stats": ["Luck", "Div"], "upgs":[13, 18, 20, 30, 37, 40, 47, 49, 53], "exts": [ ], "infs":["com1", "com2", "com3", "epic2"]},
+                    "EXP & Fragment Gain": {"settings": [ ], "stats": ["Int", "Per", "Div"], "upgs":[4, 11, 21, 28, 35, 42, 45, 51], "exts":["Hestia Idol", "Axolotl Skin", "Geoduck Tribute", "Archaeology Bundle", "Ascension Bundle"], "infs": ["dirt2", "dirt3", "leg1"]},
+                    "Mod Chances & Multipliers": {"settings": [ ], "stats": ["Luck", "Div", "Corr"], "upgs":[5, 14, 16, 23, 24, 26, 33, 35, 38, 40, 43, 44, 48, 50, 52, 53, 54, 55], "exts": ["Ascension Bundle", "Block Bonker Skill"], "infs":["dirt1", "rare1", "epic1", "leg2", "myth2", "myth3", "div3"]},
+                    "Abilities (Instacharge / Cooldowns)": {"settings": [ ], "stats": ["Int", "Div"], "upgs":[18, 22, 29, 31, 32, 39, 50], "exts": ["Arch Ability Card", "Avada Keda- Skill"], "infs": [ ]}
                 }
 
                 def get_effect_str(item_type, key, val):
@@ -1072,11 +1072,16 @@ if __name__ == "__main__":
                             if key == 'Per': return f"<span style='color:gray; font-size:0.85em'>*(+{val} Flat)*</span>"
                             if key == 'Int': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Multi)*</span>"
                         elif troubleshoot_stat == "EXP & Fragment Gain":
-                            if key in['Int', 'Div']: return f"<span style='color:gray; font-size:0.85em'>*(+{val}% EXP)*</span>"
+                            if key in ['Int', 'Div']: return f"<span style='color:gray; font-size:0.85em'>*(+{val}% EXP)*</span>"
                             if key == 'Per': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Frag)*</span>"
                         elif troubleshoot_stat == "Crit Chances & Multipliers":
                             if key == 'Luck': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Crit)*</span>"
                             if key == 'Div': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Super)*</span>"
+                        elif troubleshoot_stat == "Mod Chances & Multipliers":
+                            if key == 'Luck': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% All)*</span>"
+                            if key == 'Corr': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Multis)*</span>"
+                        elif troubleshoot_stat == "Abilities (Instacharge / Cooldowns)":
+                            if key in ['Int', 'Div']: return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Insta)*</span>"
 
                     if item_type == 'upg':
                         if troubleshoot_stat == "Max Stamina":
@@ -1085,7 +1090,7 @@ if __name__ == "__main__":
                         elif troubleshoot_stat == "Damage":
                             flat = {9: 1, 15: 2, 20: 5, 25: 25, 32: 50, 49: 500}
                             multi = {25: 2.5, 36: 1, 47: 1, 51: 5, 52: 1}
-                            res =[]
+                            res = [ ]
                             if key in flat: res.append(f"+{val * flat[key]} Flat")
                             if key in multi: res.append(f"+{val * multi[key]}% Multi")
                             if res: return f"<span style='color:gray; font-size:0.85em'>*({' & '.join(res)})*</span>"
@@ -1095,18 +1100,39 @@ if __name__ == "__main__":
                         elif troubleshoot_stat == "EXP & Fragment Gain":
                             exp = {4: 1, 11: 2, 21: 5, 28: 10, 35: 25, 45: 50, 51: 50}
                             frag = {21: 1, 42: 10}
-                            res =[]
+                            res = [ ]
                             if key in exp: res.append(f"+{val * exp[key]}% EXP")
                             if key in frag: res.append(f"+{val * frag[key]}% Frag")
                             if res: return f"<span style='color:gray; font-size:0.85em'>*({' & '.join(res)})*</span>"
+                        elif troubleshoot_stat == "Crit Chances & Multipliers":
+                            flat = {13: 1, 18: 1, 20: 1, 30: 1, 37: 1, 40: 1, 47: 1, 49: 1, 53: 1}
+                            if key in flat: return f"<span style='color:gray; font-size:0.85em'>*(+{val * flat[key]}% / x)*</span>"
+                        elif troubleshoot_stat == "Mod Chances & Multipliers":
+                            return f"<span style='color:gray; font-size:0.85em'>*(+Scaling)*</span>"
 
                     if item_type == 'ext':
                         if troubleshoot_stat == "Max Stamina" and key == "Block Bonker Skill":
-                            return f"<span style='color:gray; font-size:0.85em'>*(+{min(int(p.current_max_floor), 100)}% Multi)*</span>"
-                        elif troubleshoot_stat == "Damage" and key == "Dino Skin":
-                            return f"<span style='color:gray; font-size:0.85em'>*(+{val * 5}% Multi)*</span>"
-                        elif troubleshoot_stat == "EXP & Fragment Gain" and key == "Axolotl Skin":
-                            return f"<span style='color:gray; font-size:0.85em'>*(+{val * 5}% Multi)*</span>"
+                            return f"<span style='color:gray; font-size:0.85em'>*(+{val * min(int(p.current_max_floor), 100)}% Multi)*</span>"
+                        elif troubleshoot_stat == "Damage" and key == "Block Bonker Skill":
+                            return f"<span style='color:gray; font-size:0.85em'>*(+{val * min(int(p.current_max_floor), 100)}% Multi)*</span>"
+                        elif troubleshoot_stat == "EXP & Fragment Gain":
+                            if key == "Hestia Idol": return f"<span style='color:gray; font-size:0.85em'>*(+{(val * 0.01):.2f}% Frag Multi)*</span>"
+                            if key == "Axolotl Skin": return f"<span style='color:gray; font-size:0.85em'>*(+{(val + 1) * 3}% Frag Multi)*</span>"
+                            if key == "Geoduck Tribute":
+                                cap = 75.0 if p.asc2_unlocked else 50.0
+                                return f"<span style='color:gray; font-size:0.85em'>*(+{min(val * 0.25, cap):.2f}% Frag Multi)*</span>"
+                            if key == "Archaeology Bundle" and val == 1: return f"<span style='color:gray; font-size:0.85em'>*(+25% Frag Multi)*</span>"
+                            if key == "Ascension Bundle" and val == 1: return f"<span style='color:gray; font-size:0.85em'>*(+15% EXP Multi)*</span>"
+                        elif troubleshoot_stat == "Mod Chances & Multipliers":
+                            if key == "Ascension Bundle" and val == 1: return f"<span style='color:gray; font-size:0.85em'>*(+2% Loot Mod Chance)*</span>"
+                            if key == "Block Bonker Skill": return f"<span style='color:gray; font-size:0.85em'>*(+{val * 15} Flat Speed Mod Gain)*</span>"
+                        elif troubleshoot_stat == "Abilities (Instacharge / Cooldowns)":
+                            if key == "Arch Ability Card":
+                                if val == 1: return "<span style='color:gray; font-size:0.85em'>*(-3% CD)*</span>"
+                                if val == 2: return "<span style='color:gray; font-size:0.85em'>*(-6% CD)*</span>"
+                                if val == 3: return "<span style='color:gray; font-size:0.85em'>*(-10% CD)*</span>"
+                                if val == 4: return f"<span style='color:gray; font-size:0.85em'>*({p.arch_ability_infernal_bonus * 100:.2f}% CD)*</span>"
+                            if key == "Avada Keda- Skill" and val == 1: return "<span style='color:gray; font-size:0.85em'>*(+5 Charges, -10s CD, +3% Insta)*</span>"
 
                     return ""
 
