@@ -3147,7 +3147,7 @@ if __name__ == "__main__":
                                         axis=1
                                     )
                                     
-                                    cols_to_drop =['Include', 'Target', 'Metric Score', '_global_idx'] 
+                                    cols_to_drop =['Include', 'Target', 'Metric Score', '_global_idx', '_restore_state'] 
                                     source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
                                     
                                     # Reorder to put the new score column at the front
