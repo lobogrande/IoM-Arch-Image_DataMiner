@@ -1,7 +1,7 @@
 # ==============================================================================
 # Script: core/player.py
 # Version: 3.0.0 (Modular Architecture)
-# Description: Pure mathematical engine for the Player. Takes base stats and 
+# Description: Pure mathematical engine for the Player. Takes base stats and
 #              upgrades, and dynamically calculates all combat and reward properties.
 # ==============================================================================
 
@@ -12,6 +12,7 @@ class Player:
         3:  ("Gem Stamina", 2.0, 0.0005),
         4:  ("Gem Exp", 0.05, 0.0005),
         5:  ("Gem Loot", 0.02, 0.0005),
+        8:  ("Unlock New Ability", 1.0, None),
         9:  ("Flat Damage", 1.0, None),
         10: ("Armor Pen.", 1.0, None),
         11: ("Exp. Gain", 0.02, None),
@@ -20,9 +21,9 @@ class Player:
         14: ("Max Sta/Sta Mod Chance", 2.0, 0.0005),
         15: ("Flat Damage", 2.0, None),
         16: ("Loot Mod Gain", 0.3, None),
-        17: ("Unlock Fairy/Armor Pen", 3.0, None), 
+        17: ("Unlock Fairy/Armor Pen", 3.0, None),
         18: ("Enrage&Crit Dmg/Enrage Cooldown", 0.02, -1.0),
-        19: ("Gleaming Floor Chance", 0.001, None), 
+        19: ("Gleaming Floor Chance", 0.001, None),
         20: ("Flat Dmg/Super Crit Chance", 2.0, 0.0035),
         21: ("Exp Gain/Fragment Gain", 0.03, 0.02),
         22: ("Flurry Sta Gain/Flurr Cooldown", 1.0, -1.0),
@@ -37,7 +38,7 @@ class Player:
         31: ("Quake Atks/Cooldown", 1.0, -2.0),
         32: ("Flat Dmg/Enrage Cooldown", 3.0, -1.0),
         33: ("Mod Chance/Armor Pen", 0.0001, 1.0),
-        34: ("Buff Divinity[Div Stats Up]", 0.2, None), 
+        34: ("Buff Divinity[Div Stats Up]", 0.2, None),
         35: ("Exp Gain/Mod Ch.", 0.01, 0.0001),
         36: ("Damage Up/Armor Pen", 0.02, 3.0),
         37: ("Super Crit/Ultra Crit Chance", 0.0035, 0.01),
@@ -49,16 +50,16 @@ class Player:
         43: ("Sta Mod Gain", 2.0, None),
         44: ("All Mod Chances", 0.015, None),
         45: ("Exp Gain/All Stat Cap Inc.", 2.0, 5.0),
-        46: ("Gleaming Floor Multi", 0.03, None), 
+        46: ("Gleaming Floor Multi", 0.03, None),
         47: ("Damage Up/Crit Dmg Up", 0.01, 0.01),
         48: ("Gold Crosshair Chance/Auto-Tap Chance", 0.01, 0.01),
         49: ("Flat Dmg/Ultra Crit Chance", 3.0, 0.005),
         50: ("Ability Insta Chance/Sta Mod Chance", 0.001, 0.001),
         51: ("Dmg Up/Exp Gain", 0.1, 0.1),
-        52: ("[Corruption Buff] Dmg Up / Mod Multi Up", 0.002, 0.0002), 
+        52: ("[Corruption Buff] Dmg Up / Mod Multi Up", 0.002, 0.0002),
         53: ("Super Crit Dmg/Exp Mod Gain", 0.005, 0.02),
         54: ("Max Sta/Crosshair Auto-Tap Chance", 0.005, 0.002),
-        55: ("All Mod Multipliers", 0.02, None) 
+        55: ("All Mod Multipliers", 0.02, None)
     }
 
     EXTERNAL_DEF = {
@@ -83,15 +84,15 @@ class Player:
 
     def __init__(self):
         self.asc1_unlocked = False
-        self.asc2_unlocked = False     
-        self.arch_level = 1            
-        self.current_max_floor = 100   
-        self.base_damage_const = 10    
-        
+        self.asc2_unlocked = False
+        self.arch_level = 1
+        self.current_max_floor = 100
+        self.base_damage_const = 10
+
         self.hades_idol_level = 0
         self.total_infernal_cards = 0
-        self.arch_ability_infernal_bonus = 0.0 
-        
+        self.arch_ability_infernal_bonus = 0.0
+
         self.base_stats = {
             'Str': 0, 'Agi': 0, 'Per': 0, 'Int': 0, 'Luck': 0, 'Div': 0, 'Corr': 0
         }
@@ -100,7 +101,7 @@ class Player:
         self.upgrades = {}
         self.external_levels = {}
         self.external = {}
-        
+
         for row in self.UPGRADE_DEF.keys(): self.set_upgrade_level(row, 0)
         for row in self.EXTERNAL_DEF.keys(): self.set_external_level(row, 0)
         self._init_cards()
@@ -148,14 +149,14 @@ class Player:
         elif row == 17: w['W17'] = lvl * 0.05
         elif row == 18: w['W18'] = lvl * 0.02
         elif row == 19: w['W19'] = lvl * 0.02
-        elif row == 20: 
+        elif row == 20:
             if lvl == 0:   w['W20'] = 0.0
             elif lvl == 1: w['W20'] = -0.03
             elif lvl == 2: w['W20'] = -0.06
             elif lvl == 3: w['W20'] = -0.10
             elif lvl == 4: w['W20'] = self.arch_ability_infernal_bonus
 
-    def u(self, cell): 
+    def u(self, cell):
         if not self.asc1_unlocked:
             locked_rows =[12, 17, 24, 32, 40, 47, 48, 49, 50, 51, 53, 54]
             try:
@@ -168,13 +169,13 @@ class Player:
             except ValueError: pass
         return self.upgrades.get(cell, 0.0)
 
-    def w(self, cell, default=0.0): 
-        if cell == 'W4' and not self.asc1_unlocked: return 0.0 
+    def w(self, cell, default=0.0):
+        if cell == 'W4' and not self.asc1_unlocked: return 0.0
         if cell == 'W8':
             cap = 0.75 if self.asc2_unlocked else 0.50
             return min(cap, self.external.get('W8_raw', 0.0))
         return self.external.get(cell, default)
-    
+
     def stat(self, stat_name):
         if not self.asc1_unlocked and stat_name == 'Div': return 0.0
         if not self.asc2_unlocked and stat_name == 'Corr': return 0.0
@@ -194,12 +195,12 @@ class Player:
         if lvl == 1: hp_mult, exp_mult, loot_mult = 0.90, 1.10, 1.10
         elif lvl == 2: hp_mult, exp_mult, loot_mult = 0.80, 1.20, 1.20
         elif lvl >= 3:
-            poly_bonus = 0.35 + self.u('F41') 
+            poly_bonus = 0.35 + self.u('F41')
             hp_mult, exp_mult, loot_mult = 1.0 - poly_bonus, 1.0 + poly_bonus, 1.0 + poly_bonus
         return hp_mult, exp_mult, loot_mult
 
     @property
-    def arch_infernal_cards(self): 
+    def arch_infernal_cards(self):
         if not self.asc1_unlocked: return 0
         return sum(1 for lvl in self.cards.values() if lvl == 4)
     @property
@@ -231,10 +232,10 @@ class Player:
         base_calc = 100 + self.u('F14') + self.u('F23') + self.u('H39') + self.u('F3')
         stat_calc = self.stat('Agi') * (5 + self.u('F26'))
         asc2_calc = (1 + self.u('H28') + self.u('F54')) * (1 - 0.03 * self.stat('Corr'))
-        
+
         # PROPER BLOCK BONKER BINDING (W13)
         bb_mult = 1.0 + (self.w('W13') * min(100, self.current_max_floor))
-        
+
         val = (base_calc + stat_calc) * asc2_calc * bb_mult * (1.0 + self.inf('epic3'))
         return self._excel_round(val, 0)
 
@@ -245,10 +246,10 @@ class Player:
         stat_calc2 = self.stat('Div') * (2 + self.u('F34'))
         mult1 = 1 + self.u('F51') + self.u('F36') + (self.stat('Str') * (0.01 + self.u('F47') + self.u('H25'))) + self.inf('div1')
         mult2 = (0.06 + self.u('F52')) * self.stat('Corr')
-        
+
         # PROPER BLOCK BONKER BINDING (W12)
         bb_mult = 1.0 + (self.w('W12') * min(100, self.current_max_floor))
-        
+
         val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2) * bb_mult
         return self._excel_round(val, 0)
 
@@ -261,22 +262,22 @@ class Player:
         mult1 = 1 + self.u('F51') + self.u('F36') + (self.stat('Str') * (0.01 + self.u('F47') + self.u('H25'))) + self.inf('div1')
         mult2 = (0.06 + self.u('F52')) * self.stat('Corr')
         enrage_mult = 0.2 + self.u('F18')
-        
+
         # PROPER BLOCK BONKER BINDING (W12)
         bb_mult = 1.0 + (self.w('W12') * min(100, self.current_max_floor))
-        
+
         val = (base_calc + stat_calc1 + stat_calc2 + self.base_damage_const) * (mult1 + mult2 + enrage_mult) * bb_mult
         return self._excel_round(val, 0)
-    
+
     @property
     def armor_pen(self):
         stat_calc = self.stat('Per') * (2 + self.u('H33'))
         base_ap = self.u('F10') + self.u('F17') + self.u('H36') + stat_calc + self.inf('leg3')
-        
+
         # Percentage buffs from different menus apply multiplicatively
         upg_mult = 1.0 + (0.03 * self.stat('Int')) + self.u('F29')
         card_mult = 1.0 + self.inf('rare3')
-        
+
         # FIX: C# Integer casting truncates (floors) rather than rounding
         return self._excel_floor(base_ap * upg_mult * card_mult, 0)
 
@@ -288,7 +289,7 @@ class Player:
     @property
     def crit_dmg_mult(self): return self._excel_floor(1.5 * (1.0 + self.u('H13') + self.u('F30') + self.inf('com1') + (0.03 + self.u('H47')) * self.stat('Str')), 2)
     @property
-    def enraged_crit_dmg_mult(self): 
+    def enraged_crit_dmg_mult(self):
         # The 1.0 + F18 (130% at max) is injected directly inside the 1.5 * (...) equation
         enrage_crit_bonus = 1.0 + self.u('F18')
         return self._excel_floor(1.5 * (1.0 + enrage_crit_bonus + self.u('H13') + self.u('F30') + self.inf('com1') + (0.03 + self.u('H47')) * self.stat('Str')), 2)
@@ -336,7 +337,7 @@ class Player:
     @property
     def speed_mod_chance(self): return self.u('F24') + self.u('F44') + (0.003 * self.stat('Agi')) + (0.002 * self.stat('Luck'))
     @property
-    def speed_mod_gain(self): 
+    def speed_mod_gain(self):
         # PROPER BLOCK BONKER BINDING (W14)
         base_val = (10.0 + (15.0 * self.w('W14'))) * (1.0 + self.u('F55') + self.stat('Corr') * (0.01 + self.u('H52')))
         return self._excel_round(base_val, 0)
@@ -355,31 +356,31 @@ class Player:
     @property
     def enrage_charges(self): return 5 + self.w('W9')
     @property
-    def enrage_cooldown(self): 
+    def enrage_cooldown(self):
         val = (60 + self.u('H18') + self.u('H29') + self.u('H32') + self.w('W10')) * (1 + self.w('W20'))
         return self._excel_round(val, 0)
-        
+
     @property
     def enrage_bonus_dmg(self): return 0.2 + self.u('F18')
     @property
     def enrage_bonus_crit_dmg(self): return 1.0 + self.u('F18')
-    
+
     @property
     def flurry_duration(self): return 5 + self.w('W9')
     @property
-    def flurry_cooldown(self): 
+    def flurry_cooldown(self):
         val = (115 + self.u('H22') + self.u('H29') + self.w('W10')) * (1 + self.w('W20'))
         return self._excel_round(val, 0)
-        
+
     @property
     def flurry_bonus_atk_spd(self): return 1.0
     @property
     def flurry_sta_on_cast(self): return 5 + self.u('F22')
-    
+
     @property
     def quake_attacks(self): return 5 + self.u('F31') + self.w('W9')
     @property
-    def quake_cooldown(self): 
+    def quake_cooldown(self):
         val = (175 + self.u('H29') + self.u('H31') + self.w('W10')) * (1 + self.w('W20'))
         return self._excel_round(val, 0)
     @property
