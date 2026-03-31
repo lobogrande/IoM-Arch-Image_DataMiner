@@ -52,51 +52,54 @@ class SkillManager:
 
         insta_chance = self.player.ability_insta_charge
         
-        # 2. Auto-Cast: Enrage
+        # 2. Auto-Cast: Enrage (Requires Upgrade 8 >= 1)
         chain = 0
-        while self.enrage_cd <= 0 and chain < 100:
-            self.enrage_charges += self.player.enrage_charges # FIX: += instead of =
-            self.enrage_cd = self.player.enrage_cooldown
-            self.total_enrage_casts += 1
-            
-            # Roll for Ability Instacharge (Independent probabilities naturally cascade/decrease)
-            if random.random() < insta_chance:
-                self.enrage_cd = 0.0
-                self.total_instacharges += 1
-                chain += 1
-            else:
-                break
+        if self.player.upgrade_levels.get(8, 0) >= 1:
+            while self.enrage_cd <= 0 and chain < 100:
+                self.enrage_charges += self.player.enrage_charges # FIX: += instead of =
+                self.enrage_cd = self.player.enrage_cooldown
+                self.total_enrage_casts += 1
+                
+                # Roll for Ability Instacharge (Independent probabilities naturally cascade/decrease)
+                if random.random() < insta_chance:
+                    self.enrage_cd = 0.0
+                    self.total_instacharges += 1
+                    chain += 1
+                else:
+                    break
 
-        # 3. Auto-Cast: Flurry
+        # 3. Auto-Cast: Flurry (Requires Upgrade 8 >= 2)
         chain = 0
-        while self.flurry_cd <= 0 and chain < 100:
-            self.flurry_timer += self.player.flurry_duration # FIX: += instead of =
-            self.flurry_cd = self.player.flurry_cooldown
-            self.total_flurry_casts += 1
-            
-            # Flurry grants flat stamina on cast
-            events["stamina_restored"] += self.player.flurry_sta_on_cast
-            
-            if random.random() < insta_chance:
-                self.flurry_cd = 0.0
-                self.total_instacharges += 1
-                chain += 1
-            else:
-                break
+        if self.player.upgrade_levels.get(8, 0) >= 2:
+            while self.flurry_cd <= 0 and chain < 100:
+                self.flurry_timer += self.player.flurry_duration # FIX: += instead of =
+                self.flurry_cd = self.player.flurry_cooldown
+                self.total_flurry_casts += 1
+                
+                # Flurry grants flat stamina on cast
+                events["stamina_restored"] += self.player.flurry_sta_on_cast
+                
+                if random.random() < insta_chance:
+                    self.flurry_cd = 0.0
+                    self.total_instacharges += 1
+                    chain += 1
+                else:
+                    break
 
-        # 4. Auto-Cast: Quake
+        # 4. Auto-Cast: Quake (Requires Upgrade 8 >= 3)
         chain = 0
-        while self.quake_cd <= 0 and chain < 100:
-            self.quake_charges += self.player.quake_attacks # FIX: += instead of =
-            self.quake_cd = self.player.quake_cooldown
-            self.total_quake_casts += 1
-            
-            if random.random() < insta_chance:
-                self.quake_cd = 0.0
-                self.total_instacharges += 1
-                chain += 1
-            else:
-                break
+        if self.player.upgrade_levels.get(8, 0) >= 3:
+            while self.quake_cd <= 0 and chain < 100:
+                self.quake_charges += self.player.quake_attacks # FIX: += instead of =
+                self.quake_cd = self.player.quake_cooldown
+                self.total_quake_casts += 1
+                
+                if random.random() < insta_chance:
+                    self.quake_cd = 0.0
+                    self.total_instacharges += 1
+                    chain += 1
+                else:
+                    break
 
         return events
 
