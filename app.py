@@ -1041,21 +1041,35 @@ if __name__ == "__main__":
             st.markdown("If a stat in the UI is **higher** than your game, you likely entered an upgrade level too high, allocated too many base stats, or forgot to account for an unequipped pet/skin. Select a mismatched stat below to pull up your **exact current inputs** for that formula:")
 
             troubleshoot_stat = st.selectbox(
-                "Select mismatched stat:",["(Select a Stat...)", "Damage", "Armor Pen", "Max Stamina", "Crit Chances & Multipliers", "EXP & Fragment Gain", "Mod Chances & Multipliers", "Abilities (Instacharge / Cooldowns)"],
+                "Select mismatched stat:",["(Select a Stat...)", "Max Stamina", "Damage", "Armor Pen", "Crit Chances & Multipliers", "EXP & Fragment Gain", "Mod Chances & Multipliers", "Abilities (Instacharge / Cooldowns)"],
                 label_visibility="collapsed"
             )
 
             if troubleshoot_stat != "(Select a Stat...)":
                 # Hardcoded Dependency Maps based on Player.py formulas
                 TROUBLESHOOT_MAP = {
-                    "Damage": {"stats":["Str", "Corr", "Div"], "upgs":[9, 15, 20, 25, 32, 34, 36, 47, 49, 51, 52], "exts":["Dino Skin", "Hestia Idol"], "infs":["rare2", "div1"]},
-                    "Armor Pen": {"stats": ["Per", "Int"], "upgs":[10, 17, 29, 33, 36], "exts": [], "infs":["leg3", "rare3"]},
-                    "Max Stamina": {"stats": ["Agi", "Corr"], "upgs":[3, 14, 23, 26, 28, 39, 54], "exts": [], "infs":["epic3"]},
-                    "Crit Chances & Multipliers": {"stats":["Luck", "Div"], "upgs":[13, 18, 20, 30, 37, 40, 47, 49, 53], "exts":[], "infs":["com1", "com2", "com3", "epic2"]},
-                    "EXP & Fragment Gain": {"stats": ["Int", "Per", "Div"], "upgs":[4, 11, 21, 28, 35, 42, 45, 51], "exts": ["Axolotl Skin", "Geoduck Tribute"], "infs":["dirt2", "dirt3", "leg1"]},
-                    "Mod Chances & Multipliers": {"stats":["Luck", "Div", "Corr"], "upgs":[5, 14, 16, 23, 24, 26, 33, 35, 38, 40, 43, 44, 48, 50, 52, 53, 54, 55], "exts": ["Archaeology Bundle"], "infs":["dirt1", "rare1", "epic1", "leg2", "myth2", "myth3", "div3"]},
-                    "Abilities (Instacharge / Cooldowns)": {"stats": ["Int", "Div"], "upgs":[18, 22, 29, 31, 32, 39, 50], "exts":["Arch Ability Card", "Avada Keda- Skill", "Block Bonker Skill"], "infs":[]}
+                    "Max Stamina": {"settings":["current_max_floor"], "stats": ["Agi", "Corr"], "upgs":[3, 14, 23, 26, 28, 39, 54], "exts": ["Block Bonker Skill"], "infs":["epic3"]},
+                    "Damage": {"settings": [], "stats":["Str", "Corr", "Div"], "upgs":[9, 15, 20, 25, 32, 34, 36, 47, 49, 51, 52], "exts":["Dino Skin", "Hestia Idol"], "infs":["rare2", "div1"]},
+                    "Armor Pen": {"settings": [], "stats": ["Per", "Int"], "upgs":[10, 17, 29, 33, 36], "exts": [], "infs":["leg3", "rare3"]},
+                    "Crit Chances & Multipliers": {"settings": [], "stats":["Luck", "Div"], "upgs":[13, 18, 20, 30, 37, 40, 47, 49, 53], "exts":[], "infs":["com1", "com2", "com3", "epic2"]},
+                    "EXP & Fragment Gain": {"settings":[], "stats": ["Int", "Per", "Div"], "upgs":[4, 11, 21, 28, 35, 42, 45, 51], "exts": ["Axolotl Skin", "Geoduck Tribute"], "infs":["dirt2", "dirt3", "leg1"]},
+                    "Mod Chances & Multipliers": {"settings": [], "stats":["Luck", "Div", "Corr"], "upgs":[5, 14, 16, 23, 24, 26, 33, 35, 38, 40, 43, 44, 48, 50, 52, 53, 54, 55], "exts": ["Archaeology Bundle"], "infs":["dirt1", "rare1", "epic1", "leg2", "myth2", "myth3", "div3"]},
+                    "Abilities (Instacharge / Cooldowns)": {"settings": [], "stats": ["Int", "Div"], "upgs":[18, 22, 29, 31, 32, 39, 50], "exts":["Arch Ability Card", "Avada Keda- Skill", "Block Bonker Skill"], "infs":[]}
                 }
+
+                def get_effect_str(item_type, key, val):
+                    if val == 0: return ""
+                    if item_type == 'stat' and key == 'Agi' and troubleshoot_stat == "Max Stamina": return f"<span style='color:gray; font-size:0.85em'>*(+{val} Flat)*</span>"
+                    if item_type == 'stat' and key == 'Corr' and troubleshoot_stat == "Max Stamina": return f"<span style='color:gray; font-size:0.85em'>*(-{val}% Multi)*</span>"
+
+                    if item_type == 'upg' and troubleshoot_stat == "Max Stamina":
+                        mults = {3: 5, 14: 5, 23: 5, 26: 10, 28: 20, 39: 20, 54: 50}
+                        if key in mults: return f"<span style='color:gray; font-size:0.85em'>*(+{val * mults[key]} Flat)*</span>"
+
+                    if item_type == 'ext' and key == "Block Bonker Skill" and troubleshoot_stat == "Max Stamina":
+                        return f"<span style='color:gray; font-size:0.85em'>*(+{min(int(p.current_max_floor), 100)}% Multi)*</span>"
+
+                    return ""
 
                 data = TROUBLESHOOT_MAP[troubleshoot_stat]
 
