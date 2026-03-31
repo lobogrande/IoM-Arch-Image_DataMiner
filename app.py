@@ -3147,7 +3147,7 @@ if __name__ == "__main__":
                                         axis=1
                                     )
                                     
-                                    cols_to_drop =['Include', 'Target', 'Metric Score', '_global_idx'] 
+                                    cols_to_drop =['Include', 'Target', 'Metric Score', '_global_idx', '_restore_state'] 
                                     source_df = source_df.drop(columns=[c for c in cols_to_drop if c in source_df.columns])
                                     
                                     # Reorder to put the new score column at the front
@@ -3182,62 +3182,52 @@ if __name__ == "__main__":
     with tab_about:
         st.header("📚 About & Feedback")
         
-        col_abt_1, col_abt_2 = st.columns([1, 1])
+        # 1.3 to 1 ratio gives the architecture graph on the left more room to breathe!
+        col_abt_1, col_abt_2 = st.columns([1.3, 1])
         
         with col_abt_1:
-            # --- FEEDBACK FORM (DISCORD WEBHOOK) ---
-            with st.form("feedback_form", border=True):
-                st.markdown("#### 🐛 Submit Feedback")
-                st.write("Found a bug? Have a feature request? Submit it directly to my developer dashboard here!")
-                
-                fb_type = st.selectbox("Type",["Bug Report", "Feature Request", "UI/UX Suggestion", "General Feedback"])
-                fb_text = st.text_area("Details", placeholder="Describe the issue or feature in detail...", height=150)
-                fb_contact = st.text_input("Discord Username (Optional)", placeholder="So I can follow up with you if needed")
-                
-                submitted = st.form_submit_button("📤 Send Feedback", use_container_width=True, type="primary")
-                
-                if submitted:
-                    if not fb_text.strip():
-                        st.error("⚠️ Feedback details cannot be empty!")
-                    else:
-                        # Fetch the webhook URL securely from the Streamlit Cloud / local secrets
-                        webhook_url = st.secrets.get("DISCORD_WEBHOOK", None)
-                        
-                        if webhook_url:
-                            payload = {
-                                "embeds":[{
-                                    "title": f"🚨 New {fb_type}",
-                                    "color": 16753920 if "Bug" in fb_type else 5025616, # Orange for bug, Green otherwise
-                                    "fields":[
-                                        {"name": "User", "value": fb_contact if fb_contact else "Anonymous", "inline": True},
-                                        {"name": "Details", "value": fb_text, "inline": False}
-                                    ],
-                                    "footer": {"text": "IoM Arch Optimizer Engine"}
-                                }]
-                            }
-                            try:
-                                response = requests.post(webhook_url, json=payload)
-                                if response.status_code in[200, 204]:
-                                    st.success("✅ Feedback successfully sent! Thank you.")
-                                else:
-                                    st.error(f"❌ Failed to send feedback (HTTP {response.status_code}).")
-                            except Exception as e:
-                                st.error(f"❌ Network error: {e}")
-                        else:
-                            st.info("ℹ️ **Developer Note:** The `DISCORD_WEBHOOK` URL is not configured in `.streamlit/secrets.toml` yet. Your feedback was caught locally, but not broadcasted.")
-                            st.write(f"**Caught Data:** {fb_type} - {fb_text}")
-
             # --- RESOURCES ---
             with st.container(border=True):
                 st.markdown("#### ⚙️ How the Engine Works")
-                st.markdown("""
-                This app runs a **Python Multiprocessing Engine** to emulate the exact C# source code math of the live game.
-                * It uses **Monte Carlo Simulation** to rapidly 'play' the game hundreds of times in the background.
-                * It uses a **Successive Halving** algorithm (3-Phase Zoom) to narrow down the perfect stat distribution.
-                * To handle hardware limits, it dynamically auto-scales its workload based on your OS (`fork` on Linux vs `spawn` on Windows/Mac).
-                """)
+                st.markdown("This app runs a **Python Multiprocessing Engine** to emulate the exact C# source code math of the live game. It uses **Monte Carlo Simulations** combined with a **3-Phase Successive Halving** algorithm to narrow down the perfect stat distribution.")
+                
+                # --- NATIVE GRAPHVIZ ARCHITECTURE DIAGRAM ---
+                engine_graph = """
+                digraph G {
+                    rankdir=LR;
+                    bgcolor="transparent";
+                    node[shape=box, style="rounded,filled", fontname="sans-serif", fillcolor="#2b2b2b", color="#ffa229", fontcolor="white"];
+                    edge[color="#ffa229", fontname="sans-serif", fontcolor="gray"];
+                    
+                    UI[label="Layer 5\\nWeb UI"];
+                    Pool[label="Auto-Scaling\\nWorker Pool", shape=cylinder];
+                    
+                    subgraph cluster_ai {
+                        label = "3-Phase Successive Halving";
+                        color = "#4CAF50"; fontcolor = "#4CAF50"; fontname = "sans-serif"; style="rounded,dashed";
+                        P1[label="Phase 1\\n(Coarse Net)"];
+                        P2[label="Phase 2\\n(Fine Zoom)"];
+                        P3 [label="Phase 3\\n(Exact Math)"];
+                        P1 -> P2 -> P3;
+                    }
+                    
+                    Engine[label="Micro-Tick Combat Engine\\n(1:1 C# Translation)"];
+                    Results[label="Dashboard\\n(Telemetry)", fillcolor="#4CAF50", color="white", fontcolor="white"];
+                    
+                    UI -> Pool;
+                    Pool -> P1;
+                    P3 -> Engine[label=" 500-Run\\nTie-Breakers"];
+                    Engine -> Results;
+                }
+                """
+                st.graphviz_chart(engine_graph, use_container_width=True)
+                
+            # --- OPEN SOURCE INFO ---
+            with st.container(border=True):
+                st.markdown("#### 📂 Source Code & Documentation")
+                st.write("This engine is completely open-source. You can view the raw mathematical architecture, the C# logic translations, and the complete Readme on GitHub.")
+                st.link_button("🔗 View GitHub Repository", "https://github.com/lobogrande/IoM-Arch-Image_DataMiner", use_container_width=True)
 
-        with col_abt_2:
             # --- WALL OF FAME ---
             with st.container(border=True):
                 st.markdown("#### 🏆 Beta Testers Wall of Fame")
@@ -3245,7 +3235,6 @@ if __name__ == "__main__":
                 
                 st.divider()
                 
-                # Easily add/remove names from this list!
                 testers =[
                     "Sans",
                     "Doctorcool",
@@ -3256,17 +3245,64 @@ if __name__ == "__main__":
                     "Koksuone"
                 ]
                 
-                # Render names in a nice compact 2-column grid
                 t_col1, t_col2 = st.columns(2)
                 for i, tester in enumerate(testers):
                     target_col = t_col1 if i % 2 == 0 else t_col2
                     target_col.markdown(f"⭐ **{tester}**")
 
-            # --- OPEN SOURCE INFO ---
-            with st.container(border=True):
-                st.markdown("#### 📂 Source Code & Updates")
-                st.write("Once the engine is fully validated and hits Phase 3, the complete source code and mathematical documentation will be made publicly available.")
-                st.button("🔗 View GitHub Repository", disabled=True, use_container_width=True, help="Link will be active upon public V1.0 Launch!")
+        with col_abt_2:
+            # --- FEEDBACK FORM (DISCORD WEBHOOK) ---
+            with st.form("feedback_form", border=True):
+                st.markdown("#### 🐛 Submit Feedback")
+                st.write("Found a bug? Have a feature request? Submit it directly to my developer dashboard here!")
+                
+                fb_type = st.selectbox("Type",["Bug Report", "Feature Request", "UI/UX Suggestion", "General Feedback"])
+                fb_text = st.text_area("Details", placeholder="Describe the issue or feature in detail...", height=150)
+                fb_contact = st.text_input("Discord Username (Optional)", placeholder="So I can follow up with you if needed")
+                
+                # New multi-file uploader for JSON states and screenshots
+                fb_files = st.file_uploader("Attachments (Optional)", type=["png", "jpg", "jpeg", "json"], accept_multiple_files=True, help="Attach a screenshot or your player_state.json file to help me reproduce the issue!")
+                
+                submitted = st.form_submit_button("📤 Send Feedback", use_container_width=True, type="primary")
+                
+                if submitted:
+                    if not fb_text.strip():
+                        st.error("⚠️ Feedback details cannot be empty!")
+                    else:
+                        webhook_url = st.secrets.get("DISCORD_WEBHOOK", None)
+                        
+                        if webhook_url:
+                            payload = {
+                                "embeds":[{
+                                    "title": f"🚨 New {fb_type}",
+                                    "color": 16753920 if "Bug" in fb_type else 5025616, 
+                                    "fields":[
+                                        {"name": "User", "value": fb_contact if fb_contact else "Anonymous", "inline": True},
+                                        {"name": "Details", "value": fb_text, "inline": False}
+                                    ],
+                                    "footer": {"text": "IoM Arch Optimizer Engine"}
+                                }]
+                            }
+                            try:
+                                if fb_files:
+                                    # Discord requires multipart/form-data when mixing JSON embeds and physical files
+                                    files_dict = {}
+                                    for i, f in enumerate(fb_files):
+                                        files_dict[f"file[{i}]"] = (f.name, f.getvalue(), f.type)
+                                    response = requests.post(webhook_url, data={"payload_json": json.dumps(payload)}, files=files_dict)
+                                else:
+                                    # Standard simple JSON payload if no files are attached
+                                    response = requests.post(webhook_url, json=payload)
+                                    
+                                if response.status_code in [200, 204]:
+                                    st.success("✅ Feedback successfully sent! Thank you.")
+                                else:
+                                    st.error(f"❌ Failed to send feedback (HTTP {response.status_code}).")
+                            except Exception as e:
+                                st.error(f"❌ Network error: {e}")
+                        else:
+                            st.info("ℹ️ **Developer Note:** The `DISCORD_WEBHOOK` URL is not configured in `.streamlit/secrets.toml` yet. Your feedback was caught locally, but not broadcasted.")
+                            st.write(f"**Caught Data:** {fb_type} - {fb_text}")
 
     # --- GLOBAL FLOATING NAVIGATION ---
     st.markdown('<a href="#top-of-tabs" class="back-to-top">⬆️ Back to Tabs</a>', unsafe_allow_html=True)
