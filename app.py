@@ -3230,12 +3230,38 @@ if __name__ == "__main__":
             # --- RESOURCES ---
             with st.container(border=True):
                 st.markdown("#### ⚙️ How the Engine Works")
-                st.markdown("""
-                This app runs a **Python Multiprocessing Engine** to emulate the exact C# source code math of the live game.
-                * It uses **Monte Carlo Simulation** to rapidly 'play' the game hundreds of times in the background.
-                * It uses a **Successive Halving** algorithm (3-Phase Zoom) to narrow down the perfect stat distribution.
-                * To handle hardware limits, it dynamically auto-scales its workload based on your OS (`fork` on Linux vs `spawn` on Windows/Mac).
-                """)
+                st.markdown("This app runs a **Python Multiprocessing Engine** to emulate the exact C# source code math of the live game. It uses **Monte Carlo Simulations** combined with a **3-Phase Successive Halving** algorithm to narrow down the perfect stat distribution.")
+                
+                # --- NATIVE GRAPHVIZ ARCHITECTURE DIAGRAM ---
+                engine_graph = """
+                digraph G {
+                    rankdir=LR;
+                    bgcolor="transparent";
+                    node[shape=box, style="rounded,filled", fontname="sans-serif", fillcolor="#2b2b2b", color="#ffa229", fontcolor="white"];
+                    edge[color="#ffa229", fontname="sans-serif", fontcolor="gray"];
+                    
+                    UI [label="Layer 5\\nWeb UI"];
+                    Pool[label="Auto-Scaling\\nWorker Pool", shape=cylinder];
+                    
+                    subgraph cluster_ai {
+                        label = "3-Phase Successive Halving";
+                        color = "#4CAF50"; fontcolor = "#4CAF50"; fontname = "sans-serif"; style="rounded,dashed";
+                        P1[label="Phase 1\\n(Coarse Net)"];
+                        P2[label="Phase 2\\n(Fine Zoom)"];
+                        P3 [label="Phase 3\\n(Exact Math)"];
+                        P1 -> P2 -> P3;
+                    }
+                    
+                    Engine[label="Micro-Tick Combat Engine\\n(1:1 C# Translation)"];
+                    Results[label="Dashboard\\n(Telemetry)", fillcolor="#4CAF50", color="white", fontcolor="white"];
+                    
+                    UI -> Pool;
+                    Pool -> P1;
+                    P3 -> Engine[label=" 500-Run\\nTie-Breakers"];
+                    Engine -> Results;
+                }
+                """
+                st.graphviz_chart(engine_graph, use_container_width=True)
 
         with col_abt_2:
             # --- WALL OF FAME ---
@@ -3264,9 +3290,9 @@ if __name__ == "__main__":
 
             # --- OPEN SOURCE INFO ---
             with st.container(border=True):
-                st.markdown("#### 📂 Source Code & Updates")
-                st.write("Once the engine is fully validated and hits Phase 3, the complete source code and mathematical documentation will be made publicly available.")
-                st.button("🔗 View GitHub Repository", disabled=True, use_container_width=True, help="Link will be active upon public V1.0 Launch!")
+                st.markdown("#### 📂 Source Code & Documentation")
+                st.write("This engine is completely open-source. You can view the raw mathematical architecture, the C# logic translations, and the complete Readme on GitHub.")
+                st.link_button("🔗 View GitHub Repository", "https://github.com/lobogrande/IoM-Arch-Image_DataMiner", use_container_width=True)
 
     # --- GLOBAL FLOATING NAVIGATION ---
     st.markdown('<a href="#top-of-tabs" class="back-to-top">⬆️ Back to Tabs</a>', unsafe_allow_html=True)
