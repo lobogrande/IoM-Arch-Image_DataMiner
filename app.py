@@ -3257,9 +3257,11 @@ if __name__ == "__main__":
                 st.write("Found a bug? Have a feature request? Submit it directly to my developer dashboard here!")
                 
                 fb_type = st.selectbox("Type",["Bug Report", "Feature Request", "UI/UX Suggestion", "General Feedback"])
-                # Height increased to 250 to visually balance with the left column stack
-                fb_text = st.text_area("Details", placeholder="Describe the issue or feature in detail...", height=250)
+                fb_text = st.text_area("Details", placeholder="Describe the issue or feature in detail...", height=150)
                 fb_contact = st.text_input("Discord Username (Optional)", placeholder="So I can follow up with you if needed")
+                
+                # New multi-file uploader for JSON states and screenshots
+                fb_files = st.file_uploader("Attachments (Optional)", type=["png", "jpg", "jpeg", "json"], accept_multiple_files=True, help="Attach a screenshot or your player_state.json file to help me reproduce the issue!")
                 
                 submitted = st.form_submit_button("📤 Send Feedback", use_container_width=True, type="primary")
                 
@@ -3282,8 +3284,17 @@ if __name__ == "__main__":
                                 }]
                             }
                             try:
-                                response = requests.post(webhook_url, json=payload)
-                                if response.status_code in[200, 204]:
+                                if fb_files:
+                                    # Discord requires multipart/form-data when mixing JSON embeds and physical files
+                                    files_dict = {}
+                                    for i, f in enumerate(fb_files):
+                                        files_dict[f"file[{i}]"] = (f.name, f.getvalue(), f.type)
+                                    response = requests.post(webhook_url, data={"payload_json": json.dumps(payload)}, files=files_dict)
+                                else:
+                                    # Standard simple JSON payload if no files are attached
+                                    response = requests.post(webhook_url, json=payload)
+                                    
+                                if response.status_code in [200, 204]:
                                     st.success("✅ Feedback successfully sent! Thank you.")
                                 else:
                                     st.error(f"❌ Failed to send feedback (HTTP {response.status_code}).")
