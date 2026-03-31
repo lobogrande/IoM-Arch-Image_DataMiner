@@ -19,6 +19,7 @@ ROOT_DIR = os.path.abspath(os.path.join(SIM_DIR, '..'))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
+import project_config as cfg
 from core.block import Block
 
 
@@ -46,15 +47,9 @@ class FloorGenerator:
             1:[1, 18, 30, 96],
             2:[3, 26, 36, 111],
             3:[6, 30, 42, 126],
-            4: [12, 32, 45, 136],
+            4:[12, 32, 45, 136],
             5: [20, 35, 50, 141],
             6:[50, 75, 100, 150]
-        }
-
-        # BOSS FLOORS (Ascension 2 Unlocked): Floor ID -> (Rarity ID, Tier)
-        self.BOSS_FLOORS = {
-            80: (0, 3), 95: (1, 3), 110: (2, 3), 125: (3, 3), 
-            135: (4, 3), 140: (5, 3), 149: (6, 3)
         }
 
         # CHANCE SETS: (Minimum Floor, [1-in-X chances for Dirt -> Divine])
@@ -93,32 +88,32 @@ class FloorGenerator:
         is_gleaming = random.random() < player.gleaming_floor_chance
         gleaming_multi = player.gleaming_floor_multi if is_gleaming else 1.0
 
-        # --- 2a. EXPLICIT OVERRIDES (Floors 98 and 99) ---
-        if floor_id == 98:
-            for idx in range(24):
-                grid[idx] = self._create_block_with_mods('myth3', floor_id, player)
-            return Floor(floor_id, grid, is_gleaming, gleaming_multi)
+        # --- 2. CHECK FOR BOSS / MIXED GAUNTLET OVERRIDES ---
+        boss_dict = cfg.ASC_BOSS_DATA.get("asc2", {}) if player.asc2_unlocked else cfg.ASC_BOSS_DATA.get("asc1", {})
+        
+        if floor_id in boss_dict:
+            floor_data = boss_dict[floor_id]
             
-        if floor_id == 99:
-            # The Gauntlet: repeats this exact 6-ore progression 4 times
-            if player.asc2_unlocked:
-                pattern =['com4', 'rare3', 'epic3', 'leg3', 'myth3', 'div2']
+            if floor_data['tier'] == 'mixed':
+                for idx in range(24):
+                    block_id = floor_data['special'][idx]
+                    
+                    # Failsafe: Pre-Asc1 players cannot spawn Divine blocks. Downgrade to Mythic.
+                    if not player.asc1_unlocked and block_id.startswith('div'):
+                        block_id = block_id.replace('div', 'myth')
+                        
+                    grid[idx] = self._create_block_with_mods(block_id, floor_id, player)
+                return Floor(floor_id, grid, is_gleaming, gleaming_multi)
             else:
-                pattern =['com3', 'rare3', 'epic3', 'leg3', 'myth3', 'div2']
+                block_id = floor_data['tier']
                 
-            for idx in range(24):
-                block_id = pattern[idx % 6] # % 6 causes it to cleanly loop back to 0!
-                grid[idx] = self._create_block_with_mods(block_id, floor_id, player)
-            return Floor(floor_id, grid, is_gleaming, gleaming_multi)
-
-        # --- 2b. ASCENSION 2 BOSS FLOORS ---
-        if player.asc2_unlocked and floor_id in self.BOSS_FLOORS:
-            rarity, tier = self.BOSS_FLOORS[floor_id]
-            block_id = f"{self.RARITY_PREFIX[rarity]}{tier}" 
-            
-            for idx in range(24):
-                grid[idx] = self._create_block_with_mods(block_id, floor_id, player)
-            return Floor(floor_id, grid, is_gleaming, gleaming_multi)
+                # Failsafe: Pre-Asc1 players cannot spawn Divine blocks. Downgrade to Mythic.
+                if not player.asc1_unlocked and block_id.startswith('div'):
+                    block_id = block_id.replace('div', 'myth')
+                    
+                for idx in range(24):
+                    grid[idx] = self._create_block_with_mods(block_id, floor_id, player)
+                return Floor(floor_id, grid, is_gleaming, gleaming_multi)
 
         # 3. Find the correct Spawn Probability Bracket
         current_chances = None
