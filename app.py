@@ -1059,15 +1059,54 @@ if __name__ == "__main__":
 
                 def get_effect_str(item_type, key, val):
                     if val == 0: return ""
-                    if item_type == 'stat' and key == 'Agi' and troubleshoot_stat == "Max Stamina": return f"<span style='color:gray; font-size:0.85em'>*(+{val} Flat)*</span>"
-                    if item_type == 'stat' and key == 'Corr' and troubleshoot_stat == "Max Stamina": return f"<span style='color:gray; font-size:0.85em'>*(-{val}% Multi)*</span>"
 
-                    if item_type == 'upg' and troubleshoot_stat == "Max Stamina":
-                        mults = {3: 5, 14: 5, 23: 5, 26: 10, 28: 20, 39: 20, 54: 50}
-                        if key in mults: return f"<span style='color:gray; font-size:0.85em'>*(+{val * mults[key]} Flat)*</span>"
+                    if item_type == 'stat':
+                        if troubleshoot_stat == "Max Stamina":
+                            if key == 'Agi': return f"<span style='color:gray; font-size:0.85em'>*(+{val} Flat)*</span>"
+                            if key == 'Corr': return f"<span style='color:gray; font-size:0.85em'>*(-{val}% Multi)*</span>"
+                        elif troubleshoot_stat == "Damage":
+                            if key == 'Str': return f"<span style='color:gray; font-size:0.85em'>*(+{val} Flat & +{val}% Multi)*</span>"
+                            if key == 'Div': return f"<span style='color:gray; font-size:0.85em'>*(+{val} Flat)*</span>"
+                            if key == 'Corr': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Multi)*</span>"
+                        elif troubleshoot_stat == "Armor Pen":
+                            if key == 'Per': return f"<span style='color:gray; font-size:0.85em'>*(+{val} Flat)*</span>"
+                            if key == 'Int': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Multi)*</span>"
+                        elif troubleshoot_stat == "EXP & Fragment Gain":
+                            if key in['Int', 'Div']: return f"<span style='color:gray; font-size:0.85em'>*(+{val}% EXP)*</span>"
+                            if key == 'Per': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Frag)*</span>"
+                        elif troubleshoot_stat == "Crit Chances & Multipliers":
+                            if key == 'Luck': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Crit)*</span>"
+                            if key == 'Div': return f"<span style='color:gray; font-size:0.85em'>*(+{val}% Super)*</span>"
 
-                    if item_type == 'ext' and key == "Block Bonker Skill" and troubleshoot_stat == "Max Stamina":
-                        return f"<span style='color:gray; font-size:0.85em'>*(+{min(int(p.current_max_floor), 100)}% Multi)*</span>"
+                    if item_type == 'upg':
+                        if troubleshoot_stat == "Max Stamina":
+                            mults = {3: 5, 14: 5, 23: 5, 26: 10, 28: 20, 39: 20, 54: 50}
+                            if key in mults: return f"<span style='color:gray; font-size:0.85em'>*(+{val * mults[key]} Flat)*</span>"
+                        elif troubleshoot_stat == "Damage":
+                            flat = {9: 1, 15: 2, 20: 5, 25: 25, 32: 50, 49: 500}
+                            multi = {25: 2.5, 36: 1, 47: 1, 51: 5, 52: 1}
+                            res =[]
+                            if key in flat: res.append(f"+{val * flat[key]} Flat")
+                            if key in multi: res.append(f"+{val * multi[key]}% Multi")
+                            if res: return f"<span style='color:gray; font-size:0.85em'>*({' & '.join(res)})*</span>"
+                        elif troubleshoot_stat == "Armor Pen":
+                            flat = {10: 1, 17: 2, 29: 10, 33: 25, 36: 100}
+                            if key in flat: return f"<span style='color:gray; font-size:0.85em'>*(+{val * flat[key]} Flat)*</span>"
+                        elif troubleshoot_stat == "EXP & Fragment Gain":
+                            exp = {4: 1, 11: 2, 21: 5, 28: 10, 35: 25, 45: 50, 51: 50}
+                            frag = {21: 1, 42: 10}
+                            res =[]
+                            if key in exp: res.append(f"+{val * exp[key]}% EXP")
+                            if key in frag: res.append(f"+{val * frag[key]}% Frag")
+                            if res: return f"<span style='color:gray; font-size:0.85em'>*({' & '.join(res)})*</span>"
+
+                    if item_type == 'ext':
+                        if troubleshoot_stat == "Max Stamina" and key == "Block Bonker Skill":
+                            return f"<span style='color:gray; font-size:0.85em'>*(+{min(int(p.current_max_floor), 100)}% Multi)*</span>"
+                        elif troubleshoot_stat == "Damage" and key == "Dino Skin":
+                            return f"<span style='color:gray; font-size:0.85em'>*(+{val * 5}% Multi)*</span>"
+                        elif troubleshoot_stat == "EXP & Fragment Gain" and key == "Axolotl Skin":
+                            return f"<span style='color:gray; font-size:0.85em'>*(+{val * 5}% Multi)*</span>"
 
                     return ""
 
