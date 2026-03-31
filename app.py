@@ -421,7 +421,7 @@ if __name__ == "__main__":
     # MAIN WINDOW: Tabs & Navigation
     # ==========================================
     st.markdown('<div id="top-of-tabs"></div>', unsafe_allow_html=True)
-    st.title("⛏️ AI Arch Mining Optimizer")
+    st.title("⛏️ IoM Arch Mining Optimizer")
 
     # Calculate dynamic Base Stat caps (Base + Upgrade #45)
     cap_inc = int(p.u('H45'))
