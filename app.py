@@ -421,7 +421,7 @@ if __name__ == "__main__":
     # MAIN WINDOW: Tabs & Navigation
     # ==========================================
     st.markdown('<div id="top-of-tabs"></div>', unsafe_allow_html=True)
-    st.title("⛏️ AI Arch Mining Optimizer")
+    st.title("⛏️ IoM Arch Mining Optimizer")
 
     # Calculate dynamic Base Stat caps (Base + Upgrade #45)
     cap_inc = int(p.u('H45'))
@@ -1190,6 +1190,7 @@ if __name__ == "__main__":
     # --- TAB 5: BLOCK STATS ---
     with tab_block_stats:
         st.subheader("🪨 Block Compendium")
+        st.caption("📚 **Data Attribution:** The raw baseline stats for these blocks were compiled by the IoM Wiki Team [here](https://shminer.miraheze.org/wiki/Archaeology#Block_Stats). *(Note: Toggling 'Modified Stats' applies this engine's custom scaling math to that baseline data).*")
         
         col_block_toggle, col_block_floor = st.columns([1, 1])
         with col_block_toggle:
