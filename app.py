@@ -1082,10 +1082,16 @@ if __name__ == "__main__":
 
                 with t_col1:
                     st.markdown("##### 📊 Base Stats")
+                    for s in data.get("settings",[]):
+                        if s == "current_max_floor":
+                            st.markdown(f"<span style='color:#ffa229'>**Max Floor:**</span> `{p.current_max_floor}`", unsafe_allow_html=True)
+
                     for s in data["stats"]:
                         if s == 'Corr' and not p.asc2_unlocked: continue
+                        if s == 'Div' and not p.asc1_unlocked: continue
                         val = int(p.base_stats.get(s, 0))
-                        st.markdown(f"**{s}:** `{val}`")
+                        eff = get_effect_str('stat', s, val)
+                        st.markdown(f"**{s}:** `{val}` {eff}", unsafe_allow_html=True)
 
                 with t_col2:
                     st.markdown("##### ⬆️ Internal Upgrades")
@@ -1094,7 +1100,8 @@ if __name__ == "__main__":
                         if not p.asc2_unlocked and u in asc2_locked_rows: continue
                         name = p.UPGRADE_DEF.get(u, [f"Upg {u}"])[0]
                         val = int(p.upgrade_levels.get(u, 0))
-                        st.markdown(f"**{name}:** `{val}`")
+                        eff = get_effect_str('upg', u, val)
+                        st.markdown(f"**{name}:** `{val}` {eff}", unsafe_allow_html=True)
 
                 with t_col3:
                     st.markdown("##### 🌟 External Upgrades")
@@ -1103,7 +1110,8 @@ if __name__ == "__main__":
                     else:
                         for e in data["exts"]:
                             val = ext_vals.get(e, 0)
-                            st.markdown(f"**{e}:** `{val}`")
+                            eff = get_effect_str('ext', e, val)
+                            st.markdown(f"**{e}:** `{val}` {eff}", unsafe_allow_html=True)
 
                 with t_col4:
                     st.markdown("##### 🎴 Infernal Cards")
