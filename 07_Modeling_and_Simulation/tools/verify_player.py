@@ -1,8 +1,8 @@
 # ==============================================================================
 # Script: tools/verify_player.py
 # Layer 3: State Management & Translation
-# Description: Loads and Saves player_state.json. Features a robust hybrid-key 
-#              parser ("3 - Gem Stamina") to make JSON files human-readable 
+# Description: Loads and Saves player_state.json. Features a robust hybrid-key
+#              parser ("3 - Gem Stamina") to make JSON files human-readable
 #              while avoiding duplicate-key JSON overwrites. Supports dynamic
 #              pruning of locked progression stats.
 # ==============================================================================
@@ -22,17 +22,17 @@ if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 from core.player import Player
-import project_config as cfg 
+import project_config as cfg
 
 def load_state_from_json(player: Player, filepath: str):
     """
-    Loads JSON data into the Player object. 
+    Loads JSON data into the Player object.
     Supports legacy integer keys ("3"), hybrid keys ("3 - Gem Stamina"),
     and unified logical groups for external upgrades.
     """
     if not os.path.exists(filepath):
         print(f"[Warning] Save file not found at {filepath}. Generating baseline template...")
-        save_state_to_json(player, filepath, hide_locked=True) 
+        save_state_to_json(player, filepath, hide_locked=True)
         return False
 
     with open(filepath, 'r') as f:
@@ -47,9 +47,12 @@ def load_state_from_json(player: Player, filepath: str):
         player.arch_level = s.get('arch_level', 1)
         player.current_max_floor = s.get('current_max_floor', 100)
         player.base_damage_const = s.get('base_damage_const', 10)
-        player.hades_idol_level = s.get('hades_idol_level', 0)
         player.total_infernal_cards = s.get('total_infernal_cards', 0)
-        
+
+        # Legacy migration fallback for older JSON saves
+        if 'hades_idol_level' in s:
+            player.hades_idol_level = int(s['hades_idol_level'])
+
         # Legacy migration fallback for older beta saves and UI presets
         if 'arch_ability_infernal_bonus' in s:
             player.arch_ability_infernal_bonus = float(s['arch_ability_infernal_bonus'])
@@ -76,10 +79,13 @@ def load_state_from_json(player: Player, filepath: str):
     # 4. Load External Upgrades
     if 'external_upgrades' in data:
         reverse_external = {val[1]: key for key, val in player.EXTERNAL_DEF.items()}
-        
+
         for k, v in data['external_upgrades'].items():
             if k == "Arch Ability Infernal Bonus":
                 player.arch_ability_infernal_bonus = float(v)
+                continue
+            if k == "Hades Idol":
+                player.hades_idol_level = int(v)
                 continue
 
             matched_group = next((g for g in cfg.EXTERNAL_UI_GROUPS if g["name"] == k), None)
@@ -87,7 +93,7 @@ def load_state_from_json(player: Player, filepath: str):
                 for r in matched_group["rows"]:
                     player.set_external_level(r, v)
                 continue
-                
+
             upgrade_id = parse_key(k)
             if upgrade_id is not None:
                 player.set_external_level(upgrade_id, v)
@@ -98,16 +104,16 @@ def load_state_from_json(player: Player, filepath: str):
     if 'cards' in data:
         for card_id, lvl in data['cards'].items():
             player.set_card_level(card_id, lvl)
-            
+
     return True
 
 def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True, hide_locked: bool = False):
     """
-    Generates a player_state.json file. 
+    Generates a player_state.json file.
     If readable_keys is True, formats dictionaries as "ID - Name" for UX.
     If hide_locked is True, removes Asc2-only data if the player hasn't unlocked it.
     """
-    
+
     # Prune Settings
     settings_out = {
         "asc1_unlocked": player.asc1_unlocked,
@@ -115,12 +121,8 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
         "arch_level": player.arch_level,
         "current_max_floor": player.current_max_floor,
         "base_damage_const": player.base_damage_const,
-        "hades_idol_level": player.hades_idol_level,
         "total_infernal_cards": player.total_infernal_cards
     }
-    if hide_locked and not player.asc1_unlocked:
-        if 'hades_idol_level' in settings_out:
-            del settings_out['hades_idol_level']
 
     # Prune Base Stats
     base_stats_out = player.base_stats.copy()
@@ -130,7 +132,7 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
     if hide_locked and not player.asc2_unlocked:
         if 'Corr' in base_stats_out:
             del base_stats_out['Corr']
-            
+
     # Prune Cards
     cards_out = {}
     for k, v in player.cards.items():
@@ -159,7 +161,7 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
             continue
         if hide_locked and not player.asc2_unlocked and k in asc2_locked_rows:
             continue
-            
+
         if readable_keys and k in player.UPGRADE_DEF:
             name = player.UPGRADE_DEF[k][0]
             data["internal_upgrades"][f"{k} - {name}"] = v
@@ -170,7 +172,12 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
     for group in cfg.EXTERNAL_UI_GROUPS:
         representative_val = player.external_levels.get(group["rows"][0], 0)
         data["external_upgrades"][group["name"]] = representative_val
-        
+
+        # Inject Hades Idol directly after Hestia Idol for clean grouping
+        if group["id"] == 'hestia':
+            if not hide_locked or player.asc1_unlocked:
+                data["external_upgrades"]["Hades Idol"] = player.hades_idol_level
+
         # Inject the Infernal Bonus directly under the Arch Ability Card
         if 20 in group["rows"]:
             data["external_upgrades"]["Arch Ability Infernal Bonus"] = player.arch_ability_infernal_bonus
@@ -180,13 +187,13 @@ def save_state_to_json(player: Player, filepath: str, readable_keys: bool = True
 
     with open(filepath, 'w') as f:
         json.dump(data, f, indent=4)
-        
+
     print(f"✅ State saved successfully to {filepath}")
 
 if __name__ == "__main__":
     test_player = Player()
     json_path = os.path.join(BASE_DIR, "tools", "player_state.json")
-    
+
     load_state_from_json(test_player, json_path)
     save_state_to_json(test_player, json_path, readable_keys=True, hide_locked=True)
     print(f"Verification Complete. Player Max Sta: {test_player.max_sta}")
