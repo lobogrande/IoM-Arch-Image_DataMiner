@@ -1516,11 +1516,13 @@ if __name__ == "__main__":
 
                 tier = int(block_id[-1])
 
-                if not show_unreachable:
-                    if tier == 2 and target_floor <= 50: continue
-                    if tier == 3 and target_floor <= 100: continue
-                    if tier == 4 and target_floor <= 150: continue
-                if tier == 4 and not sandbox_p.asc2_unlocked: continue
+                asc_key = "asc2" if sandbox_p.asc2_unlocked else "asc1"
+                min_spawn_floor = cfg.ASC_ORE_RESTRICTIONS.get(asc_key, {}).get(block_id, (1, 999))[0]
+
+                if not show_unreachable and target_floor < min_spawn_floor:
+                    continue
+                if tier == 4 and not sandbox_p.asc2_unlocked:
+                    continue
 
                 block_obj = Block(block_id, target_floor, sandbox_p)
                 eff_armor = max(0, block_obj.armor - p_pen)
