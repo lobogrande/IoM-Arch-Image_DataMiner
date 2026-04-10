@@ -8,6 +8,7 @@ import concurrent.futures
 from functools import partial
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
+from ascension_detector import auto_configure_ascension
 
 # --- DYNAMIC CONFIGURATION ---
 SOURCE_DIR = cfg.get_buffer_path()
@@ -132,6 +133,7 @@ def profile_floor(floor_data, dna_map, buffer_dir, all_files, templates):
     return floor_profiles
 
 def run_profiler():
+    auto_configure_ascension()
     print(f"--- STEP 6 AUDIT: TRINITY SENSOR PROFILER (Run {RUN_ID}) ---")
     
     if not os.path.exists(BOUNDARIES_CSV) or not os.path.exists(DNA_INVENTORY_CSV):

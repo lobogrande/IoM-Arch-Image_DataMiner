@@ -12,7 +12,7 @@ from datetime import datetime
 # --- CONFIG ---
 GAME_ROI = {'top': 225, 'left': 10, 'width': 446, 'height': 677}
 HEADER_ROI = {'top': 281, 'left': 110, 'width': 35, 'height': 16}
-BUFFER_DIR = "capture_buffer_4"
+BUFFER_DIR = "capture_buffer_1"
 
 if not os.path.exists(BUFFER_DIR): os.makedirs(BUFFER_DIR)
 

@@ -1,7 +1,7 @@
 # step3_floor_segmentation.py
 # Purpose: Execute Master Plan Step 3 - Group frames into distinct floors using 
 #          Kinematic rules and Strict Row 4 Immutability.
-# Version: 3.10 (Boundary-State Gap Validation)
+# Version: 3.13 (Removed LAW 4 - Row 2 too unreliable for floor detection)
 
 import sys, os, cv2, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -47,7 +47,7 @@ def run_temporal_chunking():
         return
 
     # Load DNA data. Force DNA columns to strings to prevent int casting issues.
-    df = pd.read_csv(DNA_CSV, dtype={'r3_dna': str, 'r4_dna': str, 'dna_sig': str})
+    df = pd.read_csv(DNA_CSV, dtype={'r2_dna': str, 'r3_dna': str, 'r4_dna': str, 'dna_sig': str})
     df = df.sort_values('frame_idx').reset_index(drop=True)
     df['gap'] = df['frame_idx'].diff().fillna(0)
     
@@ -65,6 +65,9 @@ def run_temporal_chunking():
     def clean_r4(g):
         g = g.copy()
         g['r4_clean'] = despeckle_series(g['r4_dna'], max_glitch_len=2)
+        # Also clean Row 2 if it exists
+        if 'r2_dna' in g.columns:
+            g['r2_clean'] = despeckle_series(g['r2_dna'], max_glitch_len=2)
         return g
         
     df = df.groupby('slot_chunk', group_keys=False).apply(clean_r4)
@@ -78,7 +81,7 @@ def run_temporal_chunking():
     
     blocks =[]
     for block_id, group in df.groupby('block_id'):
-        blocks.append({
+        block_data = {
             'start_frame': int(group['frame_idx'].min()),
             'end_frame': int(group['frame_idx'].max()),
             'slot': int(group['slot_id'].iloc[0]),
@@ -92,7 +95,15 @@ def run_temporal_chunking():
             'r3_end': str(group['r3_dna'].iloc[-1]),
             'gap_to_prev': int(group['gap'].iloc[0]),
             'size': len(group)
-        })
+        }
+        
+        # Add Row 2 data if available
+        if 'r2_clean' in group.columns:
+            block_data['r2_mode'] = str(group['r2_clean'].mode()[0])
+            block_data['r2_start'] = str(group['r2_clean'].iloc[0])
+            block_data['r2_end'] = str(group['r2_clean'].iloc[-1])
+        
+        blocks.append(block_data)
     
     print(f"Phase 1: Consolidated frames into {len(blocks)} unified slot-attack blocks.")
 
@@ -156,6 +167,11 @@ def run_temporal_chunking():
             'r3_dna_stable': start_block['r3_mode'],
             'transition_reason': start_block.get('transition_reason', 'Initial Start')
         }
+        
+        # Add Row 2 if available
+        if 'r2_mode' in start_block:
+            candidate['r2_dna_stable'] = start_block['r2_mode']
+        
         final_candidates.append(candidate)
         
         img_path = os.path.join(SOURCE_DIR, candidate['filename'])

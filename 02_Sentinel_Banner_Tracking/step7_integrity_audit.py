@@ -6,8 +6,10 @@ import pandas as pd
 import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
+from ascension_detector import auto_configure_ascension
 
 def run_integrity_audit():
+    auto_configure_ascension()
     # Resolve dynamic path
     source_dir = cfg.get_buffer_path()
     run_id = os.path.basename(source_dir).split('_')[-1]

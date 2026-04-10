@@ -1,6 +1,6 @@
 # step2_frame_dna.py
 # Purpose: Generate the final DNA occupancy map for all Step 1 frames.
-# Version: 2.1 (Forced Frame 0 Baseline Injection)
+# Version: 2.2 (Added Row 2 DNA for Tie-Breaking)
 
 import sys, os, cv2, numpy as np, pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -91,20 +91,22 @@ def run_final_dna_scan():
         img = cv2.imread(os.path.join(SOURCE_DIR, row['filename']), 0)
         if img is None: continue
         
-        r3_bits, r4_bits = [],[]
+        r2_bits, r3_bits, r4_bits = [], [], []
         scores =[]
         
-        # Process Rows 3 and 4
-        for r_idx in[2, 3]:
+        # Process Rows 2, 3, and 4
+        for r_idx in [1, 2, 3]:
             for c_idx in range(6):
                 bit, score = get_slot_dna(img, r_idx, c_idx, templates)
                 scores.append(score)
-                if r_idx == 2: r3_bits.append(bit)
+                if r_idx == 1: r2_bits.append(bit)
+                elif r_idx == 2: r3_bits.append(bit)
                 else: r4_bits.append(bit)
                 
                 if 0.50 < score < 0.70:
                     ambiguous_count += 1
 
+        r2_dna = "".join(r2_bits)
         r3_dna = "".join(r3_bits)
         r4_dna = "".join(r4_bits)
         
@@ -112,9 +114,10 @@ def run_final_dna_scan():
             'frame_idx': row['frame_idx'],
             'filename': row['filename'],
             'slot_id': row['slot_id'],
+            'r2_dna': r2_dna,
             'r3_dna': r3_dna,
             'r4_dna': r4_dna,
-            'dna_sig': f"{r3_dna}-{r4_dna}",
+            'dna_sig': f"{r2_dna}-{r3_dna}-{r4_dna}",
             'min_score': min(scores),
             'max_score': max(scores)
         })

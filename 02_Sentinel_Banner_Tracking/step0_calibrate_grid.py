@@ -24,7 +24,7 @@ def run_auto_discovery():
     img_bgr = cv2.imread(os.path.join(buffer_dir, all_files[0]))
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-    t_path = os.path.join(cfg.TEMPLATE_DIR, "dirt1_act_plain_0.png")
+    t_path = os.path.join(cfg.TEMPLATE_DIR, "dirt1_act_plain_1.png")
     tpl_raw = cv2.imread(t_path, 0)
     
     if tpl_raw is None:

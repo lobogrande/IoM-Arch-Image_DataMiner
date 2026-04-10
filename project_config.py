@@ -88,10 +88,10 @@ ASC_BOSS_DATA = {
             6: "com4",  7: "rare3",  8: "epic3",  9: "leg3",  10: "myth3", 11: "div2",
             12: "com4", 13: "rare3", 14: "epic3", 15: "leg3", 16: "myth3", 17: "div2",
             18: "com4", 19: "rare3", 20: "epic3", 21: "leg3", 22: "myth3", 23: "div2"
+        }
         },
         110: {'tier': 'rare3'}, 125: {'tier': 'epic3'}, 135: {'tier': 'leg3'}, 
         140: {'tier': 'myth3'}, 149: {'tier': 'div3'}
-        }
     }
 }
 
@@ -113,6 +113,34 @@ ASC_ORE_RESTRICTIONS = {
     }
 }
 
+# ==============================================================================
+# TEMPLATE MATCHING PENALTIES (BULLY SHIELD)
+# Prevents high-entropy tiers from stealing matches from similar-looking blocks
+# Based on template similarity analysis - tiers >95% similar need higher penalties
+# ==============================================================================
+ASC_BULLY_PENALTIES = {
+    "asc1": {
+        # Original ASC1 penalties (validated to work well)
+        'rare1': 0.03, 'epic1': 0.04, 'leg1': 0.05,
+        'rare2': 0.03, 'epic2': 0.04, 'leg2': 0.05,
+        'dirt1': 0.04, 'dirt2': 0.04, 'dirt3': 0.04,
+    },
+    "asc2": {
+        # Reduced leg penalties from 0.05 → 0.02 → 0.01 (same as dirt)
+        # leg1 templates don't handle damage well; epic1 templates match damaged leg1 better
+        # With 0.01 penalty: leg1 at 0.44 → 0.43, maximally competitive without eliminating penalty
+        # Reduced dirt penalties from 0.04 to 0.01 - dirt blocks match well but lose to similar tiers
+        # Reduced rare1/rare2 penalties from 0.03 to 0.00 - diagnostic shows rare1 raw scores consistently
+        #   beat com1/com2, but even 0.01 penalty causes losses when gap is tiny (0.0019)
+        # Added com1/com2 penalties of 0.01 - common blocks are easier to identify, shouldn't beat rare unfairly
+        'rare1': 0.00, 'epic1': 0.04, 'leg1': 0.01,
+        'rare2': 0.00, 'epic2': 0.04, 'leg2': 0.01,
+        'com1': 0.01, 'com2': 0.01,
+        'dirt1': 0.01, 'dirt2': 0.01, 'dirt3': 0.01, 'dirt4': 0.01,
+        'div1': 0.06, 'div2': 0.06, 'div3': 0.06, 'div4': 0.06,
+    }
+}
+
 # --- 1. PROJECT ROOT CALCULATION ---
 # This allows scripts in subfolders to find the root regardless of where they are run
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -128,9 +156,43 @@ DATA_DIRS = {
 }
 
 # --- 3. PATH HELPERS ---
-def get_buffer_path(buffer_id=4):
-    """Returns absolute path to a specific capture buffer."""
-    return os.path.join(DATA_DIRS["RAW"], f"capture_buffer_{buffer_id}")
+def get_buffer_path(buffer_id=0, asc_level=None):
+    """
+    Returns absolute path to a specific capture buffer.
+    
+    Supports multiple naming patterns:
+    - capture_buffer_0 (legacy, assumes asc1)
+    - capture_buffer_asc1_0 (explicit asc1)
+    - capture_buffer_asc2_0 (explicit asc2)
+    
+    Args:
+        buffer_id: Buffer number (default 0)
+        asc_level: Ascension level ("asc1" or "asc2"). If None, tries both patterns.
+    
+    Returns:
+        Path to buffer directory (creates if doesn't exist)
+    """
+    base_dir = DATA_DIRS["RAW"]
+    
+    # If asc_level specified, use explicit naming
+    if asc_level:
+        buffer_name = f"capture_buffer_{asc_level}_{buffer_id}"
+        path = os.path.join(base_dir, buffer_name)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        return path
+    
+    # Try to find existing buffer with either naming pattern
+    # Priority: asc2 explicit > asc1 explicit > legacy
+    for pattern in [f"capture_buffer_asc2_{buffer_id}", 
+                    f"capture_buffer_asc1_{buffer_id}",
+                    f"capture_buffer_{buffer_id}"]:
+        path = os.path.join(base_dir, pattern)
+        if os.path.exists(path):
+            return path
+    
+    # If none exist, return legacy pattern (backward compatible)
+    return os.path.join(base_dir, f"capture_buffer_{buffer_id}")
 
 def get_ref_path(filename):
     """Returns absolute path to a file in the Reference/Ground Truth folder."""
@@ -141,8 +203,37 @@ TEMPLATE_DIR = os.path.join(DATA_DIRS["REF"], "templates")
 DIGIT_DIR = os.path.join(DATA_DIRS["REF"], "digits")
 
 # --- 4. SHARED GAME CONSTANTS ---
-ORE_RESTRICTIONS = ASC_ORE_RESTRICTIONS["asc1"]
-BOSS_DATA = ASC_BOSS_DATA["asc1"]
+# DEFAULT: Set to asc1 for backward compatibility
+# Scripts should override this by calling set_ascension() based on their data
+_CURRENT_ASCENSION = "asc1"
+
+def set_ascension(asc_level):
+    """
+    Set the active ascension level (asc1 or asc2).
+    This updates ORE_RESTRICTIONS, BOSS_DATA, and BULLY_PENALTIES to match the ascension.
+    
+    Usage in scripts:
+        cfg.set_ascension("asc2")  # Before processing asc2 data
+    """
+    global _CURRENT_ASCENSION, ORE_RESTRICTIONS, BOSS_DATA, BULLY_PENALTIES
+    if asc_level not in ASC_ORE_RESTRICTIONS:
+        raise ValueError(f"Unknown ascension: {asc_level}. Must be 'asc1' or 'asc2'")
+    _CURRENT_ASCENSION = asc_level
+    ORE_RESTRICTIONS = ASC_ORE_RESTRICTIONS[asc_level]
+    BOSS_DATA = ASC_BOSS_DATA[asc_level]
+    BULLY_PENALTIES = ASC_BULLY_PENALTIES[asc_level]
+    print(f"[Config] Set ascension to {asc_level.upper()}")
+    print(f"[Config DEBUG] BOSS_DATA now has {len(BOSS_DATA)} floors: {list(BOSS_DATA.keys())[:5]}...{list(BOSS_DATA.keys())[-3:]}")
+    print(f"[Config DEBUG] BULLY_PENALTIES loaded: {len(BULLY_PENALTIES)} tiers")
+
+def get_ascension():
+    """Get the currently active ascension level."""
+    return _CURRENT_ASCENSION
+
+# Initialize with default
+ORE_RESTRICTIONS = ASC_ORE_RESTRICTIONS[_CURRENT_ASCENSION]
+BOSS_DATA = ASC_BOSS_DATA[_CURRENT_ASCENSION]
+BULLY_PENALTIES = ASC_BULLY_PENALTIES[_CURRENT_ASCENSION]
 
 
 # Base stats for every block. 

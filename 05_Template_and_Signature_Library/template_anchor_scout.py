@@ -8,7 +8,7 @@ import os
 
 # --- CONFIG ---
 TARGET_RUN = "0"
-BUFFER_PATH = f"capture_buffer_{TARGET_RUN}"
+BUFFER_PATH = cfg.get_buffer_path(TARGET_RUN)
 OUTPUT_DIR = cfg.TEMPLATE_DIR
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -77,4 +77,4 @@ def run_sprite_harvester(frame_idx):
 
 if __name__ == "__main__":
     # Run on frame 0 or any frame where the player is stationary at 'Home'
-    run_sprite_harvester(33)
+    run_sprite_harvester(429) #235 - 429

@@ -8,6 +8,7 @@ import concurrent.futures
 from functools import partial
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import project_config as cfg
+from ascension_detector import auto_configure_ascension
 
 # --- DYNAMIC CONFIGURATION ---
 SOURCE_DIR = cfg.get_buffer_path()
@@ -29,7 +30,8 @@ LIMIT_FLOORS = None  # Process all floors
 
 # THRESHOLDS
 EMPTY_THRESHOLD = 0.80 
-MAX_DNA_WINDOW = 150 
+MAX_DNA_WINDOW = 150  # Keep long to allow UI elements to move away
+EARLY_STOP_OCCUPIED = 0.40  # Stop scanning when clear block detected 
 
 def load_bg_templates():
     """Loads background and negative UI templates only. Player is excluded."""
@@ -66,6 +68,10 @@ def get_slot_occupancy(f_range, r_idx, col_idx, buffer_dir, all_files, bg_tpls):
             if score > peak_bg_score:
                 peak_bg_score = score
         
+        # Early exit if we find a clear block (low background score)
+        if peak_bg_score <= EARLY_STOP_OCCUPIED:
+            break
+        
         # Early exit if we find a perfect background match
         if peak_bg_score >= 0.96: break
 
@@ -100,6 +106,7 @@ def process_floor_dna(floor_data, buffer_dir, all_files, bg_tpls):
     return results
 
 def run_dna_profiling():
+    auto_configure_ascension()
     print(f"--- STEP 5: FLOOR OCCUPANCY PROFILING (Run {RUN_ID}) ---")
     if not os.path.exists(BOUNDARIES_CSV):
         print(f"Error: {os.path.basename(BOUNDARIES_CSV)} not found. Run Step 4 first.")
