@@ -440,27 +440,26 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             runner_up_score = sorted_candidates[1][1] / clean_frames_processed
             gap = winner_score - runner_up_score
             
-            # PHASE 2: Pairwise Discriminator (if scores are close)
-            # Increased threshold from 0.05 to 0.10 to catch more confusable cases
-            GAP_THRESHOLD = 0.10
-            
-            if gap < GAP_THRESHOLD:
-                if should_use_pairwise_discriminator(winner, runner_up):
-                    # Load first frame in color for discriminator
-                    first_frame_idx = sample_indices[0]
-                    img_color = cv2.imread(os.path.join(buffer_dir, all_files[first_frame_idx]))
-                    if img_color is not None:
-                        roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
-                        if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
-                            override_winner = apply_pairwise_discriminator(winner, runner_up, roi_color)
-                            
-                            if override_winner and override_winner != winner:
-                                # Debug: Track when discriminators override
-                                print(f"[Phase2] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{override_winner} (gap={gap:.3f})", flush=True)
-                                winner = override_winner
-                                # Update score to match new winner
-                                winner_score = votes.get(override_winner, 0) / clean_frames_processed
-                                # Phase2 does NOT bypass threshold - Phase3 checks still need to run
+            # PHASE 2: DISCRIMINATOR (always check if available, regardless of gap)
+            # Discriminators use robust visual features, more reliable than template matching scores
+            if should_use_pairwise_discriminator(winner, runner_up):
+                # Use best frame for discriminator (better quality than first frame)
+                discriminator_frame_idx = tier_best_frames[winner]['frame_idx']
+                if discriminator_frame_idx is None:
+                    discriminator_frame_idx = sample_indices[0]  # Fallback to first frame
+                
+                img_color = cv2.imread(os.path.join(buffer_dir, all_files[discriminator_frame_idx]))
+                if img_color is not None:
+                    roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                    if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                        override_winner = apply_pairwise_discriminator(winner, runner_up, roi_color)
+                        
+                        if override_winner and override_winner != winner:
+                            print(f"[Phase2] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{override_winner} (gap={gap:.3f})", flush=True)
+                            winner = override_winner
+                            # Use best frame score for discriminated winner (more reliable than vote average)
+                            winner_score = tier_best_frames[override_winner]['score']
+                            # Phase2 does NOT bypass threshold - Phase3 checks still need to run
         
         # PER-FRAME TWO-PASS: DISABLED - was causing false negatives
         # Original logic: If ANY frame had dirt beating higher tier by <0.05, override to higher tier
@@ -501,8 +500,11 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                                         print(f"[Phase3-Dirt] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{override_winner} (gap={gap_to_winner:.3f})", flush=True)
                                         winner = override_winner
                                         winner_score = dirt_avg_score
-                                        # Discriminator overrides are high-confidence - bypass threshold check
-                                        return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                                        # Don't return yet - Phase3-Epic might need to check for 3-way confusion (dirt/epic/com)
+                                        # Only return early if winner is NOT in DIRT_TIERS (meaning we overrode away from dirt)
+                                        if winner not in DIRT_TIERS:
+                                            # Discriminator overrides are high-confidence - bypass threshold check
+                                            return winner, round(winner_score, 4), clean_frames_processed, "[D]"
                                     break  # Only check first close dirt tier
         
         # PHASE 3-LEG: Check if leg tier lost but should have won
