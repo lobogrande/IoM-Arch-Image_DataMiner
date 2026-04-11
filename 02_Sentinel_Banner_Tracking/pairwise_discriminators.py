@@ -11,6 +11,55 @@ import numpy as np
 # Pairwise discriminators for confusable tier pairs
 # Each function takes an ROI and returns which tier it is
 
+def discriminate_com1_vs_dirt1(roi_bgr):
+    """
+    Discriminate com1 from dirt1 using HUE, GREEN CHANNEL, and EDGE DENSITY.
+    
+    Key pattern: com1 has higher green channel, more edges, and different hue distribution.
+    dirt1 has lower green values and softer/blurrier appearance.
+    
+    Returns: 'com1' or 'dirt1'
+    """
+    votes_com1, votes_dirt1 = 0, 0
+    
+    # ROI3: (21,22)-(28,31) - Hue (101.6% diff) - STRONGEST signal
+    roi3 = roi_bgr[22:31, 21:28]
+    hsv3 = cv2.cvtColor(roi3, cv2.COLOR_BGR2HSV)
+    hue3 = hsv3[:, :, 0].mean()
+    if hue3 > 75.05:  # Midpoint between com1=113.19 and dirt1=36.90
+        votes_com1 += 3
+    else:
+        votes_dirt1 += 3
+    
+    # ROI2: (29,21)-(36,32) - Green channel (63.9% diff)
+    roi2 = roi_bgr[21:32, 29:36]
+    green2 = roi2[:, :, 1].mean()
+    if green2 > 76.95:  # Midpoint
+        votes_com1 += 3
+    else:
+        votes_dirt1 += 3
+    
+    # ROI6: (26,27)-(34,35) - Green channel (91.4% diff)
+    roi6 = roi_bgr[27:35, 26:34]
+    green6 = roi6[:, :, 1].mean()
+    if green6 > 50.20:  # Midpoint between com1=73.14 and dirt1=27.27
+        votes_com1 += 2
+    else:
+        votes_dirt1 += 2
+    
+    # ROI5: (13,22)-(21,32) - Edge density (66.7% diff)
+    roi5 = roi_bgr[22:32, 13:21]
+    gray5 = cv2.cvtColor(roi5, cv2.COLOR_BGR2GRAY)
+    edges5 = cv2.Canny(gray5, 50, 150)
+    edge_density5 = (edges5 > 0).sum() / edges5.size * 100
+    if edge_density5 > 62.16:  # Midpoint between com1=82.88 and dirt1=41.44
+        votes_com1 += 2
+    else:
+        votes_dirt1 += 2
+    
+    return 'com1' if votes_com1 > votes_dirt1 else 'dirt1'
+
+
 def discriminate_rare1_vs_com1(roi_bgr):
     """
     Discriminate rare1 from com1 using HUE in specific regions (48x48 coordinates).
@@ -475,6 +524,57 @@ def discriminate_div3_vs_epic4(roi_bgr):
     else:
         return 'epic4'
 
+def discriminate_div3_vs_epic3(roi_bgr):
+    """
+    Discriminate div3 from epic3 using BRIGHTNESS and GREEN CHANNEL.
+    
+    Key pattern: div3 blocks are GLOWING/LUMINOUS with much higher green channel values.
+    epic3 are darker overall with lower green values.
+    
+    Top discriminating features:
+    - ROI3 (23,22)→(31,35): Value diff=87.1% (div3=185.94, epic3=73.15)
+    - ROI2 (5,21)→(19,30): Green_mean diff=55.5% (div3=139.98, epic3=79.20)
+    - ROI7 (31,24)→(41,39): Green_mean diff=54.1% (div3=130.71, epic3=75.08)
+    
+    Returns: 'div3' or 'epic3'
+    """
+    votes_div3, votes_epic3 = 0, 0
+    
+    # ROI3: (23,22)-(31,35) - Brightness (87.1% diff)
+    roi3 = roi_bgr[22:35, 23:31]
+    hsv3 = cv2.cvtColor(roi3, cv2.COLOR_BGR2HSV)
+    value3 = hsv3[:, :, 2].mean()
+    if value3 > 129.55:  # Midpoint between div3=185.94 and epic3=73.15
+        votes_div3 += 3
+    else:
+        votes_epic3 += 3
+    
+    # ROI2: (5,21)-(19,30) - Green channel (55.5% diff)
+    roi2 = roi_bgr[21:30, 5:19]
+    green2 = roi2[:, :, 1].mean()
+    if green2 > 109.59:  # Midpoint between div3=139.98 and epic3=79.20
+        votes_div3 += 2
+    else:
+        votes_epic3 += 2
+    
+    # ROI7: (31,24)-(41,39) - Green channel (54.1% diff)
+    roi7 = roi_bgr[24:39, 31:41]
+    green7 = roi7[:, :, 1].mean()
+    if green7 > 102.90:  # Midpoint between div3=130.71 and epic3=75.08
+        votes_div3 += 2
+    else:
+        votes_epic3 += 2
+    
+    # ROI4: (33,34)-(40,42) - Green channel (47.8% diff)
+    roi4 = roi_bgr[34:42, 33:40]
+    green4 = roi4[:, :, 1].mean()
+    if green4 > 102.27:  # Midpoint between div3=126.70 and epic3=77.84
+        votes_div3 += 2
+    else:
+        votes_epic3 += 2
+    
+    return 'div3' if votes_div3 > votes_epic3 else 'epic3'
+
 def discriminate_epic1_vs_dirt2(roi_bgr):
     """
     Discriminate epic1 from dirt2 (48x48 coordinates).
@@ -832,6 +932,70 @@ def discriminate_leg3_vs_com3(roi_bgr):
     
     return 'leg3' if votes_leg3 > votes_com3 else 'com3'
 
+def discriminate_leg3_vs_com4(roi_bgr):
+    """
+    Discriminate between leg3 and com4 blocks.
+    
+    Key pattern: leg3 has much lower hue (orange/red tones ~38-75), much higher saturation (76-123),
+    and higher brightness. com4 has higher hue (green/cyan tones ~61-106) and lower saturation (38-58).
+    
+    Uses voting across multiple regions for robustness.
+    """
+    votes_leg3, votes_com4 = 0, 0
+    
+    # Region 4: (24,32)-(44,40) - 89.0% hue diff, 64.1% saturation diff
+    region4 = roi_bgr[32:40, 24:44]
+    hsv4 = cv2.cvtColor(region4, cv2.COLOR_BGR2HSV)
+    hue4 = hsv4[:, :, 0].mean()
+    sat4 = hsv4[:, :, 1].mean()
+    if hue4 < 68.00:  # Midpoint between leg3=37.76 and com4=98.25
+        votes_leg3 += 3  # Very strong signal
+    else:
+        votes_com4 += 3
+    if sat4 > 86.20:  # Midpoint between leg3=113.81 and com4=58.58
+        votes_leg3 += 3  # Very strong signal
+    else:
+        votes_com4 += 3
+    
+    # Region 6: (33,34)-(44,43) - 86.0% saturation diff, 49.5% hue diff
+    region6 = roi_bgr[34:43, 33:44]
+    hsv6 = cv2.cvtColor(region6, cv2.COLOR_BGR2HSV)
+    sat6 = hsv6[:, :, 1].mean()
+    hue6 = hsv6[:, :, 0].mean()
+    if sat6 > 86.19:  # Midpoint between leg3=123.26 and com4=49.11
+        votes_leg3 += 3  # Very strong signal
+    else:
+        votes_com4 += 3
+    if hue6 < 62.19:  # Midpoint between leg3=46.79 and com4=77.59
+        votes_leg3 += 2
+    else:
+        votes_com4 += 2
+    
+    # Region 2: (2,36)-(21,44) - 34.9% hue diff
+    region2 = roi_bgr[36:44, 2:21]
+    hsv2 = cv2.cvtColor(region2, cv2.COLOR_BGR2HSV)
+    hue2 = hsv2[:, :, 0].mean()
+    if hue2 < 91.02:  # Midpoint between leg3=75.16 and com4=106.89
+        votes_leg3 += 2
+    else:
+        votes_com4 += 2
+    
+    # Region 8: (31,20)-(41,29) - 51.9% saturation diff, 30.1% value diff
+    region8 = roi_bgr[20:29, 31:41]
+    hsv8 = cv2.cvtColor(region8, cv2.COLOR_BGR2HSV)
+    sat8 = hsv8[:, :, 1].mean()
+    value8 = hsv8[:, :, 2].mean()
+    if sat8 > 61.07:  # Midpoint between leg3=76.91 and com4=45.22
+        votes_leg3 += 2
+    else:
+        votes_com4 += 2
+    if value8 > 102.98:  # Midpoint between leg3=118.47 and com4=87.49
+        votes_leg3 += 1
+    else:
+        votes_com4 += 1
+    
+    return 'leg3' if votes_leg3 > votes_com4 else 'com4'
+
 def discriminate_dirt3_vs_leg3(roi_bgr):
     """
     Discriminate between dirt3 and leg3 blocks.
@@ -975,8 +1139,63 @@ def discriminate_com3_vs_epic3(roi_bgr):
     
     return 'com3' if votes_com3 > votes_epic3 else 'epic3'
 
+def discriminate_myth4_vs_com4(roi_bgr):
+    """
+    Discriminate between myth4 and com4 blocks.
+    
+    Key pattern: myth4 has much higher brightness, saturation, and red/green values.
+    com4 is darker overall with lower color intensity.
+    
+    Top discriminating features:
+    - ROI3 (4,33)→(16,45): Red_mean diff=64.2% (myth4=129.42, com4=66.52)
+    - ROI4 (18,21)→(25,32): Saturation diff=108.5% (myth4=138.45, com4=41.05)
+    - ROI5 (30,35)→(41,45): Brightness diff=58.0% (myth4=124.79, com4=68.71)
+    - ROI7 (35,34)→(43,42): Green_mean diff=49.5% (myth4=132.12, com4=79.67)
+    
+    Returns: 'myth4' or 'com4'
+    """
+    votes_myth4, votes_com4 = 0, 0
+    
+    # ROI4: (18,21)-(25,32) - Saturation (108.5% diff) - strongest signal
+    roi4 = roi_bgr[21:32, 18:25]
+    hsv4 = cv2.cvtColor(roi4, cv2.COLOR_BGR2HSV)
+    sat4 = hsv4[:, :, 1].mean()
+    if sat4 > 89.75:  # Midpoint between myth4=138.45 and com4=41.05
+        votes_myth4 += 3
+    else:
+        votes_com4 += 3
+    
+    # ROI3: (4,33)-(16,45) - Red channel (64.2% diff)
+    roi3 = roi_bgr[33:45, 4:16]
+    red3 = roi3[:, :, 2].mean()
+    if red3 > 97.97:  # Midpoint between myth4=129.42 and com4=66.52
+        votes_myth4 += 3
+    else:
+        votes_com4 += 3
+    
+    # ROI5: (30,35)-(41,45) - Brightness (58.0% diff)
+    roi5 = roi_bgr[35:45, 30:41]
+    hsv5 = cv2.cvtColor(roi5, cv2.COLOR_BGR2HSV)
+    brightness5 = hsv5[:, :, 2].mean()
+    if brightness5 > 96.75:  # Midpoint between myth4=124.79 and com4=68.71
+        votes_myth4 += 2
+    else:
+        votes_com4 += 2
+    
+    # ROI7: (35,34)-(43,42) - Green channel (49.5% diff)
+    roi7 = roi_bgr[34:42, 35:43]
+    green7 = roi7[:, :, 1].mean()
+    if green7 > 105.90:  # Midpoint between myth4=132.12 and com4=79.67
+        votes_myth4 += 2
+    else:
+        votes_com4 += 2
+    
+    return 'myth4' if votes_myth4 > votes_com4 else 'com4'
+
 # Registry of all pairwise discriminators
 PAIRWISE_DISCRIMINATORS = {
+    ('com1', 'dirt1'): discriminate_com1_vs_dirt1,
+    ('dirt1', 'com1'): discriminate_com1_vs_dirt1,
     ('rare1', 'com1'): discriminate_rare1_vs_com1,
     ('com1', 'rare1'): discriminate_rare1_vs_com1,
     ('rare1', 'com2'): discriminate_rare1_vs_com2,
@@ -1003,6 +1222,8 @@ PAIRWISE_DISCRIMINATORS = {
     ('epic3', 'com3'): discriminate_com3_vs_epic3,
     ('leg3', 'com3'): discriminate_leg3_vs_com3,
     ('com3', 'leg3'): discriminate_leg3_vs_com3,
+    ('leg3', 'com4'): discriminate_leg3_vs_com4,
+    ('com4', 'leg3'): discriminate_leg3_vs_com4,
     ('dirt3', 'leg3'): discriminate_dirt3_vs_leg3,
     ('leg3', 'dirt3'): discriminate_dirt3_vs_leg3,
     ('div1', 'rare3'): discriminate_div1_vs_rare3,
@@ -1011,8 +1232,12 @@ PAIRWISE_DISCRIMINATORS = {
     ('rare3', 'div2'): discriminate_div2_vs_rare3,
     ('div3', 'leg3'): discriminate_div3_vs_leg3,
     ('leg3', 'div3'): discriminate_div3_vs_leg3,
+    ('div3', 'epic3'): discriminate_div3_vs_epic3,
+    ('epic3', 'div3'): discriminate_div3_vs_epic3,
     ('div3', 'epic4'): discriminate_div3_vs_epic4,
     ('epic4', 'div3'): discriminate_div3_vs_epic4,
+    ('myth4', 'com4'): discriminate_myth4_vs_com4,
+    ('com4', 'myth4'): discriminate_myth4_vs_com4,
 }
 
 def apply_pairwise_discriminator(tier1, tier2, roi_bgr):

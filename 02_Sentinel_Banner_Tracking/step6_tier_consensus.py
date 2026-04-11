@@ -218,12 +218,6 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     
     # Debug flags for problematic slots
     DEBUG_THIS_SLOT = False
-    # if (f_id == 59 and r_idx == 0 and col_idx == 1) or \
-    #    (f_id == 60 and r_idx == 0 and col_idx == 0) or \
-    #    (f_id == 60 and r_idx == 0 and col_idx == 3) or \
-    #    (f_id == 62 and r_idx == 1 and col_idx == 5):
-    #     DEBUG_THIS_SLOT = True
-    #     print(f"\n[DEBUG-START] F{f_id} R{r_idx+1}_S{col_idx}", flush=True)
 
     sample_indices = f_range[:MAX_SAMPLES]
     votes = defaultdict(float)
@@ -300,9 +294,12 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             
             # Determine tier-specific vote threshold
             # com3 needs lower threshold due to template quality
+            # div4 needs lower threshold due to consistently low scores (F150 R1_S5: div4=0.188, F151: div4=0.19)
             tier_vote_threshold = MIN_VOTE_CONFIDENCE
             if best_f_tier in ['com3', 'com4']:
                 tier_vote_threshold = 0.25  # F59: com3=0.268
+            elif best_f_tier in ['div3', 'div4']:
+                tier_vote_threshold = 0.18  # F150 R1_S5: div4=0.188, F151: div4=0.19
             
             if best_f_score > tier_vote_threshold:
                 votes[best_f_tier] += best_f_score
@@ -609,24 +606,65 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                     dirt_avg_score = tier_totals[dirt_tier] / tier_frame_counts[dirt_tier]
                     gap_to_winner = winner_score - dirt_avg_score
                     
-                    # If dirt tier is close (<0.25) and was in allowed tiers, run discriminator
-                    # F55: epic3=0.349 vs dirt3=0.489 avg, but epic3 won first 3 frames
-                    # F36: dirt3=0.286 vs com3=0.440 avg (smaller sample), need wider check
-                    if gap_to_winner < 0.25:
+                    if DEBUG_THIS_SLOT:
+                        print(f"[DEBUG] Phase3-DirtReverse check: winner={winner}, dirt_tier={dirt_tier}, dirt_avg={dirt_avg_score:.4f}, gap={gap_to_winner:.4f}", flush=True)
+                    
+                    # If dirt tier is close (<0.25) and scored decently (>0.10), run discriminator
+                    # F55: epic3=0.349 vs dirt3=0.164 avg (dirt is real, needs check)
+                    # F70: epic3=0.240 vs dirt3=0.141 avg (dirt is real, needs check)
+                    # F69: com3=0.525 vs dirt3=0.281 (decent dirt score, should check)
+                    # F51: epic3=0.270 vs dirt3=0.063 (dirt too weak, skip check)
+                    if gap_to_winner < 0.25 and dirt_avg_score > 0.10:
                         if should_use_pairwise_discriminator(winner, dirt_tier):
-                            # Load first clean frame in color for discriminator
-                            first_frame_idx = sample_indices[0]
-                            img_color = cv2.imread(os.path.join(buffer_dir, all_files[first_frame_idx]))
+                            # Use best frame for winner (not first frame) for more accurate discrimination
+                            # F69: com3 first frame=0.1927, best frame=0.6328
+                            winner_best_frame = tier_best_frames[winner]['frame_idx']
+                            if winner_best_frame is not None:
+                                img_color = cv2.imread(os.path.join(buffer_dir, all_files[winner_best_frame]))
+                                if img_color is not None:
+                                    roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                                    if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                                        override_winner = apply_pairwise_discriminator(winner, dirt_tier, roi_color)
+                                        if DEBUG_THIS_SLOT:
+                                            print(f"[DEBUG] Phase3-DirtReverse discriminator result: {override_winner}", flush=True)
+                                        if override_winner and override_winner != winner:
+                                            print(f"[Phase3-DirtReverse] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{override_winner} (gap={gap_to_winner:.3f})", flush=True)
+                                            winner = override_winner
+                                            winner_score = dirt_avg_score
+                                            return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                                        break  # Only check first close dirt tier
+        
+        # PHASE 3-COMTOLEG: Check if com4 should be overridden by leg3 (tier4 fairy overlap cases)
+        # F118: com4 wins first 4 frames (fairy), leg3 appears later with only 1 clean frame
+        # Only check com4 (not com3) to avoid regressions
+        if winner == 'com4':
+            # Check if leg3 is present in votes (clean frames only)
+            if 'leg3' in votes:
+                # Use vote average (clean frames only), not tier_totals (includes below-threshold frames)
+                leg_clean_frames = sum(1 for tier in votes if tier == 'leg3')
+                leg_avg_score = votes['leg3'] / leg_clean_frames if leg_clean_frames > 0 else 0
+                gap = abs(winner_score - leg_avg_score)
+                if DEBUG_THIS_SLOT:
+                    print(f"[DEBUG] Phase3-ComToLeg check: winner={winner}, leg3_avg={leg_avg_score:.4f} ({leg_clean_frames} clean frames), gap={gap:.4f}", flush=True)
+                # Only check if leg3 scored reasonably well
+                # F118: com4=0.316, leg3=0.313 (very close, need discriminator)
+                if leg_avg_score > 0.25 and leg_clean_frames >= 1:
+                    if should_use_pairwise_discriminator(winner, 'leg3'):
+                        # Use best frame for com4 for discriminator
+                        com_best_frame = tier_best_frames[winner]['frame_idx']
+                        if com_best_frame is not None:
+                            img_color = cv2.imread(os.path.join(buffer_dir, all_files[com_best_frame]))
                             if img_color is not None:
                                 roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
                                 if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
-                                    override_winner = apply_pairwise_discriminator(winner, dirt_tier, roi_color)
-                                    if override_winner and override_winner != winner:
-                                        print(f"[Phase3-DirtReverse] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{override_winner} (gap={gap_to_winner:.3f})", flush=True)
-                                        winner = override_winner
-                                        winner_score = dirt_avg_score
+                                    override_winner = apply_pairwise_discriminator(winner, 'leg3', roi_color)
+                                    if DEBUG_THIS_SLOT:
+                                        print(f"[DEBUG] Phase3-ComToLeg discriminator result: {override_winner}", flush=True)
+                                    if override_winner and override_winner == 'leg3':
+                                        print(f"[Phase3-ComToLeg] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→leg3 (discriminator, leg_avg={leg_avg_score:.3f})", flush=True)
+                                        winner = 'leg3'
+                                        winner_score = leg_avg_score
                                         return winner, round(winner_score, 4), clean_frames_processed, "[D]"
-                                    break  # Only check first close dirt tier
         
         # PHASE 3-COM: Check if com/leg tier lost to dirt but should have won
         # Handles cases where dirt wins but com/epic/leg actually present (F36: dirt3 wins but com3 correct)
@@ -700,43 +738,153 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         # PHASE 3-MYTH: Promote myth tiers when they're close to lower-value tiers
         # Myth blocks vary significantly across damage states, causing vote fragmentation
         # When myth is close to com/rare/epic, prefer myth (higher value tier)
+        # F148: myth4 scored below vote threshold but is in tier_totals
         LOWER_TIERS = {'com1', 'com2', 'com3', 'com4', 'rare1', 'rare2', 'rare3', 'rare4', 
                        'epic1', 'epic2', 'epic3', 'epic4'}
         
         if winner not in MYTH_TIERS and winner in LOWER_TIERS:
             for myth_tier in MYTH_TIERS:
-                if myth_tier in votes and myth_tier in allowed_tiers:
-                    myth_vote_count = votes[myth_tier]
-                    myth_avg_score = myth_vote_count / clean_frames_processed
-                    gap_to_winner = winner_score - myth_avg_score
+                # Check tier_totals to catch myth blocks that scored below vote threshold
+                # F148: myth4 in tier_totals with low avg (0.1912), but has frames close to threshold
+                if myth_tier in tier_totals and myth_tier in allowed_tiers:
+                    myth_avg_score = tier_totals[myth_tier] / tier_frame_counts[myth_tier]
+                    # Use best myth frame score instead of average (myth varies greatly across damage states)
+                    myth_best_score = tier_best_frames[myth_tier]['score']
+                    gap_to_winner = winner_score - myth_best_score
                     
-                    # If myth is within 0.16 of winner and above minimum quality (0.25), promote it
-                    # This catches cases where com2 wins 7 frames at 0.48 each vs myth1 winning 5 frames at 0.50 each
-                    # F22 R4 S3: rare1=0.4051 vs myth1=0.2532 (gap=0.152) needs wider threshold
-                    if gap_to_winner < 0.16 and myth_avg_score >= 0.25:
-                        print(f"[Phase3-Myth] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{myth_tier} (gap={gap_to_winner:.3f}, myth_avg={myth_avg_score:.3f})", flush=True)
-                        winner = myth_tier
-                        winner_score = myth_avg_score
-                        # Return with [M] tag to bypass confidence check (myth1 is valuable even at lower confidence)
-                        return winner, round(winner_score, 4), clean_frames_processed, "[M]"
+                    if DEBUG_THIS_SLOT:
+                        print(f"[DEBUG] Phase3-Myth: checking {myth_tier}, avg={myth_avg_score:.4f}, best={myth_best_score:.4f}, gap={gap_to_winner:.3f}, in_votes={myth_tier in votes}", flush=True)
+                    
+                    # Phase3-Myth rescue logic:
+                    # - If myth IS in votes (participated in voting): check if close (0 < gap < 0.16)
+                    # - If myth is NOT in votes (failed threshold): only rescue if EXTREMELY close (|gap| < 0.005) - margin of error
+                    # F148: myth4 NOT in votes, |gap|=0.002 < 0.005 ✓ (within margin of error)
+                    # F20/F22/etc: myth NOT in votes, |gap|=0.008-0.134 > 0.005 ✗ (voting logic was correct)
+                    myth_in_votes = myth_tier in votes
+                    
+                    if myth_in_votes:
+                        # Myth participated in voting, check if close to winner
+                        if 0 < gap_to_winner < 0.16 and myth_best_score >= 0.25:
+                            # Use discriminator if available
+                            if should_use_pairwise_discriminator(winner, myth_tier):
+                                # Use best frame for winner
+                                winner_best_frame = tier_best_frames[winner]['frame_idx']
+                                if winner_best_frame is not None:
+                                    img_color = cv2.imread(os.path.join(buffer_dir, all_files[winner_best_frame]))
+                                    if img_color is not None:
+                                        roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                                        if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                                            override_winner = apply_pairwise_discriminator(winner, myth_tier, roi_color)
+                                            if override_winner and override_winner == myth_tier:
+                                                print(f"[Phase3-Myth] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{myth_tier} (discriminator, gap={gap_to_winner:.3f})", flush=True)
+                                                winner = myth_tier
+                                                winner_score = myth_best_score
+                                                return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                            else:
+                                # No discriminator, use original logic with best score
+                                print(f"[Phase3-Myth] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{myth_tier} (gap={gap_to_winner:.3f}, myth_best={myth_best_score:.3f})", flush=True)
+                                winner = myth_tier
+                                winner_score = myth_best_score
+                                return winner, round(winner_score, 4), clean_frames_processed, "[M]"
+                    else:
+                        # Myth NOT in votes - only rescue if extremely close (within margin of error)
+                        if abs(gap_to_winner) < 0.005 and myth_best_score >= 0.25:
+                            # Use discriminator if available
+                            if should_use_pairwise_discriminator(winner, myth_tier):
+                                # Use best frame for winner
+                                winner_best_frame = tier_best_frames[winner]['frame_idx']
+                                if winner_best_frame is not None:
+                                    img_color = cv2.imread(os.path.join(buffer_dir, all_files[winner_best_frame]))
+                                    if img_color is not None:
+                                        roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                                        if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                                            override_winner = apply_pairwise_discriminator(winner, myth_tier, roi_color)
+                                            if override_winner and override_winner == myth_tier:
+                                                print(f"[Phase3-Myth] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{myth_tier} (discriminator, gap={gap_to_winner:.3f})", flush=True)
+                                                winner = myth_tier
+                                                winner_score = myth_best_score  # Use best frame score since myth varies greatly
+                                                return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                            else:
+                                # No discriminator, use original logic with avg score
+                                print(f"[Phase3-Myth] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{myth_tier} (gap={gap_to_winner:.3f}, myth_best={myth_best_score:.3f})", flush=True)
+                                winner = myth_tier
+                                winner_score = myth_best_score
+                                return winner, round(winner_score, 4), clean_frames_processed, "[M]"
                     break  # Only check first myth tier
         
         # PHASE 3-DIV: Check if div won early due to fairy contamination
         # F60 R1_S0: div1 wins first 5 frames (fairy overlap), then epic/rare appear
+        # F121/F134: div3 is correct, don't override to epic3/leg3
         if winner in ['div1', 'div2', 'div3', 'div4'] and clean_frames_processed < 10:
             # Check if epic/rare/leg are in tier_totals (appeared later after div contamination)
+            # F150/F151: Don't override to tiers with negligible scores (rare4=0.0146, 0.0116)
             for check_tier in ['epic1', 'epic2', 'epic3', 'epic4', 'rare1', 'rare2', 'rare3', 'rare4', 'leg1', 'leg2', 'leg3', 'leg4']:
                 if check_tier in tier_totals and check_tier in allowed_tiers:
                     check_avg_score = tier_totals[check_tier] / tier_frame_counts[check_tier]
                     gap = abs(winner_score - check_avg_score)
-                    # If other tier scored close, it's probably the real block
-                    if gap < 0.25 and tier_frame_counts[check_tier] >= 3:
+                    # If other tier scored close AND has reasonable score (>0.15), check discriminator before overriding
+                    if gap < 0.25 and tier_frame_counts[check_tier] >= 3 and check_avg_score > 0.15:
                         if DEBUG_THIS_SLOT:
                             print(f"[DEBUG] Phase3-Div: div early contamination, {check_tier} scored {check_avg_score:.4f} over {tier_frame_counts[check_tier]} frames", flush=True)
-                        print(f"[Phase3-DivContamination] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{check_tier} (early fairy contamination)", flush=True)
-                        winner = check_tier
-                        winner_score = check_avg_score
-                        return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                        
+                        # Use discriminator if available to verify override
+                        if should_use_pairwise_discriminator(winner, check_tier):
+                            # Use best frame for div for discriminator
+                            div_best_frame = tier_best_frames[winner]['frame_idx']
+                            if div_best_frame is not None:
+                                img_color = cv2.imread(os.path.join(buffer_dir, all_files[div_best_frame]))
+                                if img_color is not None:
+                                    roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                                    if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                                        override_winner = apply_pairwise_discriminator(winner, check_tier, roi_color)
+                                        if DEBUG_THIS_SLOT:
+                                            print(f"[DEBUG] Phase3-Div discriminator result: {override_winner}", flush=True)
+                                        # Only override if discriminator confirms check_tier
+                                        if override_winner and override_winner == check_tier:
+                                            print(f"[Phase3-DivContamination] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{check_tier} (discriminator confirmed fairy contamination)", flush=True)
+                                            winner = check_tier
+                                            winner_score = check_avg_score
+                                            return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                                        # If discriminator says div is correct, stop checking other tiers
+                                        # Return with [D] tag to bypass confidence check (discriminator is authoritative)
+                                        elif override_winner and override_winner == winner:
+                                            if DEBUG_THIS_SLOT:
+                                                print(f"[DEBUG] Phase3-Div: discriminator confirmed {winner} is correct, stopping contamination check", flush=True)
+                                            return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                        else:
+                            # No discriminator, use original logic
+                            print(f"[Phase3-DivContamination] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{check_tier} (early fairy contamination)", flush=True)
+                            winner = check_tier
+                            winner_score = check_avg_score
+                            return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+        
+        # PHASE 3-LEGREVERSE: Check if leg should be overridden by com
+        # F60 R3_S1: leg3 wins all frames with high confidence, but com3 consistently second place
+        # leg3 and com3 templates can be confused, need discriminator when both present
+        if winner in LEG_TIERS:
+            leg_tier = winner
+            com_tier = leg_tier.replace('leg', 'com')
+            # Check if com is present in tier_totals (even if it never won a frame)
+            if com_tier in tier_totals and com_tier in allowed_tiers:
+                com_avg_score = tier_totals[com_tier] / tier_frame_counts[com_tier]
+                gap = abs(winner_score - com_avg_score)
+                # If com scored decently (even if gap is large), check discriminator
+                # F60 R3_S1: leg3=0.536, com3=0.308, gap=0.228 but com is the truth
+                if com_avg_score > 0.25 and tier_frame_counts[com_tier] >= 5:
+                    if should_use_pairwise_discriminator(winner, com_tier):
+                        # Use best frame for leg3 for discriminator
+                        leg_best_frame = tier_best_frames[leg_tier]['frame_idx']
+                        if leg_best_frame is not None:
+                            img_color = cv2.imread(os.path.join(buffer_dir, all_files[leg_best_frame]))
+                            if img_color is not None:
+                                roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                                if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                                    override_winner = apply_pairwise_discriminator(winner, com_tier, roi_color)
+                                    if override_winner and override_winner == com_tier:
+                                        print(f"[Phase3-LegReverse] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{com_tier} (discriminator, com_avg={com_avg_score:.3f})", flush=True)
+                                        winner = com_tier
+                                        winner_score = com_avg_score
+                                        return winner, round(winner_score, 4), clean_frames_processed, "[D]"
         
         # CONFIDENCE CHECK: Now check if final winner meets threshold
         # SPECIAL HANDLING for tiers with template quality issues:
@@ -748,24 +896,50 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         # - RARE1: Marginal scores on some floors (F24: 0.377) → use 0.35 threshold
         # - EPIC2: Fairy/crosshair interference, low scores → use 0.25 threshold (F39: epic2=0.276)
         if winner in DIRT_TIERS:
-            MIN_CONFIDENCE = 0.20
+            MIN_CONFIDENCE = 0.18  # F144: dirt4=0.18
         elif winner in LEG_TIERS:
-            MIN_CONFIDENCE = 0.20  # Lowered from 0.25 to 0.20 to match dirt handling
+            MIN_CONFIDENCE = 0.18  # Lower for vote fragmentation (F67: leg3=0.184, F77: leg3=0.192)
         elif winner in ['com1', 'com2', 'com3', 'com4']:
             MIN_CONFIDENCE = 0.26  # Lower than normal due to template quality (F36: com3=0.279, F59: com3=0.263)
         elif winner in MYTH_TIERS:
             MIN_CONFIDENCE = 0.20  # Lower than normal due to damage variation and vote fragmentation
         elif winner in ['rare1', 'rare2', 'rare3', 'rare4']:
-            MIN_CONFIDENCE = 0.25  # Lower for fairy/player obstruction and vote fragmentation (F60: rare3=0.252, F62: rare3=0.291)
+            MIN_CONFIDENCE = 0.17  # Lower for fairy/player obstruction and extreme vote fragmentation (F60: rare3=0.252, F73: rare3=0.177)
         elif winner in ['epic1', 'epic2', 'epic3', 'epic4']:
             MIN_CONFIDENCE = 0.15  # Lower for fairy/crosshair interference and vote fragmentation (F39: epic2=0.276, F53: epic3=0.162)
         elif winner in ['div1', 'div2', 'div3', 'div4']:
-            MIN_CONFIDENCE = 0.38  # Lower for cases with limited clean frames (F60: div1=0.400 with only 5 frames)
+            MIN_CONFIDENCE = 0.18  # F150 R1_S5: div4=0.1884 (must match vote threshold)
         else:
             MIN_CONFIDENCE = 0.40
         
         # Check if winner meets confidence threshold
         if winner_score < MIN_CONFIDENCE:
+            # PHASE 4-RESCUE: Before giving up, check if any leg tier scored well but lost vote count
+            # F112: com4 won 4 frames @ 0.197 avg, leg3 won 3 frames @ 0.459 avg
+            # After Phase2: leg3 became winner but with bad score calculation
+            # Note: Use vote averages (clean frames only), not tier_totals (includes below-threshold)
+            for leg_tier in LEG_TIERS:
+                if leg_tier in votes and leg_tier != winner:  # Check other leg tiers, not current winner
+                    # Calculate average from clean frames only
+                    leg_clean_frames = sum(1 for tier in votes if tier == leg_tier)
+                    leg_avg_score = votes[leg_tier] / leg_clean_frames if leg_clean_frames > 0 else 0
+                    # If leg scored significantly better than current winner, use it
+                    if leg_avg_score > 0.30 and leg_avg_score > winner_score + 0.10 and leg_clean_frames >= 3:
+                        if DEBUG_THIS_SLOT:
+                            print(f"[DEBUG] Phase4-Rescue: leg_tier={leg_tier} scored {leg_avg_score:.4f} (better than winner={winner} @ {winner_score:.4f})", flush=True)
+                        print(f"[Phase4-LegRescue] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{leg_tier} (leg scored {leg_avg_score:.3f} vs {winner_score:.3f})", flush=True)
+                        return leg_tier, round(leg_avg_score, 4), clean_frames_processed, "[R]"
+            
+            # Also check if current winner IS leg, but with bad score - recalculate from votes
+            if winner in LEG_TIERS and winner in votes:
+                leg_clean_frames = sum(1 for tier in votes if tier == winner)
+                leg_avg_score = votes[winner] / leg_clean_frames if leg_clean_frames > 0 else 0
+                if leg_avg_score > MIN_CONFIDENCE:
+                    if DEBUG_THIS_SLOT:
+                        print(f"[DEBUG] Phase4-Rescue: Recalculating {winner} score from votes: {leg_avg_score:.4f}", flush=True)
+                    print(f"[Phase4-LegRescue] F{f_id} R{r_idx+1}_S{col_idx}: Recalculated {winner} score from {winner_score:.3f} to {leg_avg_score:.3f}", flush=True)
+                    return winner, round(leg_avg_score, 4), clean_frames_processed, "[R]"
+            
             if DEBUG_THIS_SLOT:
                 print(f"[DEBUG-FINAL] FAILED confidence check: {winner_score:.4f} < {MIN_CONFIDENCE} → returning low_conf", flush=True)
             return "low_conf", round(winner_score, 4), clean_frames_processed, "[L]"
