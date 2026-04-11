@@ -216,16 +216,12 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     y1, x1 = int(cy - SIDE_PX//2), int(cx - SIDE_PX//2)
     slot_id = r_idx * 6 + col_idx
     
-    # Debug flags for problematic slots - DISABLED for clean baseline test
+    # Debug flags for problematic slots
     DEBUG_THIS_SLOT = False
-    # if (f_id == 28 and r_idx == 2 and col_idx == 3) or \
-    #    (f_id == 28 and r_idx == 3 and col_idx == 5) or \
-    #    (f_id == 33 and r_idx == 1 and col_idx == 2) or \
-    #    (f_id == 36 and r_idx == 0 and col_idx == 5) or \
-    #    (f_id == 38 and r_idx == 0 and col_idx == 1) or \
-    #    (f_id == 38 and r_idx == 1 and col_idx == 0) or \
-    #    (f_id == 38 and r_idx == 2 and col_idx == 2) or \
-    #    (f_id == 39 and r_idx == 0 and col_idx == 1):
+    # if (f_id == 59 and r_idx == 0 and col_idx == 1) or \
+    #    (f_id == 60 and r_idx == 0 and col_idx == 0) or \
+    #    (f_id == 60 and r_idx == 0 and col_idx == 3) or \
+    #    (f_id == 62 and r_idx == 1 and col_idx == 5):
     #     DEBUG_THIS_SLOT = True
     #     print(f"\n[DEBUG-START] F{f_id} R{r_idx+1}_S{col_idx}", flush=True)
 
@@ -233,6 +229,7 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
     votes = defaultdict(float)
     tier_totals = defaultdict(float)  # Track ALL tier scores for Phase3 rescue
     tier_frame_counts = defaultdict(int)  # Count frames where each tier was scored
+    tier_best_frames = defaultdict(lambda: {'frame_idx': None, 'score': 0.0})  # Track best frame for each tier
     frames_obstructed = 0
     clean_frames_processed = 0
     obstructed_sample_roi = None
@@ -297,13 +294,22 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
             for tier, score in frame_scores.items():
                 tier_totals[tier] += score
                 tier_frame_counts[tier] += 1
+                # Track best frame for each tier (for discriminators)
+                if score > tier_best_frames[tier]['score']:
+                    tier_best_frames[tier] = {'frame_idx': f_idx, 'score': score}
             
-            if best_f_score > MIN_VOTE_CONFIDENCE:
+            # Determine tier-specific vote threshold
+            # com3 needs lower threshold due to template quality
+            tier_vote_threshold = MIN_VOTE_CONFIDENCE
+            if best_f_tier in ['com3', 'com4']:
+                tier_vote_threshold = 0.25  # F59: com3=0.268
+            
+            if best_f_score > tier_vote_threshold:
                 votes[best_f_tier] += best_f_score
                 clean_frames_processed += 1
                 
                 if DEBUG_THIS_SLOT:
-                    print(f"  Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (passed MIN_VOTE_CONFIDENCE={MIN_VOTE_CONFIDENCE})", flush=True)
+                    print(f"  Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (passed tier_threshold={tier_vote_threshold})", flush=True)
                 
                 # Check if this frame has dirt beating higher tier by <0.05
                 if best_f_tier in DIRT_TIERS:
@@ -313,7 +319,7 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                             break
             else:
                 if DEBUG_THIS_SLOT:
-                    print(f"  Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (BELOW MIN_VOTE_CONFIDENCE={MIN_VOTE_CONFIDENCE}, not counted)", flush=True)
+                    print(f"  Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (BELOW tier_threshold={tier_vote_threshold}, not counted)", flush=True)
 
     if DEBUG_THIS_SLOT:
         print(f"[DEBUG-VOTES] votes={dict(votes)}, clean_frames={clean_frames_processed}, obstructed={frames_obstructed}/{len(sample_indices)}", flush=True)
@@ -376,12 +382,17 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                 best_f_tier = sorted_frame_tiers[0][0]
                 best_f_score = sorted_frame_tiers[0][1]
                 
-                if best_f_score > MIN_VOTE_CONFIDENCE:
+                # Determine tier-specific vote threshold (same as main sampling)
+                tier_vote_threshold = MIN_VOTE_CONFIDENCE
+                if best_f_tier in ['com3', 'com4']:
+                    tier_vote_threshold = 0.25
+                
+                if best_f_score > tier_vote_threshold:
                     votes[best_f_tier] += best_f_score
                     clean_frames_processed += 1
                     
                     if DEBUG_THIS_SLOT:
-                        print(f"  Extended Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (passed MIN_VOTE_CONFIDENCE={MIN_VOTE_CONFIDENCE})", flush=True)
+                        print(f"  Extended Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (passed tier_threshold={tier_vote_threshold})", flush=True)
                     
                     # Also credit close runner-ups
                     if len(sorted_frame_tiers) >= 2:
@@ -399,7 +410,7 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                                 break
                 else:
                     if DEBUG_THIS_SLOT:
-                        print(f"  Extended Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (BELOW MIN_VOTE_CONFIDENCE={MIN_VOTE_CONFIDENCE}, not counted)", flush=True)
+                        print(f"  Extended Frame {f_idx}: winner={best_f_tier} score={best_f_score:.4f} (BELOW tier_threshold={tier_vote_threshold}, not counted)", flush=True)
             
             # Stop extending if we have enough good frames
             if clean_frames_processed >= 5:
@@ -550,6 +561,37 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                                 if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
                                     override_winner = apply_pairwise_discriminator(winner, epic_tier, roi_color)
                                     if override_winner and override_winner != winner:
+                                        # Check if com tier is also close - may be com instead of epic
+                                        # F48 R1_S2: dirt3→epic3 but actually com3
+                                        # Use best frame where com3 scored well for accurate discrimination
+                                        com_tier = epic_tier.replace('epic', 'com')  # epic3 → com3
+                                        if DEBUG_THIS_SLOT:
+                                            print(f"[DEBUG] Checking {com_tier}: in tier_totals={com_tier in tier_totals}, in allowed={com_tier in allowed_tiers}", flush=True)
+                                        if com_tier in tier_totals and com_tier in allowed_tiers:
+                                            com_avg_score = tier_totals[com_tier] / tier_frame_counts[com_tier]
+                                            gap_epic_to_com = abs(epic_avg_score - com_avg_score)
+                                            if DEBUG_THIS_SLOT:
+                                                print(f"[DEBUG] epic_avg={epic_avg_score:.4f}, com_avg={com_avg_score:.4f}, gap={gap_epic_to_com:.4f}, has_disc={should_use_pairwise_discriminator(override_winner, com_tier)}", flush=True)
+                                            # If com is close to epic (<0.20), check com vs epic discriminator
+                                            if gap_epic_to_com < 0.20 and should_use_pairwise_discriminator(override_winner, com_tier):
+                                                # Use best frame where com scored well (not first frame which may have leg/dirt)
+                                                com_best_frame = tier_best_frames[com_tier]['frame_idx']
+                                                if DEBUG_THIS_SLOT:
+                                                    print(f"[DEBUG] Using com best frame {com_best_frame} (score={tier_best_frames[com_tier]['score']:.4f})", flush=True)
+                                                if com_best_frame is not None:
+                                                    img_color_com = cv2.imread(os.path.join(buffer_dir, all_files[com_best_frame]))
+                                                    if img_color_com is not None:
+                                                        roi_color_com = img_color_com[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                                                        if roi_color_com.shape[:2] == (SIDE_PX, SIDE_PX):
+                                                            com_override = apply_pairwise_discriminator(override_winner, com_tier, roi_color_com)
+                                                            if DEBUG_THIS_SLOT:
+                                                                print(f"[DEBUG] com_override result: {com_override} (override_winner={override_winner})", flush=True)
+                                                            if com_override and com_override != override_winner:
+                                                                print(f"[Phase3-Epic] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{com_override} (via epic={epic_tier}, gap={gap_to_winner:.3f})", flush=True)
+                                                                winner = com_override
+                                                                winner_score = com_avg_score
+                                                                return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                                        
                                         print(f"[Phase3-Epic] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{override_winner} (gap={gap_to_winner:.3f})", flush=True)
                                         winner = override_winner
                                         winner_score = epic_avg_score
@@ -557,6 +599,75 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                                         # Discriminators use strong features (e.g., 108% hue diff for epic1 vs dirt1)
                                         return winner, round(winner_score, 4), clean_frames_processed, "[D]"  # [D] = Discriminator override
                                     break  # Only check first close epic tier
+        
+        # PHASE 3-DIRT: Check if dirt tier lost to epic/com but should have won
+        # Handles cases where fairy overlap causes wrong tier to dominate early frames
+        if winner in ['epic1', 'epic2', 'epic3', 'epic4', 'com1', 'com2', 'com3', 'com4']:
+            # Check if any dirt tier was a candidate and is close using tier_totals
+            for dirt_tier in DIRT_TIERS:
+                if dirt_tier in tier_totals and dirt_tier in allowed_tiers:
+                    dirt_avg_score = tier_totals[dirt_tier] / tier_frame_counts[dirt_tier]
+                    gap_to_winner = winner_score - dirt_avg_score
+                    
+                    # If dirt tier is close (<0.25) and was in allowed tiers, run discriminator
+                    # F55: epic3=0.349 vs dirt3=0.489 avg, but epic3 won first 3 frames
+                    # F36: dirt3=0.286 vs com3=0.440 avg (smaller sample), need wider check
+                    if gap_to_winner < 0.25:
+                        if should_use_pairwise_discriminator(winner, dirt_tier):
+                            # Load first clean frame in color for discriminator
+                            first_frame_idx = sample_indices[0]
+                            img_color = cv2.imread(os.path.join(buffer_dir, all_files[first_frame_idx]))
+                            if img_color is not None:
+                                roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                                if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                                    override_winner = apply_pairwise_discriminator(winner, dirt_tier, roi_color)
+                                    if override_winner and override_winner != winner:
+                                        print(f"[Phase3-DirtReverse] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{override_winner} (gap={gap_to_winner:.3f})", flush=True)
+                                        winner = override_winner
+                                        winner_score = dirt_avg_score
+                                        return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+                                    break  # Only check first close dirt tier
+        
+        # PHASE 3-COM: Check if com/leg tier lost to dirt but should have won
+        # Handles cases where dirt wins but com/epic/leg actually present (F36: dirt3 wins but com3 correct)
+        if winner in DIRT_TIERS:
+            # Check ALL close com/epic/leg tiers and find the best discriminator match
+            best_override = None
+            best_gap = float('inf')
+            best_score = None
+            
+            # Load first clean frame in color once for all discriminators
+            first_frame_idx = sample_indices[0]
+            img_color = cv2.imread(os.path.join(buffer_dir, all_files[first_frame_idx]))
+            
+            if img_color is not None:
+                roi_color = img_color[y1:y1+SIDE_PX, x1:x1+SIDE_PX]
+                if roi_color.shape[:2] == (SIDE_PX, SIDE_PX):
+                    # Check all candidate tiers
+                    for check_tier in ['com1', 'com2', 'com3', 'com4', 'epic1', 'epic2', 'epic3', 'epic4', 'leg1', 'leg2', 'leg3', 'leg4']:
+                        if check_tier in tier_totals and check_tier in allowed_tiers:
+                            check_avg_score = tier_totals[check_tier] / tier_frame_counts[check_tier]
+                            gap = abs(winner_score - check_avg_score)
+                            
+                            # If tier is close (<0.15), test discriminator
+                            # F36: dirt3=0.286 vs com3=0.375 (gap=0.089)
+                            # F54 R1_S0: dirt3 vs leg3/com3, need to check both
+                            if gap < 0.15:
+                                if should_use_pairwise_discriminator(winner, check_tier):
+                                    override_winner = apply_pairwise_discriminator(winner, check_tier, roi_color)
+                                    if override_winner and override_winner != winner:
+                                        # Track the tier with smallest gap (most confident)
+                                        if gap < best_gap:
+                                            best_override = override_winner
+                                            best_gap = gap
+                                            best_score = check_avg_score
+            
+            # Apply best override if found
+            if best_override:
+                print(f"[Phase3-ComReverse] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{best_override} (gap={best_gap:.3f})", flush=True)
+                winner = best_override
+                winner_score = best_score
+                return winner, round(winner_score, 4), clean_frames_processed, "[D]"
         
         # PHASE 3-RARE: Check if rare1 lost to epic1 but should have won
         # Similar to Phase3-Epic, but for rare1 blocks on F24
@@ -610,6 +721,23 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
                         return winner, round(winner_score, 4), clean_frames_processed, "[M]"
                     break  # Only check first myth tier
         
+        # PHASE 3-DIV: Check if div won early due to fairy contamination
+        # F60 R1_S0: div1 wins first 5 frames (fairy overlap), then epic/rare appear
+        if winner in ['div1', 'div2', 'div3', 'div4'] and clean_frames_processed < 10:
+            # Check if epic/rare/leg are in tier_totals (appeared later after div contamination)
+            for check_tier in ['epic1', 'epic2', 'epic3', 'epic4', 'rare1', 'rare2', 'rare3', 'rare4', 'leg1', 'leg2', 'leg3', 'leg4']:
+                if check_tier in tier_totals and check_tier in allowed_tiers:
+                    check_avg_score = tier_totals[check_tier] / tier_frame_counts[check_tier]
+                    gap = abs(winner_score - check_avg_score)
+                    # If other tier scored close, it's probably the real block
+                    if gap < 0.25 and tier_frame_counts[check_tier] >= 3:
+                        if DEBUG_THIS_SLOT:
+                            print(f"[DEBUG] Phase3-Div: div early contamination, {check_tier} scored {check_avg_score:.4f} over {tier_frame_counts[check_tier]} frames", flush=True)
+                        print(f"[Phase3-DivContamination] F{f_id} R{r_idx+1}_S{col_idx}: {winner}→{check_tier} (early fairy contamination)", flush=True)
+                        winner = check_tier
+                        winner_score = check_avg_score
+                        return winner, round(winner_score, 4), clean_frames_processed, "[D]"
+        
         # CONFIDENCE CHECK: Now check if final winner meets threshold
         # SPECIAL HANDLING for tiers with template quality issues:
         # - DIRT: Good blocks score 0.39+, damaged 0.05-0.08 → use 0.20 threshold
@@ -624,13 +752,15 @@ def identify_consensus(f_range, r_idx, col_idx, buffer_dir, all_files, allowed_t
         elif winner in LEG_TIERS:
             MIN_CONFIDENCE = 0.20  # Lowered from 0.25 to 0.20 to match dirt handling
         elif winner in ['com1', 'com2', 'com3', 'com4']:
-            MIN_CONFIDENCE = 0.30  # Lower than normal due to template quality
+            MIN_CONFIDENCE = 0.26  # Lower than normal due to template quality (F36: com3=0.279, F59: com3=0.263)
         elif winner in MYTH_TIERS:
             MIN_CONFIDENCE = 0.20  # Lower than normal due to damage variation and vote fragmentation
-        elif winner == 'rare1':
-            MIN_CONFIDENCE = 0.30  # Lowered from 0.35 to match com tier thresholds (split votes on F20)
-        elif winner in ['epic2', 'epic3', 'epic4']:
-            MIN_CONFIDENCE = 0.25  # Lower for fairy/crosshair interference (F39: epic2=0.276)
+        elif winner in ['rare1', 'rare2', 'rare3', 'rare4']:
+            MIN_CONFIDENCE = 0.25  # Lower for fairy/player obstruction and vote fragmentation (F60: rare3=0.252, F62: rare3=0.291)
+        elif winner in ['epic1', 'epic2', 'epic3', 'epic4']:
+            MIN_CONFIDENCE = 0.15  # Lower for fairy/crosshair interference and vote fragmentation (F39: epic2=0.276, F53: epic3=0.162)
+        elif winner in ['div1', 'div2', 'div3', 'div4']:
+            MIN_CONFIDENCE = 0.38  # Lower for cases with limited clean frames (F60: div1=0.400 with only 5 frames)
         else:
             MIN_CONFIDENCE = 0.40
         

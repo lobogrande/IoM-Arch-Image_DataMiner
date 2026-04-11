@@ -651,6 +651,330 @@ def discriminate_leg1_vs_epic1(roi_bgr):
     else:
         return 'epic1'
 
+def discriminate_com3_vs_dirt3(roi_bgr):
+    """
+    Discriminate between com3 and dirt3 blocks.
+    
+    Key pattern: com3 has lower hue values (orange/yellow tones),
+    dirt3 has higher hue values (green/cyan tones).
+    
+    Uses voting across multiple regions for robustness.
+    """
+    votes_com3, votes_dirt3 = 0, 0
+    
+    # Region 1: Upper-left (24,14)-(33,24) - 51.5% hue diff
+    region1 = roi_bgr[14:24, 24:33]
+    hsv1 = cv2.cvtColor(region1, cv2.COLOR_BGR2HSV)
+    hue1 = hsv1[:, :, 0].mean()
+    if hue1 < 91.18:  # Midpoint between com3=67.69 and dirt3=114.68
+        votes_com3 += 2  # Strong signal
+    else:
+        votes_dirt3 += 2
+    
+    # Region 2: Lower-right (38,34)-(46,41) - 60.4% hue diff, 37.1% blue diff
+    region2 = roi_bgr[34:41, 38:46]
+    hsv2 = cv2.cvtColor(region2, cv2.COLOR_BGR2HSV)
+    hue2 = hsv2[:, :, 0].mean()
+    blue2 = region2[:, :, 0].mean()
+    if hue2 < 79.03:  # Midpoint
+        votes_com3 += 2
+    else:
+        votes_dirt3 += 2
+    if blue2 < 100.90:  # Midpoint between com3=82.18 and dirt3=119.62
+        votes_com3 += 1
+    else:
+        votes_dirt3 += 1
+    
+    # Region 3: Lower-left (21,34)-(28,42) - 66.3% hue diff
+    region3 = roi_bgr[34:42, 21:28]
+    hsv3 = cv2.cvtColor(region3, cv2.COLOR_BGR2HSV)
+    hue3 = hsv3[:, :, 0].mean()
+    if hue3 < 74.49:  # Midpoint
+        votes_com3 += 2
+    else:
+        votes_dirt3 += 2
+    
+    # Region 5: Center (19,20)-(29,27) - 26.4% hue diff, 24.2% blue diff
+    region5 = roi_bgr[20:27, 19:29]
+    hsv5 = cv2.cvtColor(region5, cv2.COLOR_BGR2HSV)
+    hue5 = hsv5[:, :, 0].mean()
+    blue5 = region5[:, :, 0].mean()
+    if hue5 < 105.11:  # Midpoint
+        votes_com3 += 1
+    else:
+        votes_dirt3 += 1
+    if blue5 < 93.99:  # Midpoint between com3=82.61 and dirt3=105.37
+        votes_com3 += 1
+    else:
+        votes_dirt3 += 1
+    
+    return 'com3' if votes_com3 > votes_dirt3 else 'dirt3'
+
+def discriminate_dirt3_vs_epic3(roi_bgr):
+    """
+    Discriminate between dirt3 and epic3 blocks.
+    
+    Key pattern: epic3 has much higher blue channel values than dirt3.
+    Also differs in red channel (epic3 higher) and green channel (dirt3 can be higher).
+    
+    Uses voting across multiple regions for robustness.
+    """
+    votes_dirt3, votes_epic3 = 0, 0
+    
+    # Region 2: Lower section (27,28)-(40,40) - 66.0% blue diff
+    region2 = roi_bgr[28:40, 27:40]
+    blue2 = region2[:, :, 0].mean()
+    red2 = region2[:, :, 2].mean()
+    if blue2 < 87.64:  # Midpoint between dirt3=58.70 and epic3=116.58
+        votes_dirt3 += 3  # Very strong signal
+    else:
+        votes_epic3 += 3
+    if red2 < 70.56:  # Midpoint between dirt3=55.71 and epic3=85.42
+        votes_dirt3 += 1
+    else:
+        votes_epic3 += 1
+    
+    # Region 4: Upper-right (28,10)-(37,23) - 35.4% red diff, 29.9% hue diff
+    region4 = roi_bgr[10:23, 28:37]
+    red4 = region4[:, :, 2].mean()
+    hsv4 = cv2.cvtColor(region4, cv2.COLOR_BGR2HSV)
+    hue4 = hsv4[:, :, 0].mean()
+    if red4 < 111.20:  # Midpoint between dirt3=91.50 and epic3=130.91
+        votes_dirt3 += 2
+    else:
+        votes_epic3 += 2
+    if hue4 > 98.46:  # Midpoint (inverted because dirt3 higher)
+        votes_dirt3 += 1
+    else:
+        votes_epic3 += 1
+    
+    # Region 5: Lower-right (30,24)-(40,39) - 73.8% blue diff
+    region5 = roi_bgr[24:39, 30:40]
+    blue5 = region5[:, :, 0].mean()
+    red5 = region5[:, :, 2].mean()
+    if blue5 < 92.47:  # Midpoint between dirt3=58.33 and epic3=126.61
+        votes_dirt3 += 3  # Very strong signal
+    else:
+        votes_epic3 += 3
+    if red5 < 75.60:  # Midpoint between dirt3=59.65 and epic3=91.55
+        votes_dirt3 += 1
+    else:
+        votes_epic3 += 1
+    
+    return 'dirt3' if votes_dirt3 > votes_epic3 else 'epic3'
+
+def discriminate_leg3_vs_com3(roi_bgr):
+    """
+    Discriminate between leg3 and com3 blocks.
+    
+    Key pattern: leg3 has lower hue (orange/red tones), higher red channel values,
+    and higher brightness in certain regions. com3 has higher hue (green/cyan tones).
+    
+    Uses voting across multiple regions for robustness.
+    """
+    votes_leg3, votes_com3 = 0, 0
+    
+    # Region 1: Lower section (26,31)-(43,41) - 96.1% hue diff, 61.1% saturation diff
+    region1 = roi_bgr[31:41, 26:43]
+    hsv1 = cv2.cvtColor(region1, cv2.COLOR_BGR2HSV)
+    hue1 = hsv1[:, :, 0].mean()
+    sat1 = hsv1[:, :, 1].mean()
+    if hue1 < 65.61:  # Midpoint between leg3=34.09 and com3=97.14
+        votes_leg3 += 3  # Very strong signal
+    else:
+        votes_com3 += 3
+    if sat1 > 92.26:  # Midpoint between leg3=120.45 and com3=64.06
+        votes_leg3 += 2
+    else:
+        votes_com3 += 2
+    
+    # Region 4: Lower-left (3,37)-(16,45) - 51.8% hue diff, 30.2% red diff
+    region4 = roi_bgr[37:45, 3:16]
+    hsv4 = cv2.cvtColor(region4, cv2.COLOR_BGR2HSV)
+    hue4 = hsv4[:, :, 0].mean()
+    red4 = region4[:, :, 2].mean()
+    if hue4 < 85.50:  # Midpoint between leg3=63.35 and com3=107.65
+        votes_leg3 += 2
+    else:
+        votes_com3 += 2
+    if red4 > 92.02:  # Midpoint between leg3=105.92 and com3=78.11
+        votes_leg3 += 2
+    else:
+        votes_com3 += 2
+    
+    # Region 5: Upper section (25,14)-(34,24) - 28.3% value diff, 30.0% green diff
+    region5 = roi_bgr[14:24, 25:34]
+    hsv5 = cv2.cvtColor(region5, cv2.COLOR_BGR2HSV)
+    value5 = hsv5[:, :, 2].mean()
+    green5 = region5[:, :, 1].mean()
+    if value5 > 135.84:  # Midpoint between leg3=155.04 and com3=116.64
+        votes_leg3 += 2
+    else:
+        votes_com3 += 2
+    if green5 > 122.02:  # Midpoint between leg3=140.32 and com3=103.72
+        votes_leg3 += 1
+    else:
+        votes_com3 += 1
+    
+    # Region 8: Left-lower (4,33)-(16,42) - 32.0% hue diff, 44.6% red diff
+    region8 = roi_bgr[33:42, 4:16]
+    hsv8 = cv2.cvtColor(region8, cv2.COLOR_BGR2HSV)
+    hue8 = hsv8[:, :, 0].mean()
+    red8 = region8[:, :, 2].mean()
+    if hue8 < 95.82:  # Midpoint between leg3=80.46 and com3=111.17
+        votes_leg3 += 2
+    else:
+        votes_com3 += 2
+    if red8 > 75.65:  # Midpoint between leg3=92.51 and com3=58.79
+        votes_leg3 += 2
+    else:
+        votes_com3 += 2
+    
+    return 'leg3' if votes_leg3 > votes_com3 else 'com3'
+
+def discriminate_dirt3_vs_leg3(roi_bgr):
+    """
+    Discriminate between dirt3 and leg3 blocks.
+    
+    Key pattern: leg3 has lower hue (orange/red tones), higher red/green channel values.
+    dirt3 has higher hue (green/cyan tones).
+    
+    Uses voting across multiple regions for robustness.
+    """
+    votes_dirt3, votes_leg3 = 0, 0
+    
+    # Region 2: Upper section (26,15)-(33,26) - 58.1% hue diff, 52.2% green diff
+    region2 = roi_bgr[15:26, 26:33]
+    hsv2 = cv2.cvtColor(region2, cv2.COLOR_BGR2HSV)
+    hue2 = hsv2[:, :, 0].mean()
+    green2 = region2[:, :, 1].mean()
+    if hue2 > 91.58:  # Midpoint between leg3=64.97 and dirt3=118.18
+        votes_dirt3 += 3  # Very strong signal
+    else:
+        votes_leg3 += 3
+    if green2 < 105.73:  # Midpoint between leg3=133.30 and dirt3=78.16
+        votes_dirt3 += 2
+    else:
+        votes_leg3 += 2
+    
+    # Region 3: Lower section (27,31)-(37,40) - 118.5% hue diff (massive!), 76.5% red diff
+    region3 = roi_bgr[31:40, 27:37]
+    hsv3 = cv2.cvtColor(region3, cv2.COLOR_BGR2HSV)
+    hue3 = hsv3[:, :, 0].mean()
+    red3 = region3[:, :, 2].mean()
+    if hue3 > 70.78:  # Midpoint between leg3=28.84 and dirt3=112.71
+        votes_dirt3 += 3  # Extremely strong signal
+    else:
+        votes_leg3 += 3
+    if red3 < 90.22:  # Midpoint between leg3=124.71 and dirt3=55.72
+        votes_dirt3 += 2
+    else:
+        votes_leg3 += 2
+    
+    # Region 6: Center (24,18)-(36,28) - 61.2% hue diff, 52.1% red diff
+    region6 = roi_bgr[18:28, 24:36]
+    hsv6 = cv2.cvtColor(region6, cv2.COLOR_BGR2HSV)
+    hue6 = hsv6[:, :, 0].mean()
+    red6 = region6[:, :, 2].mean()
+    if hue6 > 92.79:  # Midpoint between leg3=64.38 and dirt3=121.20
+        votes_dirt3 += 2
+    else:
+        votes_leg3 += 2
+    if red6 < 89.62:  # Midpoint between leg3=112.96 and dirt3=66.28
+        votes_dirt3 += 2
+    else:
+        votes_leg3 += 2
+    
+    # Region 7: Lower-wide (25,32)-(44,41) - 99.4% hue diff, 42.1% red diff
+    region7 = roi_bgr[32:41, 25:44]
+    hsv7 = cv2.cvtColor(region7, cv2.COLOR_BGR2HSV)
+    hue7 = hsv7[:, :, 0].mean()
+    red7 = region7[:, :, 2].mean()
+    if hue7 > 72.36:  # Midpoint between leg3=36.40 and dirt3=108.32
+        votes_dirt3 += 3  # Very strong signal
+    else:
+        votes_leg3 += 3
+    if red7 < 89.87:  # Midpoint between leg3=108.78 and dirt3=70.95
+        votes_dirt3 += 1
+    else:
+        votes_leg3 += 1
+    
+    return 'dirt3' if votes_dirt3 > votes_leg3 else 'leg3'
+
+def discriminate_com3_vs_epic3(roi_bgr):
+    """
+    Discriminate between com3 and epic3 blocks.
+    
+    Key pattern: epic3 has much higher saturation (90-120) and blue channel values.
+    com3 has lower saturation (55-75) and higher green values in some regions.
+    
+    Uses voting across multiple regions for robustness.
+    """
+    votes_com3, votes_epic3 = 0, 0
+    
+    # Region 1: Left-center (6,21)-(15,30) - 58.9% saturation diff, 42.2% hue diff
+    region1 = roi_bgr[21:30, 6:15]
+    hsv1 = cv2.cvtColor(region1, cv2.COLOR_BGR2HSV)
+    sat1 = hsv1[:, :, 1].mean()
+    hue1 = hsv1[:, :, 0].mean()
+    if sat1 < 94.08:  # Midpoint between com3=66.38 and epic3=121.78
+        votes_com3 += 3  # Very strong signal
+    else:
+        votes_epic3 += 3
+    if hue1 < 107.00:  # Midpoint between com3=84.44 and epic3=129.54
+        votes_com3 += 2
+    else:
+        votes_epic3 += 2
+    
+    # Region 3: Lower-right (37,32)-(45,42) - 53.6% saturation diff, 39.1% hue diff
+    region3 = roi_bgr[32:42, 37:45]
+    hsv3 = cv2.cvtColor(region3, cv2.COLOR_BGR2HSV)
+    sat3 = hsv3[:, :, 1].mean()
+    hue3 = hsv3[:, :, 0].mean()
+    blue3 = region3[:, :, 0].mean()
+    if sat3 < 76.65:  # Midpoint between com3=56.10 and epic3=97.20
+        votes_com3 += 2
+    else:
+        votes_epic3 += 2
+    if hue3 < 96.80:  # Midpoint between com3=77.86 and epic3=115.74
+        votes_com3 += 2
+    else:
+        votes_epic3 += 2
+    if blue3 < 97.30:  # Midpoint between com3=80.17 and epic3=114.44
+        votes_com3 += 1
+    else:
+        votes_epic3 += 1
+    
+    # Region 6: Upper-center (22,9)-(35,16) - 40.0% green diff
+    region6 = roi_bgr[9:16, 22:35]
+    green6 = region6[:, :, 1].mean()
+    hsv6 = cv2.cvtColor(region6, cv2.COLOR_BGR2HSV)
+    sat6 = hsv6[:, :, 1].mean()
+    if green6 > 121.76:  # Midpoint between com3=146.11 and epic3=97.42
+        votes_com3 += 2
+    else:
+        votes_epic3 += 2
+    if sat6 < 77.22:  # Midpoint between com3=63.20 and epic3=91.25
+        votes_com3 += 1
+    else:
+        votes_epic3 += 1
+    
+    # Region 8: Lower-center (31,26)-(41,40) - 66.3% saturation diff, 52.4% blue diff
+    region8 = roi_bgr[26:40, 31:41]
+    hsv8 = cv2.cvtColor(region8, cv2.COLOR_BGR2HSV)
+    sat8 = hsv8[:, :, 1].mean()
+    blue8 = region8[:, :, 0].mean()
+    if sat8 < 91.92:  # Midpoint between com3=61.46 and epic3=122.38
+        votes_com3 += 3  # Very strong signal
+    else:
+        votes_epic3 += 3
+    if blue8 < 103.18:  # Midpoint between com3=76.13 and epic3=130.23
+        votes_com3 += 2
+    else:
+        votes_epic3 += 2
+    
+    return 'com3' if votes_com3 > votes_epic3 else 'epic3'
+
 # Registry of all pairwise discriminators
 PAIRWISE_DISCRIMINATORS = {
     ('rare1', 'com1'): discriminate_rare1_vs_com1,
@@ -671,6 +995,16 @@ PAIRWISE_DISCRIMINATORS = {
     ('com2', 'dirt2'): discriminate_dirt2_vs_com2,
     ('leg1', 'epic1'): discriminate_leg1_vs_epic1,
     ('epic1', 'leg1'): discriminate_leg1_vs_epic1,
+    ('com3', 'dirt3'): discriminate_com3_vs_dirt3,
+    ('dirt3', 'com3'): discriminate_com3_vs_dirt3,
+    ('dirt3', 'epic3'): discriminate_dirt3_vs_epic3,
+    ('epic3', 'dirt3'): discriminate_dirt3_vs_epic3,
+    ('com3', 'epic3'): discriminate_com3_vs_epic3,
+    ('epic3', 'com3'): discriminate_com3_vs_epic3,
+    ('leg3', 'com3'): discriminate_leg3_vs_com3,
+    ('com3', 'leg3'): discriminate_leg3_vs_com3,
+    ('dirt3', 'leg3'): discriminate_dirt3_vs_leg3,
+    ('leg3', 'dirt3'): discriminate_dirt3_vs_leg3,
     ('div1', 'rare3'): discriminate_div1_vs_rare3,
     ('rare3', 'div1'): discriminate_div1_vs_rare3,
     ('div2', 'rare3'): discriminate_div2_vs_rare3,
